@@ -32,6 +32,7 @@ Resolution rules for a single target dataset.
 | `description` | string | no | Human-readable description |
 | `target` | [ModelRef](mapping-schema.md#modelref) | yes | The target dataset these rules apply to |
 | `fields` | object&lt;string, [FieldResolution](#fieldresolution)&gt; | yes | Per-field resolution rules. Keys are target field names. |
+| `groups` | object&lt;string, [ResolutionGroup](#resolutiongroup)&gt; | no | Named atomic resolution groups. Keys are group names. |
 
 ### Example
 
@@ -64,6 +65,52 @@ Resolution rules for a single target field.
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `strategy` | [Strategy](#strategy) | yes | The resolution strategy to apply |
+
+---
+
+## ResolutionGroup
+
+An atomic resolution group. All listed fields resolve from the same winning source — the source with the highest timestamp across any field in the group.
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `fields` | array of strings | yes | Target field names that resolve together. Minimum 2. All must use LAST_MODIFIED strategy. |
+
+### Example
+
+```yaml
+- name: person_resolution
+  target:
+    semantic_model: acme_inc_model
+    dataset: person
+    model_file: ./model-acme.yaml
+  groups:
+    name:
+      fields: [first_name, last_name, full_name]
+  fields:
+    first_name:
+      strategy: { type: LAST_MODIFIED }
+    last_name:
+      strategy: { type: LAST_MODIFIED }
+    full_name:
+      strategy: { type: LAST_MODIFIED }
+    phone:
+      strategy: { type: COALESCE }
+```
+
+In this example, ERP contributes `first_name` + `last_name`, CRM contributes `full_name`. The `name` group ensures all three resolve atomically from whichever source has the newest timestamp across any of them. The OSI model's field expressions derive whichever value is missing:
+
+- If ERP wins: `full_name = first_name || ' ' || last_name`
+- If CRM wins: `first_name = SPLIT_PART(full_name, ' ', 1)`, `last_name = SPLIT_PART(full_name, ' ', 2)`
+
+`phone` is not in the group and resolves independently via COALESCE.
+
+### Constraints
+
+- All fields listed in a group must be declared in `fields` with `LAST_MODIFIED` strategy.
+- A field may belong to at most one group.
+- Groups require at least 2 fields (`minItems: 2`).
+- Group names follow `snake_case` convention.
 
 ---
 

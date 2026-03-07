@@ -60,6 +60,7 @@ This allows the same mapping to carry expressions for multiple SQL dialects (ANS
 | **Array routing** | `filter_forward` + `source_path` routes array items by type | Product lines vs. discount lines |
 | **Array embedding** | `embedded: true` + `source_path` extracts denormalized data from array items | Product info on line items → product dataset |
 | **Parent context** | `parent_fields` pulls ancestor fields into scope as aliases | Parent `order_id` available in line item mapping |
+| **Atomic groups** | `groups` on Resolution lists fields that resolve together from one source | street + city + postal_code always come from same source |
 | **Vocabulary** | Map each source's lookup table into a shared target entity; resolution links on common key; FK resolved via source identity tracing | ERP Norwegian + CRM English country_lookup → canonical country entity |
 | **FK resolution** | OSI `Relationship` declares FKs on target model; tooling matches `forward_expression` values against `to_columns` | `order_line.order_ref → order.order_id` |
 
@@ -87,5 +88,7 @@ specs/
 
 | Document | Description |
 |----------|-------------|
-| [Mapping Schema](mapping-schema.md) | Full reference for mappings, field mappings, expressions, routing, embedding, and nesting |
-| [Resolution Schema](resolution-schema.md) | Full reference for conflict resolution strategies (COALESCE, LAST_MODIFIED, COLLECT) |
+| [Mapping Schema](mapping-schema.md) | Full reference for mappings, field mappings, expressions, routing, embedding, source paths, and parent fields |
+| [Resolution Schema](resolution-schema.md) | Full reference for conflict resolution strategies (COALESCE, LAST_MODIFIED, COLLECT) and resolution groups |
+| [FK Resolution](fk-resolution.md) | FK resolution patterns — same-source, cross-source, vocabulary normalization, OpenAPI nested FKs |
+| [Derived Fields](derived-fields.md) | Derived fields, model expressions, and resolution group patterns |

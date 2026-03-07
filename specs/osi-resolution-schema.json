@@ -45,6 +45,13 @@
           "additionalProperties": {
             "$ref": "#/$defs/FieldResolution"
           }
+        },
+        "groups": {
+          "type": "object",
+          "description": "Named atomic resolution groups. Fields in the same group resolve together: the source with the highest timestamp across any field in the group wins all grouped fields.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ResolutionGroup"
+          }
         }
       }
     },
@@ -56,6 +63,22 @@
       "properties": {
         "strategy": {
           "$ref": "#/$defs/Strategy"
+        }
+      }
+    },
+    "ResolutionGroup": {
+      "type": "object",
+      "description": "An atomic resolution group. All listed fields resolve from the same winning source — the source with the highest timestamp across any field in the group.",
+      "required": ["fields"],
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "type": "array",
+          "description": "Target field names that resolve together. All must use LAST_MODIFIED strategy.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2
         }
       }
     },
