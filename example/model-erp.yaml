@@ -4,15 +4,15 @@ version: "1.0"
 
 semantic_model:
   - name: erp_model
-    description: ERP system — company master data
+    description: ERP system — customer master data
 
     datasets:
-      - name: companies
-        source: erp.dbo.companies
+      - name: customers
+        source: erp.dbo.customers
         primary_key: [id]
         unique_keys:
           - [id]
-        description: Company records from the ERP system
+        description: Customer records from the ERP
 
         fields:
           - name: id
@@ -20,28 +20,28 @@ semantic_model:
               dialects:
                 - dialect: ANSI_SQL
                   expression: id
-            description: ERP company identifier
+            description: ERP customer identifier
 
-          - name: company_email
+          - name: customer_name
             expression:
               dialects:
                 - dialect: ANSI_SQL
-                  expression: company_email
-            description: Primary contact email
+                  expression: customer_name
+            description: Customer name
 
-          - name: company_name
+          - name: customer_email
             expression:
               dialects:
                 - dialect: ANSI_SQL
-                  expression: company_name
-            description: Legal company name
+                  expression: customer_email
+            description: Customer email
 
-          - name: company_account
+          - name: account_number
             expression:
               dialects:
                 - dialect: ANSI_SQL
-                  expression: company_account
-            description: Account number
+                  expression: account_number
+            description: Customer account number
 
           - name: modified_at
             expression:
@@ -49,100 +49,3 @@ semantic_model:
                 - dialect: ANSI_SQL
                   expression: modified_at
             description: Last modification timestamp
-
-          - name: address_street
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: address_street
-            description: Company street address
-
-          - name: address_city
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: address_city
-            description: Company city
-
-          - name: address_postal_code
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: address_postal_code
-            description: Company postal code
-
-          - name: address_country
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: address_country
-            description: Company country (Norwegian name, e.g. "Norge")
-
-      - name: products
-        source: erp.dbo.products
-        primary_key: [id]
-        unique_keys:
-          - [id]
-        description: Product catalog from the ERP system
-
-        fields:
-          - name: id
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: id
-            description: ERP product identifier
-
-          - name: product_code
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: product_code
-            description: Product code used as canonical product_id
-
-          - name: name
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: name
-            description: Product name
-
-      - name: country_lookup
-        source: erp.dbo.country_lookup
-        primary_key: [id]
-        unique_keys:
-          - [id]
-          - [iso_code]
-          - [name]
-        description: Country reference table — maps Norwegian names to ISO codes
-
-        fields:
-          - name: id
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: id
-            description: Country lookup identifier
-
-          - name: name
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: name
-            description: Norwegian country name (e.g. Norge)
-
-          - name: iso_code
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: iso_code
-            description: ISO 3166-1 alpha-2 code (e.g. NO)
-
-    relationships:
-      - name: company_country
-        from: companies
-        to: country_lookup
-        from_columns: [address_country]
-        to_columns: [name]
-
-    metrics: []

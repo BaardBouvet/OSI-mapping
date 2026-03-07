@@ -46,11 +46,18 @@
             "$ref": "#/$defs/FieldResolution"
           }
         },
-        "groups": {
+        "atomic_groups": {
           "type": "object",
           "description": "Named atomic resolution groups. Fields in the same group resolve together: the source with the highest timestamp across any field in the group wins all grouped fields.",
           "additionalProperties": {
-            "$ref": "#/$defs/ResolutionGroup"
+            "$ref": "#/$defs/AtomicGroup"
+          }
+        },
+        "link_groups": {
+          "type": "object",
+          "description": "Named link groups for entity linking. Records from different sources are linked only when ALL fields in the group match (tuple equality). Keys are group names.",
+          "additionalProperties": {
+            "$ref": "#/$defs/LinkGroup"
           }
         }
       }
@@ -66,7 +73,7 @@
         }
       }
     },
-    "ResolutionGroup": {
+    "AtomicGroup": {
       "type": "object",
       "description": "An atomic resolution group. All listed fields resolve from the same winning source — the source with the highest timestamp across any field in the group.",
       "required": ["fields"],
@@ -75,6 +82,22 @@
         "fields": {
           "type": "array",
           "description": "Target field names that resolve together. All must use LAST_MODIFIED strategy.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2
+        }
+      }
+    },
+    "LinkGroup": {
+      "type": "object",
+      "description": "A link group for entity linking. Records from different sources are considered the same entity only when ALL listed fields match (tuple equality). Unlike single-field COLLECT with link, this requires the entire tuple to match, not just individual fields.",
+      "required": ["fields"],
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "type": "array",
+          "description": "Target field names that must ALL match for two records to be linked. Order does not matter.",
           "items": {
             "type": "string"
           },
@@ -113,6 +136,18 @@
             }
           },
           "required": ["type"],
+          "additionalProperties": false
+        },
+        {
+          "description": "Resolve using a custom SQL expression operating in an aggregation context over all contributed values. The expression references the target field name directly as the column name.",
+          "properties": {
+            "type": { "const": "EXPRESSION" },
+            "expression": {
+              "description": "SQL aggregation expression. Use the target field name as the column name (e.g. MAX(email) for a field named 'email').",
+              "$ref": "osi-mapping-schema.json#/$defs/Expression"
+            }
+          },
+          "required": ["type", "expression"],
           "additionalProperties": false
         }
       ]

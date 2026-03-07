@@ -7,7 +7,7 @@ OSI Mapping is a schema and set of conventions for declaring bi-directional fiel
 ## Key ideas
 
 - **Symmetric model references** — both source and target are described with the same `model_ref` structure, whether they are OSI semantic models or external schemas (OpenAPI, JSON Schema, etc.).
-- **Forward & reverse expressions** — each field mapping carries a `forward_expression` (source → target) and an optional `reverse_expression` (target → source), enabling bi-directional lineage and view generation.
+- **Source/target field pairing first** — each field mapping can be defined with `source_field` and `target_field` alone for plain copy semantics. `expression_forward` (source → target) and `expression_reverse` (target → source) are optional when transformations are needed.
 - **Dialect blocks** — expressions use the OSI `dialects` pattern so the same mapping can carry SQL variants side by side.
 - **Format-agnostic sources** — sources can be OSI models, OpenAPI specs, JSON Schema files, or anything reachable via a file reference and a `schema_format` hint.
 
@@ -18,10 +18,6 @@ specs/
   osi-mapping-schema.json      # JSON Schema (draft-2020-12) for mapping files
   osi-resolution-schema.json   # JSON Schema for resolution files
   osi-schema.json              # OSI semantic model schema (reference)
-docs/
-  README.md                    # High-level overview and concepts
-  mapping-schema.md            # Mapping schema reference
-  resolution-schema.md         # Resolution schema reference
 example/
   *.yaml                       # End-to-end example (models, mappings, resolution)
 ```
@@ -30,7 +26,7 @@ example/
 
 1. Author or reference an OSI semantic model (the **target**).
 2. Describe your source — either as another OSI model or by pointing to an external schema file.
-3. Create a mapping YAML that pairs source fields to target fields with SQL expressions.
+3. Create a mapping YAML that pairs source fields to target fields (add expressions only when transformation is needed).
 4. Validate the mapping against `specs/osi-mapping-schema.json`.
 
 Each mapping file supports a YAML language-server header for in-editor validation:
@@ -39,15 +35,11 @@ Each mapping file supports a YAML language-server header for in-editor validatio
 # yaml-language-server: $schema=../specs/osi-mapping-schema.json
 ```
 
-## Documentation
-
-See [docs/](docs/) for the full specification reference.
-
 ## Example
 
-| Example | Source type | Description |
-|---------|-----------|-------------|
-| [example](example/) | OSI models | Canonical company merge with resolution strategies, routing filters, and reverse propagation controls |
+| Example | Description |
+|---------|-------------|
+| [example](example/) | Company merge — CRM (OpenAPI) + ERP into one company dataset with COALESCE and LAST_MODIFIED resolution |
 
 ## Status
 

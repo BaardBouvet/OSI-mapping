@@ -69,6 +69,24 @@
           "description": "SQL WHERE condition — only target rows matching this condition are mapped reverse to this source. Used for selective reverse propagation.",
           "$ref": "#/$defs/Expression"
         },
+        "computed_forward": {
+          "type": "object",
+          "description": "Named computed expressions derived from source fields, available as aliases in expression_forward and filter_forward within this mapping.",
+          "additionalProperties": {
+            "$ref": "#/$defs/Expression"
+          }
+        },
+        "computed_reverse": {
+          "type": "object",
+          "description": "Named computed expressions derived from target fields, available as aliases in expression_reverse and filter_reverse within this mapping.",
+          "additionalProperties": {
+            "$ref": "#/$defs/Expression"
+          }
+        },
+        "default_timestamp_field": {
+          "type": "string",
+          "description": "Fallback source timestamp field for LAST_MODIFIED resolution. Used when a FieldMapping omits timestamp_field."
+        },
         "embedded": {
           "type": "boolean",
           "description": "When true, this mapping extracts a sub-entity from the same source row as a parent mapping. The embedded entity shares the parent's source identity and has no independent existence."
@@ -121,20 +139,24 @@
     },
     "FieldMapping": {
       "type": "object",
-      "description": "Maps a single field between source and target models.",
-      "required": ["target_field", "forward_expression"],
+      "description": "Maps a single field between source and target models. At least one of expression_forward or expression_reverse must be present; omitting both means a bidirectional copy.",
+      "required": ["target_field"],
       "additionalProperties": false,
       "properties": {
         "target_field": {
           "type": "string",
-          "description": "Name of the field in the target model"
+          "description": "Name of the field in the target model."
         },
-        "forward_expression": {
-          "description": "Expression that transforms source into the target field (source → target)",
+        "source_field": {
+          "type": "string",
+          "description": "Name of the field in the source model. Defaults to the same value as target_field when omitted."
+        },
+        "expression_forward": {
+          "description": "Expression that transforms source into the target field. When omitted, source_field is copied directly.",
           "$ref": "#/$defs/Expression"
         },
-        "reverse_expression": {
-          "description": "Expression that transforms the target field back into the source (target → source). Omit if the mapping is inherently one-way.",
+        "expression_reverse": {
+          "description": "Expression that transforms the target field back into the source. When omitted, target_field is copied directly.",
           "$ref": "#/$defs/Expression"
         },
         "priority": {
@@ -144,15 +166,15 @@
         },
         "timestamp_field": {
           "type": "string",
-          "description": "Source field driving LAST_MODIFIED resolution. Only meaningful when the target field's resolution strategy is LAST_MODIFIED."
+          "description": "Source field driving LAST_MODIFIED resolution. Overrides the mapping-level default_timestamp_field."
         },
-        "required_reverse": {
+        "required": {
           "type": "boolean",
           "description": "When true, the entire row is excluded from reverse output if this field's resolved value is null. Enables insert/delete propagation patterns."
         },
         "description": {
           "type": "string",
-          "description": "Human-readable description of the mapping logic"
+          "description": "Human-readable description of the mapping logic."
         }
       }
     },

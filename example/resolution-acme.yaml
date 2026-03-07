@@ -1,14 +1,10 @@
 # yaml-language-server: $schema=../specs/osi-resolution-schema.json
 
 # Resolution rules for the Acme target model.
-#
-# company: two sources (ERP + CRM) — needs resolution.
-# product: two sources (ERP master + webshop embedded in order lines) — needs resolution.
-# address: two sources (CRM billing + ERP company address) — needs resolution.
-# country: two sources (ERP Norwegian names + CRM English names) — needs resolution.
-#
-# order, order_line, order_discount: single source each — no resolution needed.
-
+# Two sources (CRM + ERP) both map to company.
+# name: COALESCE (ERP priority 1 wins).
+# email: LAST_MODIFIED (most recently updated wins).
+# account: COALESCE (first non-null wins — both sources contribute).
 
 version: "1.0"
 
@@ -17,90 +13,19 @@ resolutions:
     description: Resolution rules for the company dataset
 
     target:
-      semantic_model: acme_inc_model
+      semantic_model: acme_model
       dataset: company
       model_file: ./model-acme.yaml
 
     fields:
-      email:
-        strategy:
-          type: COLLECT
-          link: true
-
       name:
+        strategy:
+          type: COALESCE
+
+      email:
         strategy:
           type: LAST_MODIFIED
 
       account:
         strategy:
           type: COALESCE
-
-      role:
-        strategy:
-          type: COLLECT
-
-  - name: product_resolution
-    description: Resolution rules for the product dataset — ERP is authoritative
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: product
-      model_file: ./model-acme.yaml
-
-    fields:
-      product_name:
-        strategy:
-          type: COALESCE
-
-      product_category:
-        strategy:
-          type: COALESCE
-
-  - name: address_resolution
-    description: >
-      Resolution rules for address — CRM billing address vs ERP company address.
-      address.country is a FK to country.iso_code. The raw values ("Norge" from
-      ERP, "Norway" from CRM) are resolved to target country entities via source
-      identity tracing, not by subqueries. See country_resolution below.
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: address
-      model_file: ./model-acme.yaml
-
-    fields:
-      street:
-        strategy:
-          type: LAST_MODIFIED
-
-      city:
-        strategy:
-          type: LAST_MODIFIED
-
-      postal_code:
-        strategy:
-          type: LAST_MODIFIED
-
-      country:
-        strategy:
-          type: LAST_MODIFIED
-
-  - name: country_resolution
-    description: >
-      Resolution rules for country — ERP contributes Norwegian names,
-      CRM contributes English names. Entity linking on iso_code merges
-      rows from different sources that represent the same country
-      (e.g. ERP "Norge"/NO and CRM "Norway"/NO become one entity).
-      Only iso_code is stored in the target; the source-side name is
-      the source identity (id: name) used for FK tracing.
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: country
-      model_file: ./model-acme.yaml
-
-    fields:
-      iso_code:
-        strategy:
-          type: COLLECT
-          link: true

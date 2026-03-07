@@ -1,387 +1,341 @@
-# Mapping Schema Reference
+# OSI Mapping Schema Reference
 
-Schema file: [`osi-mapping-schema.json`](../specs/osi-mapping-schema.json)
+> **Schema file:** [`specs/osi-mapping-schema.json`](../specs/osi-mapping-schema.json)  
+> **JSON Schema draft:** 2020-12  
+> **Version:** 1.0
 
-A mapping document declares how fields in one source dataset map to fields in one target dataset, in both directions.
+The OSI Mapping Schema defines field mappings between data sources and OSI semantic models. A mapping file declares how columns or properties in a source system relate to fields in a target model using SQL expressions grouped by dialect. Each field mapping specifies `target_field` and optionally `source_field`, with optional `expression_forward` and `expression_reverse` for transformations. When expressions are omitted, the field is copied as-is.
+
+---
 
 ## Document Structure
+
+A mapping document is a JSON or YAML object with two required top-level properties:
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `version` | `string` | **Yes** | Must be `"1.0"` |
+| `mappings` | `Mapping[]` | **Yes** | One or more source-to-target mapping definitions |
 
 ```yaml
 version: "1.0"
 mappings:
-  - name: ...
-    # ... Mapping entries
+  - name: orders_to_canonical
+    source: { ... }
+    target: { ... }
+    field_mappings: [ ... ]
 ```
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `version` | string | yes | Must be `"1.0"` |
-| `mappings` | array of [Mapping](#mapping) | yes | One or more mapping entries |
+No additional properties are allowed at the top level.
 
 ---
 
 ## Mapping
 
-A single source-to-target mapping for one dataset pair.
+Each entry in the `mappings` array describes how one source dataset maps to one target dataset.
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `name` | string | yes | Unique identifier. Must match `^[a-z][a-z0-9_]*$` |
-| `description` | string | no | Human-readable description |
-| `id` | string or string[] | no | Source field(s) that uniquely identify a row. Required when resolution targets the same dataset. |
-| `source` | [ModelRef](#modelref) | yes | The source data model |
-| `target` | [ModelRef](#modelref) | yes | The target data model |
-| `filter_forward` | [Expression](#expression) | no | Only source rows matching this filter are mapped forward. See [Routing](#routing). |
-| `filter_reverse` | [Expression](#expression) | no | Only target rows matching this filter are mapped back to this source. See [Selective Reverse](#selective-reverse). |
-| `source_path` | string | no | Dot-delimited path to a source array field. When set, this mapping operates on each array item. See [Source Path](#source-path). |
-| `parent_fields` | object&lt;string, [ParentFieldRef](#parentfieldref)&gt; | no | Pulls ancestor fields into scope as aliases. Only meaningful with `source_path`. See [Parent Fields](#parent-fields). |
-| `embedded` | boolean | no | Marks this mapping as an embedded sub-entity extraction. See [Embedded](#embedded). |
-| `field_mappings` | array of [FieldMapping](#fieldmapping) | yes | Field-level mappings |
+| `name` | `string` | **Yes** | Unique identifier for this mapping. Must match `^[a-z][a-z0-9_]*$`. |
+| `description` | `string` | No | Human-readable description. |
+| `id` | `string` or `string[]` | No | Source field(s) that uniquely identify a row. Required when a resolution document targets the same dataset. |
+| `source` | [ModelRef](#modelref) | **Yes** | Reference to the source data model. |
+| `target` | [ModelRef](#modelref) | **Yes** | Reference to the target data model. |
+| `source_path` | `string` | No | Dot-delimited path to a nested array in the source object. When set, the mapping operates on each item in that array. Use dot notation for deep nesting (e.g. `lines.sub_items`). |
+| `parent_fields` | `object` | No | Pulls ancestor-level fields into scope under explicit aliases. Keys are alias names; values are [ParentFieldRef](#parentfieldref) objects. Only meaningful when `source_path` is set. |
+| `filter_forward` | [Expression](#expression) | No | SQL WHERE condition — only source rows matching this condition are mapped forward to the target. |
+| `filter_reverse` | [Expression](#expression) | No | SQL WHERE condition — only target rows matching this condition are mapped back to this source. |
+| `computed_forward` | `object` | No | **Experimental.** Named computed expressions derived from source fields, available as aliases in forward expressions and `filter_forward`. Values are [Expression](#expression) objects. |
+| `computed_reverse` | `object` | No | **Experimental.** Named computed expressions derived from target fields, available as aliases in reverse expressions and `filter_reverse`. Values are [Expression](#expression) objects. |
+| `default_timestamp_field` | `string` | No | **Experimental.** Fallback source timestamp field for `LAST_MODIFIED` resolution. Used when a field mapping omits `timestamp_field`. |
+| `embedded` | `boolean` | No | When `true`, this mapping extracts a sub-entity from the same source row as a parent mapping. The embedded entity shares the parent's source identity. |
+| `field_mappings` | [FieldMapping[]](#fieldmapping) | **Yes** | One or more field-level mappings. |
 
 ### Example
 
 ```yaml
-- name: companies_to_company
-  description: ERP companies to canonical company model
-  id: id
-  filter_reverse:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: "'customer' = ANY(role)"
-  source:
-    semantic_model: erp_model
-    dataset: companies
-    model_file: ./model-erp.yaml
-  target:
-    semantic_model: acme_inc_model
-    dataset: company
-    model_file: ./model-acme.yaml
-  field_mappings:
-    - target_field: name
-      forward_expression:
-        dialects:
-          - dialect: ANSI_SQL
-            expression: company_name
-      reverse_expression:
-        dialects:
-          - dialect: ANSI_SQL
-            expression: name
-```
+mappings:
+  - name: crm_companies_to_company
+    description: CRM companies to canonical company
+    id: id
 
----
+    source:
+      schema_file: ./crm-openapi.yaml
+      schema_path: "#/components/schemas/Company"
+      schema_format: openapi
 
-## FieldMapping
+    target:
+      semantic_model: acme_model
+      dataset: company
+      model_file: ./model-acme.yaml
 
-Maps a single field between source and target.
+    default_timestamp_field: updated_at
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `target_field` | string | yes | Target field name |
-| `forward_expression` | [Expression](#expression) | yes | Source → target transformation |
-| `reverse_expression` | [Expression](#expression) | no | Target → source transformation. Omit for one-way mappings. |
-| `priority` | integer (≥ 1) | no | COALESCE ordering — lower number wins. See [Resolution](resolution-schema.md). |
-| `timestamp_field` | string | no | Source field for LAST_MODIFIED resolution |
-| `required_reverse` | boolean | no | When true, the row is excluded from reverse output if this field resolves to null. See [Required Reverse](#required-reverse). |
-| `description` | string | no | Human-readable description |
-
-### One-way vs. bi-directional
-
-If `reverse_expression` is present, the field is bi-directional. If omitted, the field is forward-only. Common reasons to omit reverse:
-
-- **Constants** — `forward_expression: "'customer'"` injects a literal; no source field to write back to.
-- **COLLECT fields** — an array of collected values can't meaningfully reverse to a single source field.
-- **Derived values** — computed expressions that don't map cleanly to a source column.
-
-### Example
-
-```yaml
-field_mappings:
-  - target_field: name
-    timestamp_field: modified_at
-    forward_expression:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: company_name
-    reverse_expression:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: name
-
-  - target_field: role
-    forward_expression:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: "'customer'"
-    # no reverse — constant value
+    field_mappings:
+      - target_field: name
+        source_field: name
+        priority: 2
 ```
 
 ---
 
 ## ModelRef
 
-Reference to a data model. Supports two forms:
-
-### OSI semantic model
+References a data model. Can point to an OSI semantic model or an external schema.
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `semantic_model` | string | yes | Name of the OSI semantic model |
-| `dataset` | string | yes | Dataset within the model |
-| `model_file` | string | no | Path to the OSI model YAML file |
+| `semantic_model` | `string` | Conditional | Name of an OSI semantic model. Required with `dataset`. |
+| `dataset` | `string` | Conditional | Dataset within the semantic model. Required with `semantic_model`. |
+| `model_file` | `string` | No | Path to the OSI semantic model YAML file. |
+| `schema_file` | `string` | Conditional | Path to an external schema file (JSON Schema, OpenAPI, Avro, Protobuf, etc.). |
+| `schema_path` | `string` | No | JSON Pointer (RFC 6901) into the `schema_file` identifying the specific schema to map. |
+| `schema_format` | `string` | No | Format of the external schema file. One of: `json_schema`, `openapi`, `avro`, `protobuf`, `custom`. |
 
-### External schema
+**Constraint:** Either `semantic_model` + `dataset` or `schema_file` must be provided.
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `schema_file` | string | yes | Path to external schema (OpenAPI, JSON Schema, Avro, etc.) |
-| `schema_path` | string | no | JSON Pointer into the schema file |
-| `schema_format` | string | no | One of: `json_schema`, `openapi`, `avro`, `protobuf`, `custom` |
-
-### Examples
+### OSI model reference
 
 ```yaml
-# OSI model reference
 source:
   semantic_model: erp_model
-  dataset: companies
+  dataset: customers
   model_file: ./model-erp.yaml
+```
 
-# External schema reference
+### External schema reference
+
+```yaml
 source:
-  schema_file: ./webshop-openapi.yaml
-  schema_path: "#/components/schemas/Order"
+  schema_file: ./crm-openapi.yaml
+  schema_path: "#/components/schemas/Company"
   schema_format: openapi
 ```
 
 ---
 
-## Expression
+## FieldMapping
 
-All expressions use multi-dialect syntax. This allows the same mapping to work across different SQL engines.
-
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `dialects` | array of [DialectExpression](#dialectexpression) | yes | One or more dialect-specific expressions |
-
-### DialectExpression
+Maps a single field between source and target models.
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `dialect` | string | yes | Dialect identifier (e.g. `ANSI_SQL`, `SNOWFLAKE`, `BIGQUERY`) |
-| `expression` | string | yes | The expression in that dialect |
+| `target_field` | `string` | **Yes** | Name of the field in the target model. |
+| `source_field` | `string` | No | Name of the field in the source model. Defaults to the same value as `target_field` when omitted. |
+| `expression_forward` | [Expression](#expression) | No | Expression transforming source → target. When omitted, `source_field` is copied directly. |
+| `expression_reverse` | [Expression](#expression) | No | Expression transforming target → source. When omitted, `target_field` is copied directly. |
+| `priority` | `integer` | No | COALESCE ordering — lower number wins. Only meaningful with `COALESCE` resolution. Minimum: `1`. |
+| `timestamp_field` | `string` | No | Source field driving `LAST_MODIFIED` resolution. Overrides the mapping-level `default_timestamp_field`. |
+| `required` | `boolean` | No | When `true`, the entire row is excluded from reverse output if this field's resolved value is null. Enables insert/delete propagation patterns. |
+| `description` | `string` | No | Human-readable description of the mapping logic. |
 
-### Example
+### Bidirectional copy
+
+When both expressions are omitted, the field is copied as-is in both directions:
 
 ```yaml
-forward_expression:
-  dialects:
-    - dialect: ANSI_SQL
-      expression: "UPPER(customer_name)"
-    - dialect: SNOWFLAKE
-      expression: "UPPER(customer_name)"
+- target_field: email
+  source_field: email
 ```
 
----
+### Copy with metadata
 
-## Patterns
-
-### Routing
-
-Use `filter_forward` on Mapping to send different source rows to different targets. Multiple Mapping entries can share the same source, each with a different filter.
+Omit expressions to copy, but attach metadata like `priority`:
 
 ```yaml
-# Route companies
-- name: customers_to_company
-  filter_forward:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: "customer_type = 'company'"
-  source: { semantic_model: crm_model, dataset: customers }
-  target: { semantic_model: acme_inc_model, dataset: company }
-
-# Route persons
-- name: customers_to_person
-  filter_forward:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: "customer_type = 'person'"
-  source: { semantic_model: crm_model, dataset: customers }
-  target: { semantic_model: acme_inc_model, dataset: person }
-```
-
-### Selective Reverse
-
-Use `filter_reverse` on Mapping to limit which target rows are written back to a source.
-
-```yaml
-- name: companies_to_company
-  filter_reverse:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: "'customer' = ANY(role)"
-```
-
-### Required Reverse
-
-Use `required_reverse: true` on a FieldMapping to exclude rows from reverse output when a field resolves to null.
-
-```yaml
-- target_field: account
+- target_field: name
+  source_field: name
   priority: 1
-  required_reverse: true
-  forward_expression:
+```
+
+### Bidirectional with expressions
+
+```yaml
+- target_field: email
+  source_field: customer_email
+  expression_forward:
     dialects:
       - dialect: ANSI_SQL
-        expression: customer_account
-```
-
-### Embedded
-
-Use `embedded: true` on a Mapping to extract a sub-entity from the same source row as a parent mapping. The embedded entity shares identity with the parent — no independent `id`.
-
-```yaml
-- name: customers_to_address
-  embedded: true
-  source: { semantic_model: crm_model, dataset: customers }
-  target: { semantic_model: acme_inc_model, dataset: address }
-  field_mappings:
-    - target_field: street
-      forward_expression:
-        dialects:
-          - dialect: ANSI_SQL
-            expression: billing_street
-```
-
-### Source Path
-
-Use `source_path` on a Mapping to extract items from a source array field into a flat target dataset. Each extraction is a separate, flat Mapping entry — no recursive nesting. This applies when the source has array-of-objects fields (OpenAPI, JSON Schema, etc.) — OSI models are already flat.
-
-```yaml
-- name: api_orders_to_order_line
-  source:
-    schema_file: ./webshop-openapi.yaml
-    schema_path: "#/components/schemas/Order"
-    schema_format: openapi
-  source_path: lines
-  target: { semantic_model: acme_inc_model, dataset: order_line }
-  id: line_num
-  field_mappings:
-    - target_field: product_id
-      forward_expression:
-        dialects:
-          - dialect: ANSI_SQL
-            expression: product_id
-```
-
-For deep nesting, use dot notation: `source_path: lines.sub_items`.
-
-All top-level Mapping features work identically with `source_path` — routing (`filter_forward`), selective reverse (`filter_reverse`), and embedding (`embedded`) all apply to the array items without any special "nested variant".
-
-#### Routing array items
-
-Multiple Mappings can share the same source and `source_path`, each with a different `filter_forward`. This routes array items to different targets — the same pattern as top-level routing:
-
-```yaml
-# Route product lines → order_line
-- name: api_orders_to_order_line
-  source_path: lines
-  filter_forward:
+        expression: customer_email
+  expression_reverse:
     dialects:
       - dialect: ANSI_SQL
-        expression: "line_type = 'product'"
-  target: { semantic_model: acme_inc_model, dataset: order_line }
-  field_mappings: [...]
+        expression: email
+```
 
-# Route discount lines → order_discount
-- name: api_orders_to_order_discount
-  source_path: lines
-  filter_forward:
+### One-way (forward only)
+
+```yaml
+- target_field: full_name
+  expression_forward:
     dialects:
       - dialect: ANSI_SQL
-        expression: "line_type = 'discount'"
-  target: { semantic_model: acme_inc_model, dataset: order_discount }
-  field_mappings: [...]
-```
-
-#### Embedding from array items
-
-Use `embedded: true` with `source_path` to extract denormalized data from array items. Same semantics as top-level embedded:
-
-```yaml
-- name: api_orders_to_product
-  embedded: true
-  source_path: lines
-  id: product_id
-  filter_forward:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: "line_type = 'product'"
-  target: { semantic_model: acme_inc_model, dataset: product }
-  field_mappings:
-    - target_field: product_name
-      forward_expression:
-        dialects:
-          - dialect: ANSI_SQL
-            expression: product_name
-```
-
-### Parent Fields
-
-When using `source_path`, expressions operate on array item fields by default. Use `parent_fields` to pull ancestor-level fields into scope under explicit aliases. This keeps expressions as pure SQL — no magic prefixes.
-
-```yaml
-- name: api_orders_to_order_line
-  source_path: lines
-  parent_fields:
-    parent_order_id:
-      path: ""             # "" = root source object
-      field: order_id
-  field_mappings:
-    - target_field: order_ref
-      forward_expression:
-        dialects:
-          - dialect: ANSI_SQL
-            expression: parent_order_id    # alias — valid SQL identifier
-```
-
-For deep nesting (e.g., `source_path: lines.sub_items`), set `path` to an intermediate ancestor:
-
-```yaml
-parent_fields:
-  root_order_id:
-    path: ""               # root Order object
-    field: order_id
-  parent_line_num:
-    path: lines             # parent array item
-    field: line_num
+        expression: "first_name || ' ' || last_name"
 ```
 
 ---
 
 ## ParentFieldRef
 
-Reference to an ancestor-level field, imported into scope under an alias.
+References an ancestor-level field, imported into scope under an alias. Only meaningful inside a mapping that uses `source_path`.
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `path` | string | no | Dot-delimited path to the ancestor scope. `""` = root source object. |
-| `field` | string | yes | Field name within the ancestor scope |
+| `path` | `string` | No | Dot-delimited path to the ancestor scope. Empty string means the root source object (parent of `source_path`). For deep nesting, specify an intermediate path (e.g. `lines` when `source_path` is `lines.sub_items`). |
+| `field` | `string` | **Yes** | Field name within the ancestor scope. |
+
+### Example
+
+```yaml
+source_path: lines.sub_items
+parent_fields:
+  order_id:
+    path: ""
+    field: id
+  line_id:
+    path: lines
+    field: line_id
+```
+
+In this example, `order_id` pulls `id` from the root object, and `line_id` pulls `line_id` from the intermediate `lines` array level.
 
 ---
 
-### Reverse Direction
+## Expression
 
-- **Scalar fields**: `reverse_expression` transforms the target value back to the source column.
-- **Routing**: `filter_forward` is inverted — tooling knows which target maps back to which source rows.
-- **Embedded**: Embedded fields are joined back to the parent source row.
-- **Source path**: Flat target rows are reassembled into an array and placed back into the parent source object. For routed array items, rows from multiple target datasets merge back into one array. Parent field aliases are resolved back to their ancestor locations.
+All expressions use the OSI multi-dialect pattern, allowing the same mapping to carry SQL variants side by side.
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `dialects` | [DialectExpression[]](#dialectexpression) | **Yes** | One or more dialect-specific expressions. |
+
+### DialectExpression
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `dialect` | `string` | **Yes** | SQL or expression language dialect identifier (e.g. `ANSI_SQL`, `SNOWFLAKE`). |
+| `expression` | `string` | **Yes** | Dialect-specific SQL expression. |
+
+### Example
+
+```yaml
+expression_forward:
+  dialects:
+    - dialect: ANSI_SQL
+      expression: "UPPER(name)"
+    - dialect: SNOWFLAKE
+      expression: "UPPER(name)"
+```
 
 ---
 
-## Further Reading
+## Filters and Computed Fields
 
-| Topic | Document |
-|-------|----------|
-| FK resolution, vocabulary normalization, source identity tracing | [FK Resolution](fk-resolution.md) |
-| Resolution groups, derived fields, model expressions | [Derived Fields](derived-fields.md) |
-| Conflict resolution strategies (COALESCE, LAST_MODIFIED, COLLECT) | [Resolution Schema](resolution-schema.md) |
+### Forward/Reverse Filters
+
+Use `filter_forward` and `filter_reverse` to selectively route rows. This is useful when one source maps to multiple targets, or when only a subset of target rows should reverse-map to a particular source.
+
+```yaml
+mappings:
+  - name: active_customers
+    filter_forward:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "status = 'ACTIVE'"
+    # ...
+```
+
+### Computed Fields (Experimental)
+
+> **Experimental** — this feature may change in future versions.
+
+`computed_forward` and `computed_reverse` define named expressions that can be referenced in field mappings. They act as reusable aliases scoped to the mapping.
+
+```yaml
+mappings:
+  - name: orders_mapping
+    computed_forward:
+      total_with_tax:
+        dialects:
+          - dialect: ANSI_SQL
+            expression: "amount * (1 + tax_rate)"
+    field_mappings:
+      - target_field: total
+        expression_forward:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: total_with_tax
+```
+
+---
+
+## Nested Array Mappings
+
+The `source_path` and `parent_fields` properties enable mapping nested/embedded arrays within a source object.
+
+When `source_path` is set, the mapping iterates over items in the specified array. `parent_fields` lets you pull outer-scope fields into the iteration context.
+
+```yaml
+mappings:
+  - name: order_lines
+    source_path: lines
+    parent_fields:
+      order_id:
+        path: ""
+        field: id
+    source:
+      semantic_model: erp
+      dataset: orders
+    target:
+      semantic_model: canonical
+      dataset: order_lines
+    field_mappings:
+      - target_field: order_id
+        expression_forward:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: order_id
+      - target_field: product
+        source_field: product_code
+        expression_forward:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: product_code
+```
+
+---
+
+## Embedded Mappings
+
+Set `embedded: true` when extracting a sub-entity from the same source row as a parent mapping. The embedded entity shares the parent's source identity and has no independent existence.
+
+```yaml
+mappings:
+  - name: company_address
+    embedded: true
+    source:
+      schema_file: ./crm-openapi.yaml
+      schema_path: "#/components/schemas/Company"
+      schema_format: openapi
+    target:
+      semantic_model: acme_model
+      dataset: address
+    field_mappings:
+      - target_field: street
+        expression_forward:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: billing_street
+```
+
+---
+
+## YAML Language Server Header
+
+For in-editor validation, add this header to your mapping YAML files:
+
+```yaml
+# yaml-language-server: $schema=../specs/osi-mapping-schema.json
+```
+
+Adjust the relative path to match your project structure.

@@ -1,212 +1,34 @@
 # yaml-language-server: $schema=../specs/osi-mapping-schema.json
 
-# CRM customers routed to two target datasets based on customer_type.
-# Demonstrates: filter_forward (routing), required_reverse,
-#               one source → multiple targets via separate Mapping entries.
-#
-# Phase 3: Added customers_to_address embedded mapping.
-# Phase 4: Added customers_to_address embedded mapping and country_lookup_to_country.
-#          Country is a proper mapped entity — no subqueries needed.
-#          address.country is a FK resolved via source identity tracing.
+# CRM companies → canonical company.
+# Demonstrates: OpenAPI source, source_field, default_timestamp_field.
 
 version: "1.0"
 
 mappings:
-  # Route company-type customers to the company dataset
-  - name: customers_to_company
-    description: CRM company-type customers to canonical company
+  - name: companies_to_company
+    description: CRM companies to canonical company
     id: id
-    filter_forward:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: "customer_type = 'company'"
+
     source:
-      semantic_model: crm_model
-      dataset: customers
-      model_file: ./model-crm.yaml
+      schema_file: ./crm-openapi.yaml
+      schema_path: "#/components/schemas/Company"
+      schema_format: openapi
 
     target:
-      semantic_model: acme_inc_model
+      semantic_model: acme_model
       dataset: company
       model_file: ./model-acme.yaml
 
-    field_mappings:
-      - target_field: email
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: customer_email
+    default_timestamp_field: updated_at
 
+    field_mappings:
       - target_field: name
-        timestamp_field: last_updated
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: customer_name
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: name
+        source_field: name
+        priority: 2
+
+      - target_field: email
+        source_field: email
 
       - target_field: account
-        priority: 1
-        required_reverse: true
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: customer_account
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: account
-
-      - target_field: role
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: "'customer'"
-
-  # Route person-type customers to the person dataset
-  - name: customers_to_person
-    description: CRM person-type customers to canonical person
-    id: id
-    filter_forward:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: "customer_type = 'person'"
-
-    source:
-      semantic_model: crm_model
-      dataset: customers
-      model_file: ./model-crm.yaml
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: person
-      model_file: ./model-acme.yaml
-
-    field_mappings:
-      - target_field: email
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: customer_email
-
-      - target_field: name
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: customer_name
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: name
-
-      - target_field: phone
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: customer_phone
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: phone
-
-      - target_field: role
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: "'customer'"
-
-  # Extract billing address from CRM customer rows (embedded sub-entity)
-  - name: customers_to_address
-    description: Extract billing address from CRM customer rows
-    embedded: true
-
-    source:
-      semantic_model: crm_model
-      dataset: customers
-      model_file: ./model-crm.yaml
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: address
-      model_file: ./model-acme.yaml
-
-    field_mappings:
-      - target_field: street
-        timestamp_field: last_updated
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: billing_street
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: street
-
-      - target_field: city
-        timestamp_field: last_updated
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: billing_city
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: city
-
-      - target_field: postal_code
-        timestamp_field: last_updated
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: billing_postal_code
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: postal_code
-
-      - target_field: country
-        timestamp_field: last_updated
-        description: >
-          FK to country entity. CRM stores English names ("Norway").
-          Tooling resolves via source identity: CRM country_lookup_to_country
-          maps "Norway" → country entity with iso_code "NO".
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: billing_country
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: country
-
-  # CRM country_lookup → canonical country entity
-  # Same pattern as customers → company: both sources contribute to a shared
-  # target and resolution merges them. id: name means the English name is
-  # this source's identity, which tooling uses to resolve address.country FKs.
-  - name: country_lookup_to_country
-    description: CRM country lookup (English names) to canonical country
-    id: name
-
-    source:
-      semantic_model: crm_model
-      dataset: country_lookup
-      model_file: ./model-crm.yaml
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: country
-      model_file: ./model-acme.yaml
-
-    field_mappings:
-      - target_field: iso_code
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: iso_code
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: iso_code
+        source_field: account_number

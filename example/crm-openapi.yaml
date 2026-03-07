@@ -1,0 +1,43 @@
+openapi: "3.0.3"
+info:
+  title: CRM API
+  version: "1.0.0"
+  description: CRM system — company records
+
+paths:
+  /companies:
+    get:
+      summary: List companies
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Company"
+
+components:
+  schemas:
+    Company:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: integer
+          description: CRM company identifier
+        name:
+          type: string
+          description: Company display name
+        email:
+          type: string
+          format: email
+          description: Primary contact email
+        account_number:
+          type: string
+          description: Customer account number (custom field)
+        updated_at:
+          type: string
+          format: date-time
+          description: Last modification timestamp

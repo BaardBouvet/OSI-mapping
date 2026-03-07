@@ -1,198 +1,34 @@
 # yaml-language-server: $schema=../specs/osi-mapping-schema.json
 
-# Source A: ERP companies → canonical company
-# Only customers are sent back to the ERP (filter_reverse).
-# Demonstrates: id, priority, timestamp_field, filter_reverse, embedded
-#
-# Phase 3: Added products_to_product mapping.
-# Phase 4: Added companies_to_address embedded mapping and country_lookup_to_country.
-#          Country is a proper mapped entity — no subqueries needed.
-#          address.country is a FK resolved via source identity tracing.
+# ERP customers → canonical company.
+# Demonstrates: id, source_field, default_timestamp_field.
 
 version: "1.0"
 
 mappings:
-  - name: companies_to_company
-    description: ERP companies to canonical company model
+  - name: customers_to_company
+    description: ERP customers to canonical company
     id: id
-    filter_reverse:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: "'customer' = ANY(role)"
 
     source:
       semantic_model: erp_model
-      dataset: companies
+      dataset: customers
       model_file: ./model-erp.yaml
 
     target:
-      semantic_model: acme_inc_model
+      semantic_model: acme_model
       dataset: company
       model_file: ./model-acme.yaml
 
-    field_mappings:
-      - target_field: email
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: company_email
+    default_timestamp_field: modified_at
 
+    field_mappings:
       - target_field: name
-        timestamp_field: modified_at
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: company_name
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: name
+        source_field: customer_name
+        priority: 1
+
+      - target_field: email
+        source_field: customer_email
 
       - target_field: account
-        priority: 2
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: company_account
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: account
-
-      - target_field: role
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: "'customer'"
-
-  # Extract company address from ERP rows (embedded sub-entity)
-  # ERP stores country as Norwegian name ("Norge"). The forward_expression
-  # uses a subquery against the ERP's own country_lookup table to convert
-  # to ISO code. CRM does the same from English names.
-  - name: companies_to_address
-    description: Extract company address from ERP company rows
-    embedded: true
-
-    source:
-      semantic_model: erp_model
-      dataset: companies
-      model_file: ./model-erp.yaml
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: address
-      model_file: ./model-acme.yaml
-
-    field_mappings:
-      - target_field: street
-        timestamp_field: modified_at
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: address_street
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: street
-
-      - target_field: city
-        timestamp_field: modified_at
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: address_city
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: city
-
-      - target_field: postal_code
-        timestamp_field: modified_at
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: address_postal_code
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: postal_code
-
-      - target_field: country
-        timestamp_field: modified_at
-        description: >
-          FK to country entity. ERP stores Norwegian names ("Norge").
-          Tooling resolves via source identity: ERP country_lookup_to_country
-          maps "Norge" → country entity with iso_code "NO".
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: address_country
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: country
-
-  # ERP country_lookup → canonical country entity
-  # Same pattern as companies → company: both sources contribute to a shared
-  # target and resolution merges them. id: name means the Norwegian name is
-  # this source's identity, which tooling uses to resolve address.country FKs.
-  - name: country_lookup_to_country
-    description: ERP country lookup (Norwegian names) to canonical country
-    id: name
-
-    source:
-      semantic_model: erp_model
-      dataset: country_lookup
-      model_file: ./model-erp.yaml
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: country
-      model_file: ./model-acme.yaml
-
-    field_mappings:
-      - target_field: iso_code
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: iso_code
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: iso_code
-
-  # ERP product catalog → canonical product
-  - name: products_to_product
-    description: ERP product catalog to canonical product
-    id: id
-
-    source:
-      semantic_model: erp_model
-      dataset: products
-      model_file: ./model-erp.yaml
-
-    target:
-      semantic_model: acme_inc_model
-      dataset: product
-      model_file: ./model-acme.yaml
-
-    field_mappings:
-      - target_field: product_id
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: product_code
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: product_id
-
-      - target_field: product_name
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: name
-        reverse_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: product_name
+        source_field: account_number
