@@ -37,6 +37,13 @@
           "type": "string",
           "description": "Human-readable description"
         },
+        "id": {
+          "description": "Source field(s) that uniquely identify a row in this source. Required when a resolution document targets the same dataset.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          ]
+        },
         "source": {
           "$ref": "#/$defs/ModelRef"
         },
@@ -136,6 +143,15 @@
             { "type": "string" },
             { "$ref": "#/$defs/Expression" }
           ]
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "COALESCE ordering — lower number wins. Only meaningful when the target field's resolution strategy is COALESCE."
+        },
+        "timestamp_field": {
+          "type": "string",
+          "description": "Source field driving LAST_MODIFIED resolution. Only meaningful when the target field's resolution strategy is LAST_MODIFIED."
         },
         "description": {
           "type": "string",

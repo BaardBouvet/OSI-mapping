@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=../../specs/osi-schema.json
+
+version: "1.0"
+
+semantic_model:
+  - name: crm_model
+    description: CRM system — customer data
+
+    datasets:
+      - name: customers
+        source: crm.public.customers
+        primary_key: [id]
+        unique_keys:
+          - [id]
+        description: Customer records from the CRM system
+
+        fields:
+          - name: id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: id
+            description: CRM customer identifier
+
+          - name: customer_email
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: customer_email
+            description: Primary contact email
+
+          - name: customer_name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: customer_name
+            description: Customer display name
+
+          - name: customer_account
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: customer_account
+            description: Account number
+
+          - name: last_updated
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: last_updated
+            description: Last update timestamp
+
+    relationships: []
+    metrics: []

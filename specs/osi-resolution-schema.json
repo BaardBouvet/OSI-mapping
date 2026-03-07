@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BaardBouvet/OSI-mapping/specs/osi-resolution-schema.json",
+  "title": "OSI Resolution Schema",
+  "description": "Schema for defining conflict resolution rules when multiple mappings target the same dataset.",
+  "type": "object",
+  "required": ["version", "resolution"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "resolution": {
+      "$ref": "#/$defs/Resolution"
+    }
+  },
+  "$defs": {
+    "Resolution": {
+      "type": "object",
+      "description": "Resolution rules for a single target dataset",
+      "required": ["name", "target", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique name for this resolution configuration",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "description": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "osi-mapping-schema.json#/$defs/ModelRef",
+          "description": "The target dataset these rules apply to"
+        },
+        "fields": {
+          "type": "object",
+          "description": "Per-field resolution rules. Keys are target field names.",
+          "additionalProperties": {
+            "$ref": "#/$defs/FieldResolution"
+          }
+        }
+      }
+    },
+    "FieldResolution": {
+      "type": "object",
+      "description": "Resolution rules for a single target field",
+      "required": ["strategy"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "$ref": "#/$defs/Strategy"
+        }
+      }
+    },
+    "Strategy": {
+      "type": "object",
+      "description": "Resolution strategy — discriminated by type",
+      "required": ["type"],
+      "oneOf": [
+        {
+          "description": "Pick the value from the highest-priority source (lowest number wins)",
+          "properties": {
+            "type": { "const": "COALESCE" }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        },
+        {
+          "description": "Pick the value from the most recently updated source",
+          "properties": {
+            "type": { "const": "LAST_MODIFIED" }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        },
+        {
+          "description": "Collect all source values into an array. When link is true, values are also used for entity linking (transitive closure).",
+          "properties": {
+            "type": { "const": "COLLECT" },
+            "link": {
+              "type": "boolean",
+              "description": "When true, records sharing this field's value are linked as the same entity. All values are retained for transitive closure."
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        },
+        {
+          "description": "Resolve via a custom aggregation expression",
+          "properties": {
+            "type": { "const": "EXPRESSION" },
+            "expression": {
+              "description": "Custom aggregation expression. Use {value} as placeholder.",
+              "oneOf": [
+                { "type": "string" },
+                {
+                  "type": "object",
+                  "required": ["dialects"],
+                  "properties": {
+                    "dialects": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": ["dialect", "expression"],
+                        "properties": {
+                          "dialect": { "type": "string" },
+                          "expression": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "required": ["type", "expression"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

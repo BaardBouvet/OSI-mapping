@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=../../specs/osi-schema.json
+
+version: "1.0"
+
+semantic_model:
+  - name: erp_model
+    description: ERP system — company master data
+
+    datasets:
+      - name: companies
+        source: erp.dbo.companies
+        primary_key: [id]
+        unique_keys:
+          - [id]
+        description: Company records from the ERP system
+
+        fields:
+          - name: id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: id
+            description: ERP company identifier
+
+          - name: company_email
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: company_email
+            description: Primary contact email
+
+          - name: company_name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: company_name
+            description: Legal company name
+
+          - name: company_account
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: company_account
+            description: Account number
+
+          - name: modified_at
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: modified_at
+            description: Last modification timestamp
+
+    relationships: []
+    metrics: []
