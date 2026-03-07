@@ -153,10 +153,6 @@
         "description": {
           "type": "string",
           "description": "Human-readable description of the mapping logic"
-        },
-        "data_loss_warning": {
-          "type": "string",
-          "description": "Warning about potential data loss in the reverse direction"
         }
       }
     },

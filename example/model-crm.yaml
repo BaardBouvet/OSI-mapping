@@ -90,7 +90,44 @@ semantic_model:
               dialects:
                 - dialect: ANSI_SQL
                   expression: billing_country
-            description: Billing address country
+            description: Billing address country (English name, e.g. "Norway")
 
-    relationships: []
+      - name: country_lookup
+        source: crm.public.country_lookup
+        primary_key: [id]
+        unique_keys:
+          - [id]
+          - [iso_code]
+          - [name]
+        description: Country reference table — maps English names to ISO codes
+
+        fields:
+          - name: id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: id
+            description: Country lookup identifier
+
+          - name: name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: name
+            description: English country name (e.g. Norway)
+
+          - name: iso_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: iso_code
+            description: ISO 3166-1 alpha-2 code (e.g. NO)
+
+    relationships:
+      - name: customer_country
+        from: customers
+        to: country_lookup
+        from_columns: [billing_country]
+        to_columns: [name]
+
     metrics: []

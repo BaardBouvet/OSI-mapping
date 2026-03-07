@@ -5,6 +5,9 @@
 #               one source → multiple targets via separate Mapping entries.
 #
 # Phase 3: Added customers_to_address embedded mapping.
+# Phase 4: Added customers_to_address embedded mapping and country_lookup_to_country.
+#          Country is a proper mapped entity — no subqueries needed.
+#          address.country is a FK resolved via source identity tracing.
 
 version: "1.0"
 
@@ -132,6 +135,7 @@ mappings:
 
     field_mappings:
       - target_field: street
+        timestamp_field: last_updated
         forward_expression:
           dialects:
             - dialect: ANSI_SQL
@@ -142,6 +146,7 @@ mappings:
               expression: street
 
       - target_field: city
+        timestamp_field: last_updated
         forward_expression:
           dialects:
             - dialect: ANSI_SQL
@@ -152,6 +157,7 @@ mappings:
               expression: city
 
       - target_field: postal_code
+        timestamp_field: last_updated
         forward_expression:
           dialects:
             - dialect: ANSI_SQL
@@ -162,6 +168,11 @@ mappings:
               expression: postal_code
 
       - target_field: country
+        timestamp_field: last_updated
+        description: >
+          FK to country entity. CRM stores English names ("Norway").
+          Tooling resolves via source identity: CRM country_lookup_to_country
+          maps "Norway" → country entity with iso_code "NO".
         forward_expression:
           dialects:
             - dialect: ANSI_SQL
@@ -170,3 +181,32 @@ mappings:
           dialects:
             - dialect: ANSI_SQL
               expression: country
+
+  # CRM country_lookup → canonical country entity
+  # Same pattern as customers → company: both sources contribute to a shared
+  # target and resolution merges them. id: name means the English name is
+  # this source's identity, which tooling uses to resolve address.country FKs.
+  - name: country_lookup_to_country
+    description: CRM country lookup (English names) to canonical country
+    id: name
+
+    source:
+      semantic_model: crm_model
+      dataset: country_lookup
+      model_file: ./model-crm.yaml
+
+    target:
+      semantic_model: acme_inc_model
+      dataset: country
+      model_file: ./model-acme.yaml
+
+    field_mappings:
+      - target_field: iso_code
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: iso_code
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: iso_code

@@ -258,5 +258,49 @@ semantic_model:
                 - dialect: ANSI_SQL
                   expression: amount
 
-    relationships: []
+      - name: country
+        source: canonical.public.country
+        primary_key: [iso_code]
+        unique_keys:
+          - [iso_code]
+        description: >
+          Country reference entity — merged from ERP (Norwegian names)
+          and CRM (English names) country_lookup tables. Both sources
+          contribute rows that are linked by iso_code during resolution.
+          Only iso_code is stored canonically; the source-side name
+          ("Norge", "Norway") is the source identity used for FK tracing.
+
+        fields:
+          - name: iso_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: iso_code
+            description: ISO 3166-1 alpha-2 code (e.g. NO) — primary key
+
+    relationships:
+      - name: address_to_country
+        from: address
+        to: country
+        from_columns: [country]
+        to_columns: [iso_code]
+
+      - name: order_line_to_order
+        from: order_line
+        to: order
+        from_columns: [order_ref]
+        to_columns: [order_id]
+
+      - name: order_line_to_product
+        from: order_line
+        to: product
+        from_columns: [product_id]
+        to_columns: [product_id]
+
+      - name: order_discount_to_order
+        from: order_discount
+        to: order
+        from_columns: [order_ref]
+        to_columns: [order_id]
+
     metrics: []

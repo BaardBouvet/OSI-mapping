@@ -19,7 +19,7 @@ specs/
   osi-resolution-schema.json   # JSON Schema for resolution files
   osi-schema.json              # OSI semantic model schema (reference)
 docs/
-  concepts.md                  # High-level overview
+  README.md                    # High-level overview and concepts
   mapping-schema.md            # Mapping schema reference
   resolution-schema.md         # Resolution schema reference
 example/

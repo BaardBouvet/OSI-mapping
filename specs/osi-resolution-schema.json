@@ -91,18 +91,6 @@
           },
           "required": ["type"],
           "additionalProperties": false
-        },
-        {
-          "description": "Resolve via a custom aggregation expression",
-          "properties": {
-            "type": { "const": "EXPRESSION" },
-            "expression": {
-              "description": "Custom aggregation expression. Use {value} as placeholder.",
-              "$ref": "osi-mapping-schema.json#/$defs/Expression"
-            }
-          },
-          "required": ["type", "expression"],
-          "additionalProperties": false
         }
       ]
     }

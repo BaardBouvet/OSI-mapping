@@ -129,24 +129,6 @@ strategy:
 
 **Reverse direction**: COLLECT fields are inherently one-way. The FieldMappings for COLLECT fields should omit `reverse_expression`.
 
-### EXPRESSION
-
-Resolve via a **custom aggregation expression**. Use this for strategies not covered by the built-in types.
-
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `type` | `"EXPRESSION"` | yes | Strategy discriminator |
-| `expression` | [Expression](mapping-schema.md#expression) | yes | Custom aggregation expression |
-
-```yaml
-strategy:
-  type: EXPRESSION
-  expression:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: "MAX({value})"
-```
-
 ---
 
 ## How Resolution Connects to Mappings
@@ -158,6 +140,5 @@ Resolution and mapping schemas work together through shared conventions:
 | COALESCE | `priority` | Determines winner (lower wins) |
 | LAST_MODIFIED | `timestamp_field` | Determines winner (latest wins) |
 | COLLECT | — | All values kept; omit `reverse_expression` |
-| EXPRESSION | — | Custom logic in the expression |
 
 The `target` in a Resolution entry matches the `target` in one or more Mapping entries. The field names in `fields` correspond to `target_field` values in those mappings' `field_mappings`.
