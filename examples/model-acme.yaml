@@ -93,5 +93,170 @@ semantic_model:
                   expression: role
             description: Roles this person has (e.g. customer)
 
+      - name: address
+        source: canonical.public.address
+        primary_key: [address_id]
+        unique_keys:
+          - [address_id]
+        description: Billing address extracted from CRM customer rows (embedded)
+
+        fields:
+          - name: address_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: address_id
+            description: Address identifier (derived from parent source row)
+
+          - name: street
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: street
+
+          - name: city
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: city
+
+          - name: postal_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: postal_code
+
+          - name: country
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: country
+
+      - name: product
+        source: canonical.public.product
+        primary_key: [product_id]
+        unique_keys:
+          - [product_id]
+        description: Product catalog — ERP is authoritative, webshop provides supplemental data
+
+        fields:
+          - name: product_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: product_id
+            description: Product identifier
+
+          - name: product_name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: product_name
+
+          - name: product_category
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: product_category
+
+      - name: order
+        source: canonical.public.order
+        primary_key: [order_id]
+        unique_keys:
+          - [order_id]
+        description: Orders from the webshop API
+
+        fields:
+          - name: order_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: order_id
+
+          - name: customer_name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: customer_name
+
+          - name: total
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: total
+
+      - name: order_line
+        source: canonical.public.order_line
+        primary_key: [order_ref, line_num]
+        unique_keys:
+          - [order_ref, line_num]
+        description: Product line items extracted from order lines[]
+
+        fields:
+          - name: order_ref
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: order_ref
+            description: FK to order
+
+          - name: line_num
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: line_num
+
+          - name: product_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: product_id
+            description: FK to product
+
+          - name: quantity
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: quantity
+
+          - name: unit_price
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: unit_price
+
+      - name: order_discount
+        source: canonical.public.order_discount
+        primary_key: [order_ref, line_num]
+        unique_keys:
+          - [order_ref, line_num]
+        description: Discount line items extracted from order lines[]
+
+        fields:
+          - name: order_ref
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: order_ref
+            description: FK to order
+
+          - name: line_num
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: line_num
+
+          - name: discount_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: discount_code
+
+          - name: amount
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: amount
+
     relationships: []
     metrics: []

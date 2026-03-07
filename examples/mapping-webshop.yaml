@@ -1,0 +1,208 @@
+# yaml-language-server: $schema=../specs/osi-mapping-schema.json
+
+# Webshop API orders → canonical order, order_line, order_discount, product.
+#
+# Demonstrates Phase 3 nested features:
+#   - nested extraction: lines[] → flat order_line and order_discount rows
+#   - nested routing: filter_forward on line_type discriminates product vs discount
+#   - nested embedding: product info denormalized in product lines → product dataset
+
+version: "1.0"
+
+mappings:
+  - name: api_orders_to_order
+    description: Webshop API orders — parent fields + nested line routing + embedded product extraction
+    id: order_id
+
+    source:
+      schema_file: ./webshop-openapi.yaml
+      schema_path: "#/components/schemas/Order"
+      schema_format: openapi
+
+    target:
+      semantic_model: acme_inc_model
+      dataset: order
+      model_file: ./model-acme.yaml
+
+    field_mappings:
+      # --- Parent-level scalar fields ---
+
+      - target_field: order_id
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: order_id
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: order_id
+
+      - target_field: customer_name
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: customer_name
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: customer_name
+
+      - target_field: total
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: total
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: total
+
+      # --- Nested: route product lines → order_line ---
+
+      - target_field: lines
+        nested:
+          target:
+            semantic_model: acme_inc_model
+            dataset: order_line
+            model_file: ./model-acme.yaml
+          id: line_num
+          filter_forward:
+            dialects:
+              - dialect: ANSI_SQL
+                expression: "line_type = 'product'"
+          field_mappings:
+            - target_field: order_ref
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: order_id
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: order_ref
+            - target_field: line_num
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: line_num
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: line_num
+            - target_field: product_id
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: product_id
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: product_id
+            - target_field: quantity
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: quantity
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: quantity
+            - target_field: unit_price
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: unit_price
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: unit_price
+
+      # --- Nested: route discount lines → order_discount ---
+
+      - target_field: lines
+        nested:
+          target:
+            semantic_model: acme_inc_model
+            dataset: order_discount
+            model_file: ./model-acme.yaml
+          id: line_num
+          filter_forward:
+            dialects:
+              - dialect: ANSI_SQL
+                expression: "line_type = 'discount'"
+          field_mappings:
+            - target_field: order_ref
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: order_id
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: order_ref
+            - target_field: line_num
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: line_num
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: line_num
+            - target_field: discount_code
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: discount_code
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: discount_code
+            - target_field: amount
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: amount
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: amount
+
+      # --- Nested + Embedded: extract product info from product lines → product ---
+
+      - target_field: lines
+        nested:
+          embedded: true
+          target:
+            semantic_model: acme_inc_model
+            dataset: product
+            model_file: ./model-acme.yaml
+          id: product_id
+          filter_forward:
+            dialects:
+              - dialect: ANSI_SQL
+                expression: "line_type = 'product'"
+          field_mappings:
+            - target_field: product_id
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: product_id
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: product_id
+            - target_field: product_name
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: product_name
+              reverse_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: product_name
+            - target_field: product_category
+              forward_expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: product_category

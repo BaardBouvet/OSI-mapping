@@ -50,5 +50,34 @@ semantic_model:
                   expression: modified_at
             description: Last modification timestamp
 
+      - name: products
+        source: erp.dbo.products
+        primary_key: [id]
+        unique_keys:
+          - [id]
+        description: Product catalog from the ERP system
+
+        fields:
+          - name: id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: id
+            description: ERP product identifier
+
+          - name: product_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: product_code
+            description: Product code used as canonical product_id
+
+          - name: name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: name
+            description: Product name
+
     relationships: []
     metrics: []

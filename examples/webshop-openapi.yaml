@@ -1,0 +1,61 @@
+# Webshop Orders API — non-OSI source schema (OpenAPI)
+#
+# Each order has a lines[] array containing both product lines and discount lines
+# (discriminated by line_type). Product lines carry embedded product info
+# (product_name, product_category).
+
+openapi: "3.0.0"
+info:
+  title: Webshop Orders API
+  version: "1.0"
+paths:
+  /orders:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+components:
+  schemas:
+    Order:
+      type: object
+      properties:
+        order_id:
+          type: string
+        customer_name:
+          type: string
+        total:
+          type: number
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/LineItem"
+    LineItem:
+      type: object
+      required: [line_type, line_num]
+      properties:
+        line_type:
+          type: string
+          enum: [product, discount]
+        line_num:
+          type: integer
+        # Product-line fields
+        product_id:
+          type: string
+        product_name:
+          type: string
+        product_category:
+          type: string
+        quantity:
+          type: integer
+        unit_price:
+          type: number
+        # Discount-line fields
+        discount_code:
+          type: string
+        amount:
+          type: number

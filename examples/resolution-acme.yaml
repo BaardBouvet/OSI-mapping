@@ -1,13 +1,11 @@
 # yaml-language-server: $schema=../specs/osi-resolution-schema.json
 
-# Resolution rules for the company dataset.
-# Declares the target's policy — knows nothing about which mappings exist.
+# Resolution rules for the Acme target model.
 #
-# Resolution behavior:
-#   email       — COLLECT with link: true → all values retained as array, used for entity linking
-#   name        — LAST_MODIFIED → each mapping's timestamp_field determines the winner
-#   account — COALESCE → each mapping's priority determines the winner (lowest wins)
-#   role    — COLLECT → all roles retained as array (e.g. customer, supplier)
+# company: two sources (ERP + CRM) — needs resolution.
+# product: two sources (ERP master + webshop embedded in order lines) — needs resolution.
+#
+# address, order, order_line, order_discount: single source each — no resolution needed.
 
 
 version: "1.0"
@@ -38,3 +36,20 @@ resolutions:
       role:
         strategy:
           type: COLLECT
+
+  - name: product_resolution
+    description: Resolution rules for the product dataset — ERP is authoritative
+
+    target:
+      semantic_model: acme_inc_model
+      dataset: product
+      model_file: ./model-acme.yaml
+
+    fields:
+      product_name:
+        strategy:
+          type: COALESCE
+
+      product_category:
+        strategy:
+          type: COALESCE

@@ -58,6 +58,10 @@
           "description": "SQL WHERE condition — only target rows matching this condition are mapped reverse to this source. Used for selective reverse propagation.",
           "$ref": "#/$defs/Expression"
         },
+        "embedded": {
+          "type": "boolean",
+          "description": "When true, this mapping extracts a sub-entity from the same source row as a parent mapping. The embedded entity shares the parent's source identity and has no independent existence."
+        },
         "field_mappings": {
           "type": "array",
           "description": "Field-level mappings from source to target",
@@ -130,13 +134,23 @@
     },
     "FieldMapping": {
       "type": "object",
-      "description": "Maps a single field between source and target models",
-      "required": ["target_field", "forward_expression"],
+      "description": "Maps a single field between source and target models. Must have either forward_expression (scalar mapping) or nested (array extraction), but not both.",
+      "required": ["target_field"],
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": ["forward_expression"],
+          "not": { "required": ["nested"] }
+        },
+        {
+          "required": ["nested"],
+          "not": { "required": ["forward_expression"] }
+        }
+      ],
       "properties": {
         "target_field": {
           "type": "string",
-          "description": "Name of the field in the target model"
+          "description": "Name of the field in the target model. For nested mappings, this names the source array field."
         },
         "forward_expression": {
           "description": "Expression that transforms source into the target field (source → target)",
@@ -145,6 +159,43 @@
         "reverse_expression": {
           "description": "Expression that transforms the target field back into the source (target → source). Omit if the mapping is inherently one-way.",
           "$ref": "#/$defs/Expression"
+        },
+        "nested": {
+          "type": "object",
+          "description": "Extracts items from an array-typed source field into a separate flat target dataset. Only applicable when the source has array-of-objects fields (e.g., OpenAPI, JSON Schema).",
+          "required": ["target", "field_mappings"],
+          "additionalProperties": false,
+          "properties": {
+            "target": {
+              "$ref": "#/$defs/ModelRef",
+              "description": "The flat target dataset for extracted array items"
+            },
+            "id": {
+              "description": "Field(s) within each array item that uniquely identify it",
+              "oneOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+              ]
+            },
+            "filter_forward": {
+              "$ref": "#/$defs/Expression",
+              "description": "Filter applied to each array item in the forward direction. Only items matching this expression are extracted. Enables routing items to different targets."
+            },
+            "filter_reverse": {
+              "$ref": "#/$defs/Expression",
+              "description": "Filter applied to target rows when reconstructing the array in the reverse direction."
+            },
+            "embedded": {
+              "type": "boolean",
+              "description": "When true, marks this nested extraction as an embedded sub-entity. The extracted entity shares identity with the array item and has no independent existence in the source."
+            },
+            "field_mappings": {
+              "type": "array",
+              "description": "Field-level mappings from array item properties to target fields",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/FieldMapping" }
+            }
+          }
         },
         "priority": {
           "type": "integer",

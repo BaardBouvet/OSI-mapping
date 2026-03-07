@@ -3,6 +3,8 @@
 # Source A: ERP companies → canonical company
 # Only customers are sent back to the ERP (filter_reverse).
 # Demonstrates: id, priority, timestamp_field, filter_reverse
+#
+# Phase 3: Added products_to_product mapping.
 
 version: "1.0"
 
@@ -59,3 +61,39 @@ mappings:
           dialects:
             - dialect: ANSI_SQL
               expression: "'customer'"
+
+  # ERP product catalog → canonical product
+  - name: products_to_product
+    description: ERP product catalog to canonical product
+    id: id
+
+    source:
+      semantic_model: erp_model
+      dataset: products
+      model_file: ./model-erp.yaml
+
+    target:
+      semantic_model: acme_inc_model
+      dataset: product
+      model_file: ./model-acme.yaml
+
+    field_mappings:
+      - target_field: product_id
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: product_code
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: product_id
+
+      - target_field: product_name
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: name
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: product_name

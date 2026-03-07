@@ -3,6 +3,8 @@
 # CRM customers routed to two target datasets based on customer_type.
 # Demonstrates: filter_forward (routing), required_reverse,
 #               one source → multiple targets via separate Mapping entries.
+#
+# Phase 3: Added customers_to_address embedded mapping.
 
 version: "1.0"
 
@@ -112,3 +114,59 @@ mappings:
           dialects:
             - dialect: ANSI_SQL
               expression: "'customer'"
+
+  # Extract billing address from CRM customer rows (embedded sub-entity)
+  - name: customers_to_address
+    description: Extract billing address from CRM customer rows
+    embedded: true
+
+    source:
+      semantic_model: crm_model
+      dataset: customers
+      model_file: ./model-crm.yaml
+
+    target:
+      semantic_model: acme_inc_model
+      dataset: address
+      model_file: ./model-acme.yaml
+
+    field_mappings:
+      - target_field: street
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: billing_street
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: street
+
+      - target_field: city
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: billing_city
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: city
+
+      - target_field: postal_code
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: billing_postal_code
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: postal_code
+
+      - target_field: country
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: billing_country
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: country
