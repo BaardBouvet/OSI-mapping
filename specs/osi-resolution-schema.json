@@ -98,27 +98,7 @@
             "type": { "const": "EXPRESSION" },
             "expression": {
               "description": "Custom aggregation expression. Use {value} as placeholder.",
-              "oneOf": [
-                { "type": "string" },
-                {
-                  "type": "object",
-                  "required": ["dialects"],
-                  "properties": {
-                    "dialects": {
-                      "type": "array",
-                      "minItems": 1,
-                      "items": {
-                        "type": "object",
-                        "required": ["dialect", "expression"],
-                        "properties": {
-                          "dialect": { "type": "string" },
-                          "expression": { "type": "string" }
-                        }
-                      }
-                    }
-                  }
-                }
-              ]
+              "$ref": "osi-mapping-schema.json#/$defs/Expression"
             }
           },
           "required": ["type", "expression"],

@@ -52,17 +52,11 @@
         },
         "filter_forward": {
           "description": "SQL WHERE condition — only source rows matching this condition are mapped forward to the target. Used for routing one source to multiple targets.",
-          "oneOf": [
-            { "type": "string" },
-            { "$ref": "#/$defs/Expression" }
-          ]
+          "$ref": "#/$defs/Expression"
         },
         "filter_reverse": {
           "description": "SQL WHERE condition — only target rows matching this condition are mapped reverse to this source. Used for selective reverse propagation.",
-          "oneOf": [
-            { "type": "string" },
-            { "$ref": "#/$defs/Expression" }
-          ]
+          "$ref": "#/$defs/Expression"
         },
         "field_mappings": {
           "type": "array",
@@ -146,17 +140,11 @@
         },
         "forward_expression": {
           "description": "Expression that transforms source into the target field (source → target)",
-          "oneOf": [
-            { "type": "string" },
-            { "$ref": "#/$defs/Expression" }
-          ]
+          "$ref": "#/$defs/Expression"
         },
         "reverse_expression": {
           "description": "Expression that transforms the target field back into the source (target → source). Omit if the mapping is inherently one-way.",
-          "oneOf": [
-            { "type": "string" },
-            { "$ref": "#/$defs/Expression" }
-          ]
+          "$ref": "#/$defs/Expression"
         },
         "priority": {
           "type": "integer",
