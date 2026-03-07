@@ -65,7 +65,7 @@ This allows the same mapping to carry expressions for multiple SQL dialects (ANS
 A typical project:
 
 ```
-examples/
+example/
   model-acme.yaml          # Target OSI model
   model-erp.yaml           # Source OSI model (ERP)
   model-crm.yaml           # Source OSI model (CRM)

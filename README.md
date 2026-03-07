@@ -15,10 +15,15 @@ OSI Mapping is a schema and set of conventions for declaring bi-directional fiel
 
 ```
 specs/
-  osi-mapping-schema.json   # JSON Schema (draft-2020-12) for mapping files
-  osi-schema.json            # OSI semantic model schema (reference)
-examples/
-  *.yaml                     # Single end-to-end example files (models, mappings, resolution)
+  osi-mapping-schema.json      # JSON Schema (draft-2020-12) for mapping files
+  osi-resolution-schema.json   # JSON Schema for resolution files
+  osi-schema.json              # OSI semantic model schema (reference)
+docs/
+  concepts.md                  # High-level overview
+  mapping-schema.md            # Mapping schema reference
+  resolution-schema.md         # Resolution schema reference
+example/
+  *.yaml                       # End-to-end example (models, mappings, resolution)
 ```
 
 ## Quick start
@@ -34,11 +39,15 @@ Each mapping file supports a YAML language-server header for in-editor validatio
 # yaml-language-server: $schema=../specs/osi-mapping-schema.json
 ```
 
-## Examples
+## Documentation
+
+See [docs/](docs/) for the full specification reference.
+
+## Example
 
 | Example | Source type | Description |
 |---------|-----------|-------------|
-| [examples](examples/) | OSI models | Canonical company merge with resolution strategies, routing filters, and reverse propagation controls |
+| [example](example/) | OSI models | Canonical company merge with resolution strategies, routing filters, and reverse propagation controls |
 
 ## Status
 
