@@ -19,8 +19,6 @@ specs/
   osi-schema.json            # OSI semantic model schema (reference)
 examples/
   minimal/                   # Shared minimal semantic model + OSI and OpenAPI mappings
-docs/
-  adr/                       # Architecture Decision Records
 ```
 
 ## Quick start
@@ -45,8 +43,6 @@ Each mapping file supports a YAML language-server header for in-editor validatio
 ## Status
 
 This project is in early design. The mapping schema is functional but subject to change. SQL view generation and non-SQL dialect support are planned but not yet implemented.
-
-See [docs/adr/](docs/adr/) for recorded design decisions.
 
 ## License
 
