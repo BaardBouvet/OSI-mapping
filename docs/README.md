@@ -56,9 +56,10 @@ This allows the same mapping to carry expressions for multiple SQL dialects (ANS
 | **Routing** | `filter_forward` on Mapping sends different source rows to different targets | CRM customers split by `customer_type` |
 | **Selective reverse** | `filter_reverse` on Mapping limits which target rows flow back | Only customers (not suppliers) write back to ERP |
 | **Embedded** | `embedded: true` on Mapping extracts a sub-entity from the same source row | Billing address fields → address dataset |
-| **Nested extraction** | `nested` on FieldMapping flattens array items into a separate target | API order lines[] → order_line rows |
-| **Nested routing** | `filter_forward` inside `nested` routes array items by type | Product lines vs. discount lines |
-| **Nested embedding** | `embedded: true` inside `nested` extracts denormalized data from array items | Product info on line items → product dataset |
+| **Array extraction** | `source_path` on Mapping flattens array items into a separate target | API order lines[] → order_line rows |
+| **Array routing** | `filter_forward` + `source_path` routes array items by type | Product lines vs. discount lines |
+| **Array embedding** | `embedded: true` + `source_path` extracts denormalized data from array items | Product info on line items → product dataset |
+| **Parent context** | `parent_fields` pulls ancestor fields into scope as aliases | Parent `order_id` available in line item mapping |
 
 ## File Layout
 
@@ -72,7 +73,7 @@ example/
   webshop-openapi.yaml     # Source external schema (OpenAPI)
   mapping-erp.yaml         # ERP → Acme mappings
   mapping-crm.yaml         # CRM → Acme mappings (routing + embedded)
-  mapping-webshop.yaml     # Webshop API → Acme mappings (nested)
+  mapping-webshop.yaml     # Webshop API → Acme mappings (source_path + parent_fields)
   resolution-acme.yaml     # Resolution rules for Acme target
 specs/
   osi-mapping-schema.json

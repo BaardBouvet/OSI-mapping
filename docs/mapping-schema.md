@@ -33,6 +33,8 @@ A single source-to-target mapping for one dataset pair.
 | `target` | [ModelRef](#modelref) | yes | The target data model |
 | `filter_forward` | [Expression](#expression) | no | Only source rows matching this filter are mapped forward. See [Routing](#routing). |
 | `filter_reverse` | [Expression](#expression) | no | Only target rows matching this filter are mapped back to this source. See [Selective Reverse](#selective-reverse). |
+| `source_path` | string | no | Dot-delimited path to a source array field. When set, this mapping operates on each array item. See [Source Path](#source-path). |
+| `parent_fields` | object&lt;string, [ParentFieldRef](#parentfieldref)&gt; | no | Pulls ancestor fields into scope as aliases. Only meaningful with `source_path`. See [Parent Fields](#parent-fields). |
 | `embedded` | boolean | no | Marks this mapping as an embedded sub-entity extraction. See [Embedded](#embedded). |
 | `field_mappings` | array of [FieldMapping](#fieldmapping) | yes | Field-level mappings |
 
@@ -70,21 +72,18 @@ A single source-to-target mapping for one dataset pair.
 
 ## FieldMapping
 
-Maps a single field between source and target. Each FieldMapping must have **either** `forward_expression` (scalar mapping) **or** `nested` (array extraction), but not both.
+Maps a single field between source and target.
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `target_field` | string | yes | Target field name. For nested mappings, names the source array field. |
-| `forward_expression` | [Expression](#expression) | one of¹ | Source → target transformation |
+| `target_field` | string | yes | Target field name |
+| `forward_expression` | [Expression](#expression) | yes | Source → target transformation |
 | `reverse_expression` | [Expression](#expression) | no | Target → source transformation. Omit for one-way mappings. |
-| `nested` | [Nested](#nested) | one of¹ | Array extraction block. See [Nested](#nested). |
 | `priority` | integer (≥ 1) | no | COALESCE ordering — lower number wins. See [Resolution](resolution-schema.md). |
 | `timestamp_field` | string | no | Source field for LAST_MODIFIED resolution |
 | `required_reverse` | boolean | no | When true, the row is excluded from reverse output if this field resolves to null. See [Required Reverse](#required-reverse). |
 | `description` | string | no | Human-readable description |
 | `data_loss_warning` | string | no | Warning about potential data loss in reverse |
-
-¹ Exactly one of `forward_expression` or `nested` must be present.
 
 ### One-way vs. bi-directional
 
@@ -273,92 +272,120 @@ The parent is the non-embedded Mapping with the same source dataset. Tooling cor
             expression: street
 ```
 
-### Nested
+### Source Path
 
-Use `nested` on a FieldMapping to extract items from a source array field into a flat target dataset. This applies only when the source has array-of-objects fields (OpenAPI, JSON Schema, etc.) — OSI models are flat and don't have array types.
+Use `source_path` on a Mapping to extract items from a source array field into a flat target dataset. This replaces the need for recursive nesting — each extraction is a separate, flat Mapping entry.
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `target` | [ModelRef](#modelref) | yes | Flat target dataset for extracted items |
-| `id` | string or string[] | no | Field(s) within each array item that uniquely identify it |
-| `filter_forward` | [Expression](#expression) | no | Filter for routing array items to different targets |
-| `filter_reverse` | [Expression](#expression) | no | Filter for reconstructing the array in reverse |
-| `embedded` | boolean | no | Marks this as embedded sub-entity extraction from array items |
-| `field_mappings` | array of [FieldMapping](#fieldmapping) | yes | Mappings from array item properties to target fields |
-
-When `nested` is present:
-- `target_field` names the **source array field** (e.g., `lines`).
-- `forward_expression` and `reverse_expression` are **omitted** — the nested block replaces them.
-- The nested `field_mappings` support all normal FieldMapping features.
-- Nested blocks can be **recursive** — a nested field_mapping can itself have a `nested` block for deep nesting.
-
-#### Basic nested extraction
+This applies when the source has array-of-objects fields (OpenAPI, JSON Schema, etc.) — OSI models are flat and don't have array types.
 
 ```yaml
-- target_field: lines
-  nested:
-    target:
-      semantic_model: acme_inc_model
-      dataset: order_line
-    id: line_num
-    field_mappings:
-      - target_field: product_id
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: product_id
+- name: api_orders_to_order_line
+  source:
+    schema_file: ./webshop-openapi.yaml
+    schema_path: "#/components/schemas/Order"
+  source_path: lines
+  target: { semantic_model: acme_inc_model, dataset: order_line }
+  id: line_num
+  field_mappings:
+    - target_field: product_id
+      forward_expression:
+        dialects:
+          - dialect: ANSI_SQL
+            expression: product_id
 ```
 
-#### Nested routing
+For deep nesting, use dot notation: `source_path: lines.sub_items`.
 
-Multiple FieldMapping entries can share the same `target_field`, each with its own `nested` block and `filter_forward`. This routes different array items to different targets — the nested analog of top-level routing.
+All top-level Mapping features work identically with `source_path` — routing (`filter_forward`), selective reverse (`filter_reverse`), and embedding (`embedded`) all apply to the array items without any special "nested variant".
+
+#### Routing array items
+
+Multiple Mappings can share the same source and `source_path`, each with a different `filter_forward`. This routes array items to different targets — the same pattern as top-level routing:
 
 ```yaml
 # Route product lines → order_line
-- target_field: lines
-  nested:
-    target: { semantic_model: acme_inc_model, dataset: order_line }
-    id: line_num
-    filter_forward:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: "line_type = 'product'"
-    field_mappings: [...]
+- name: api_orders_to_order_line
+  source_path: lines
+  filter_forward:
+    dialects:
+      - dialect: ANSI_SQL
+        expression: "line_type = 'product'"
+  target: { semantic_model: acme_inc_model, dataset: order_line }
+  field_mappings: [...]
 
 # Route discount lines → order_discount
-- target_field: lines
-  nested:
-    target: { semantic_model: acme_inc_model, dataset: order_discount }
-    id: line_num
-    filter_forward:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: "line_type = 'discount'"
-    field_mappings: [...]
+- name: api_orders_to_order_discount
+  source_path: lines
+  filter_forward:
+    dialects:
+      - dialect: ANSI_SQL
+        expression: "line_type = 'discount'"
+  target: { semantic_model: acme_inc_model, dataset: order_discount }
+  field_mappings: [...]
 ```
 
-#### Nested embedding
+#### Embedding from array items
 
-Use `embedded: true` inside a `nested` block to extract denormalized data from array items into a separate entity. Same semantics as top-level embedded, scoped to the array item context.
+Use `embedded: true` with `source_path` to extract denormalized data from array items. Same semantics as top-level embedded:
 
 ```yaml
-# Extract product info denormalized in line items → product dataset
-- target_field: lines
-  nested:
-    embedded: true
-    target: { semantic_model: acme_inc_model, dataset: product }
-    id: product_id
-    filter_forward:
-      dialects:
-        - dialect: ANSI_SQL
-          expression: "line_type = 'product'"
-    field_mappings:
-      - target_field: product_name
-        forward_expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: product_name
+- name: api_orders_to_product
+  embedded: true
+  source_path: lines
+  filter_forward:
+    dialects:
+      - dialect: ANSI_SQL
+        expression: "line_type = 'product'"
+  target: { semantic_model: acme_inc_model, dataset: product }
+  field_mappings:
+    - target_field: product_name
+      forward_expression:
+        dialects:
+          - dialect: ANSI_SQL
+            expression: product_name
 ```
+
+### Parent Fields
+
+When using `source_path`, expressions operate on array item fields by default. Use `parent_fields` to pull ancestor-level fields into scope under explicit aliases. This keeps expressions as pure SQL — no magic prefixes.
+
+```yaml
+- name: api_orders_to_order_line
+  source_path: lines
+  parent_fields:
+    parent_order_id:
+      path: ""             # "" = root source object
+      field: order_id
+  field_mappings:
+    - target_field: order_ref
+      forward_expression:
+        dialects:
+          - dialect: ANSI_SQL
+            expression: parent_order_id    # alias — valid SQL identifier
+```
+
+For deep nesting (e.g., `source_path: lines.sub_items`), set `path` to an intermediate ancestor:
+
+```yaml
+parent_fields:
+  root_order_id:
+    path: ""               # root Order object
+    field: order_id
+  parent_line_num:
+    path: lines             # parent array item
+    field: line_num
+```
+
+---
+
+## ParentFieldRef
+
+Reference to an ancestor-level field, imported into scope under an alias.
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `path` | string | no | Dot-delimited path to the ancestor scope. `""` = root source object. |
+| `field` | string | yes | Field name within the ancestor scope |
 
 ### Reverse Direction
 
@@ -367,4 +394,4 @@ In the reverse direction:
 - **Scalar fields**: `reverse_expression` transforms the target value back to the source column.
 - **Routing**: `filter_forward` is inverted — tooling knows which target dataset maps back to which source rows.
 - **Embedded**: Embedded fields are joined back to the parent source row.
-- **Nested**: Flat target dataset rows are reassembled into an array and embedded back into the parent source object. For nested routing, items from multiple target datasets merge back into one array.
+- **Source path**: Flat target dataset rows are reassembled into an array and placed back into the parent source object. For routed array items, rows from multiple target datasets merge back into one array. Parent field aliases are resolved back to their ancestor locations.
