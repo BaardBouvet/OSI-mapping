@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BaardBouvet/OSI-mapping/specs/osi-mapping-schema.json",
+  "title": "OSI Mapping Schema",
+  "description": "Schema for defining bi-directional field mappings between data sources and OSI semantic models.",
+  "type": "object",
+  "required": ["version", "mappings"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "OSI mapping specification version"
+    },
+    "mappings": {
+      "type": "array",
+      "description": "Collection of source-to-target mappings",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Mapping"
+      }
+    }
+  },
+  "$defs": {
+    "Mapping": {
+      "type": "object",
+      "description": "A single source-to-target mapping for one table/dataset pair",
+      "required": ["name", "source", "target", "field_mappings"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique identifier for this mapping",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description"
+        },
+        "source": {
+          "$ref": "#/$defs/ModelRef"
+        },
+        "target": {
+          "$ref": "#/$defs/ModelRef"
+        },
+        "field_mappings": {
+          "type": "array",
+          "description": "Field-level mappings from source to target",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/FieldMapping"
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Optional metadata about this mapping",
+          "additionalProperties": true,
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "created_date": {
+              "type": "string",
+              "format": "date"
+            },
+            "updated_date": {
+              "type": "string",
+              "format": "date"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ModelRef": {
+      "type": "object",
+      "description": "Reference to a data model. Can be an OSI semantic model (semantic_model + dataset) or an external schema (schema_file).",
+      "additionalProperties": false,
+      "properties": {
+        "semantic_model": {
+          "type": "string",
+          "description": "Name of an OSI semantic model"
+        },
+        "dataset": {
+          "type": "string",
+          "description": "Name of the dataset within the semantic model"
+        },
+        "model_file": {
+          "type": "string",
+          "description": "Path to the OSI semantic model YAML file"
+        },
+        "schema_file": {
+          "type": "string",
+          "description": "Path to an external schema file (JSON Schema, OpenAPI, Avro, Protobuf, etc.)"
+        },
+        "schema_path": {
+          "type": "string",
+          "description": "JSON Pointer (RFC 6901) into the schema_file identifying the specific schema to map"
+        },
+        "schema_format": {
+          "type": "string",
+          "description": "Format of the external schema_file",
+          "enum": ["json_schema", "openapi", "avro", "protobuf", "custom"]
+        }
+      },
+      "anyOf": [
+        { "required": ["semantic_model", "dataset"] },
+        { "required": ["schema_file"] }
+      ]
+    },
+    "FieldMapping": {
+      "type": "object",
+      "description": "Maps a single field between source and target models",
+      "required": ["target_field", "forward_expression"],
+      "additionalProperties": false,
+      "properties": {
+        "target_field": {
+          "type": "string",
+          "description": "Name of the field in the target model"
+        },
+        "forward_expression": {
+          "description": "Expression that transforms source into the target field (source → target)",
+          "oneOf": [
+            { "type": "string" },
+            { "$ref": "#/$defs/Expression" }
+          ]
+        },
+        "reverse_expression": {
+          "description": "Expression that transforms the target field back into the source (target → source). Omit if the mapping is inherently one-way.",
+          "oneOf": [
+            { "type": "string" },
+            { "$ref": "#/$defs/Expression" }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the mapping logic"
+        },
+        "data_loss_warning": {
+          "type": "string",
+          "description": "Warning about potential data loss in the reverse direction"
+        }
+      }
+    },
+    "DialectExpression": {
+      "type": "object",
+      "description": "Expression in a specific dialect",
+      "required": ["dialect", "expression"],
+      "additionalProperties": false,
+      "properties": {
+        "dialect": {
+          "type": "string",
+          "description": "SQL or expression language dialect identifier (e.g. ANSI_SQL, SNOWFLAKE)"
+        },
+        "expression": {
+          "type": "string",
+          "description": "Dialect-specific expression"
+        }
+      }
+    },
+    "Expression": {
+      "type": "object",
+      "description": "Expression definition with multi-dialect support",
+      "required": ["dialects"],
+      "additionalProperties": false,
+      "properties": {
+        "dialects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DialectExpression"
+          },
+          "minItems": 1
+        }
+      }
+    }
+  }
+}

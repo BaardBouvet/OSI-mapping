@@ -1,0 +1,37 @@
+openapi: 3.0.3
+info:
+  title: Company API
+  version: 1.0.0
+paths:
+  /companies/{id}:
+    get:
+      operationId: getCompanyById
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Company response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Company'
+components:
+  schemas:
+    Company:
+      type: object
+      required: [id, name, active]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        taxId:
+          type: string
+        industry:
+          type: string
+        active:
+          type: boolean
