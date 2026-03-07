@@ -69,30 +69,6 @@
           "items": {
             "$ref": "#/$defs/FieldMapping"
           }
-        },
-        "metadata": {
-          "type": "object",
-          "description": "Optional metadata about this mapping",
-          "additionalProperties": true,
-          "properties": {
-            "author": {
-              "type": "string"
-            },
-            "created_date": {
-              "type": "string",
-              "format": "date"
-            },
-            "updated_date": {
-              "type": "string",
-              "format": "date"
-            },
-            "tags": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          }
         }
       }
     },
