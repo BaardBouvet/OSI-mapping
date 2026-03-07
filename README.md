@@ -2,7 +2,7 @@
 
 > **Work in progress** — this project is under active development and not yet stable.
 
-OSI Mapping is a schema and set of conventions for declaring bi-directional field mappings between data sources and [OSI semantic models](https://github.com/Open-Model-Initiative). It lets you describe how columns or properties in a source system relate to fields in a target model — and vice versa — using SQL expressions grouped by dialect.
+OSI Mapping is a schema and set of conventions for declaring bi-directional field mappings between data sources and [OSI semantic models](https://open-semantic-interchange.org/). It lets you describe how columns or properties in a source system relate to fields in a target model — and vice versa — using SQL expressions grouped by dialect.
 
 ## Key ideas
 
