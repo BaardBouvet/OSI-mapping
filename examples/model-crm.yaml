@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../../specs/osi-schema.json
+# yaml-language-server: $schema=../specs/osi-schema.json
 
 version: "1.0"
 
@@ -42,6 +42,20 @@ semantic_model:
                 - dialect: ANSI_SQL
                   expression: customer_account
             description: Account number
+
+          - name: customer_phone
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: customer_phone
+            description: Contact phone number
+
+          - name: customer_type
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: customer_type
+            description: Contact type (person or company)
 
           - name: last_updated
             expression:

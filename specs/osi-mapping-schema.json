@@ -50,6 +50,20 @@
         "target": {
           "$ref": "#/$defs/ModelRef"
         },
+        "filter_forward": {
+          "description": "SQL WHERE condition — only source rows matching this condition are mapped forward to the target. Used for routing one source to multiple targets.",
+          "oneOf": [
+            { "type": "string" },
+            { "$ref": "#/$defs/Expression" }
+          ]
+        },
+        "filter_reverse": {
+          "description": "SQL WHERE condition — only target rows matching this condition are mapped reverse to this source. Used for selective reverse propagation.",
+          "oneOf": [
+            { "type": "string" },
+            { "$ref": "#/$defs/Expression" }
+          ]
+        },
         "field_mappings": {
           "type": "array",
           "description": "Field-level mappings from source to target",
@@ -152,6 +166,10 @@
         "timestamp_field": {
           "type": "string",
           "description": "Source field driving LAST_MODIFIED resolution. Only meaningful when the target field's resolution strategy is LAST_MODIFIED."
+        },
+        "required_reverse": {
+          "type": "boolean",
+          "description": "When true, the entire row is excluded from reverse output if this field's resolved value is null. Enables insert/delete propagation patterns."
         },
         "description": {
           "type": "string",

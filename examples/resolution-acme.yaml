@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=../specs/osi-resolution-schema.json
+
+# Resolution rules for the company dataset.
+# Declares the target's policy — knows nothing about which mappings exist.
+#
+# Resolution behavior:
+#   email       — COLLECT with link: true → all values retained as array, used for entity linking
+#   name        — LAST_MODIFIED → each mapping's timestamp_field determines the winner
+#   account — COALESCE → each mapping's priority determines the winner (lowest wins)
+#   role    — COLLECT → all roles retained as array (e.g. customer, supplier)
+
+
+version: "1.0"
+
+resolutions:
+  - name: company_resolution
+    description: Resolution rules for the company dataset
+
+    target:
+      semantic_model: acme_inc_model
+      dataset: company
+      model_file: ./model-acme.yaml
+
+    fields:
+      email:
+        strategy:
+          type: COLLECT
+          link: true
+
+      name:
+        strategy:
+          type: LAST_MODIFIED
+
+      account:
+        strategy:
+          type: COALESCE
+
+      role:
+        strategy:
+          type: COLLECT

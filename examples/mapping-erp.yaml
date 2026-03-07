@@ -1,7 +1,8 @@
-# yaml-language-server: $schema=../../specs/osi-mapping-schema.json
+# yaml-language-server: $schema=../specs/osi-mapping-schema.json
 
 # Source A: ERP companies → canonical company
-# Demonstrates optional resolution fields: id, priority, timestamp_field
+# Only customers are sent back to the ERP (filter_reverse).
+# Demonstrates: id, priority, timestamp_field, filter_reverse
 
 version: "1.0"
 
@@ -9,16 +10,20 @@ mappings:
   - name: companies_to_company
     description: ERP companies to canonical company model
     id: id
+    filter_reverse:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "'customer' = ANY(role)"
 
     source:
       semantic_model: erp_model
       dataset: companies
-      model_file: ./erp_model.yaml
+      model_file: ./model-erp.yaml
 
     target:
       semantic_model: acme_inc_model
       dataset: company
-      model_file: ./acme_inc_semantic_model.yaml
+      model_file: ./model-acme.yaml
 
     field_mappings:
       - target_field: email
@@ -33,6 +38,10 @@ mappings:
           dialects:
             - dialect: ANSI_SQL
               expression: company_name
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: name
 
       - target_field: account
         priority: 2
@@ -40,3 +49,13 @@ mappings:
           dialects:
             - dialect: ANSI_SQL
               expression: company_account
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: account
+
+      - target_field: role
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: "'customer'"

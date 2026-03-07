@@ -4,15 +4,20 @@
   "title": "OSI Resolution Schema",
   "description": "Schema for defining conflict resolution rules when multiple mappings target the same dataset.",
   "type": "object",
-  "required": ["version", "resolution"],
+  "required": ["version", "resolutions"],
   "additionalProperties": false,
   "properties": {
     "version": {
       "type": "string",
       "const": "1.0"
     },
-    "resolution": {
-      "$ref": "#/$defs/Resolution"
+    "resolutions": {
+      "type": "array",
+      "description": "Collection of resolution configurations",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Resolution"
+      }
     }
   },
   "$defs": {

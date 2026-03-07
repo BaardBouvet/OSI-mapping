@@ -18,7 +18,7 @@ specs/
   osi-mapping-schema.json   # JSON Schema (draft-2020-12) for mapping files
   osi-schema.json            # OSI semantic model schema (reference)
 examples/
-  minimal/                   # Shared minimal semantic model + OSI and OpenAPI mappings
+  *.yaml                     # Single end-to-end example files (models, mappings, resolution)
 ```
 
 ## Quick start
@@ -31,14 +31,14 @@ examples/
 Each mapping file supports a YAML language-server header for in-editor validation:
 
 ```yaml
-# yaml-language-server: $schema=../../specs/osi-mapping-schema.json
+# yaml-language-server: $schema=../specs/osi-mapping-schema.json
 ```
 
 ## Examples
 
 | Example | Source type | Description |
 |---------|-----------|-------------|
-| [minimal](examples/minimal/) | OSI model + OpenAPI 3.0 | Shared Acme semantic model with two mappings: ERP→OSI and OpenAPI→OSI |
+| [examples](examples/) | OSI models | Canonical company merge with resolution strategies, routing filters, and reverse propagation controls |
 
 ## Status
 

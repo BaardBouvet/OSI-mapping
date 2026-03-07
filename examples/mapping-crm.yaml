@@ -1,0 +1,114 @@
+# yaml-language-server: $schema=../specs/osi-mapping-schema.json
+
+# CRM customers routed to two target datasets based on customer_type.
+# Demonstrates: filter_forward (routing), required_reverse,
+#               one source → multiple targets via separate Mapping entries.
+
+version: "1.0"
+
+mappings:
+  # Route company-type customers to the company dataset
+  - name: customers_to_company
+    description: CRM company-type customers to canonical company
+    id: id
+    filter_forward:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "customer_type = 'company'"
+    source:
+      semantic_model: crm_model
+      dataset: customers
+      model_file: ./model-crm.yaml
+
+    target:
+      semantic_model: acme_inc_model
+      dataset: company
+      model_file: ./model-acme.yaml
+
+    field_mappings:
+      - target_field: email
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: customer_email
+
+      - target_field: name
+        timestamp_field: last_updated
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: customer_name
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: name
+
+      - target_field: account
+        priority: 1
+        required_reverse: true
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: customer_account
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: account
+
+      - target_field: role
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: "'customer'"
+
+  # Route person-type customers to the person dataset
+  - name: customers_to_person
+    description: CRM person-type customers to canonical person
+    id: id
+    filter_forward:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "customer_type = 'person'"
+
+    source:
+      semantic_model: crm_model
+      dataset: customers
+      model_file: ./model-crm.yaml
+
+    target:
+      semantic_model: acme_inc_model
+      dataset: person
+      model_file: ./model-acme.yaml
+
+    field_mappings:
+      - target_field: email
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: customer_email
+
+      - target_field: name
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: customer_name
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: name
+
+      - target_field: phone
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: customer_phone
+        reverse_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: phone
+
+      - target_field: role
+        forward_expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: "'customer'"
