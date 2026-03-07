@@ -5,6 +5,8 @@
 # name: COALESCE (ERP priority 1 wins).
 # email: LAST_MODIFIED (most recently updated wins).
 # account: COALESCE (first non-null wins — both sources contribute).
+# is_customer: COALESCE (ERP static TRUE wins when present; CRM toggle applies otherwise).
+# Link groups: records are linked when account + email tuple matches.
 
 version: "1.0"
 
@@ -29,3 +31,36 @@ resolutions:
       account:
         strategy:
           type: COALESCE
+
+      is_customer:
+        strategy:
+          type: COALESCE
+
+    link_groups:
+      company_identity:
+        fields: [account, email]
+
+  - name: person_resolution
+    description: Resolution rules for the person dataset
+
+    target:
+      semantic_model: acme_model
+      dataset: person
+      model_file: ./model-acme.yaml
+
+    fields:
+      person_id:
+        strategy:
+          type: COALESCE
+
+      company_id:
+        strategy:
+          type: COALESCE
+
+      name:
+        strategy:
+          type: COALESCE
+
+      email:
+        strategy:
+          type: LAST_MODIFIED

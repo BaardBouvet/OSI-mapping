@@ -20,6 +20,11 @@ mappings:
       dataset: company
       model_file: ./model-acme.yaml
 
+    filter_reverse:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: is_customer = TRUE
+
     default_timestamp_field: modified_at
 
     field_mappings:
@@ -32,3 +37,45 @@ mappings:
 
       - target_field: account
         source_field: account_number
+
+      - target_field: is_customer
+        expression_forward:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: "TRUE"
+        priority: 1
+
+  - name: customers_to_person
+    description: ERP embedded customer contact to canonical person
+    id: id
+    embedded: true
+
+    source:
+      semantic_model: erp_model
+      dataset: customers
+      model_file: ./model-erp.yaml
+
+    target:
+      semantic_model: acme_model
+      dataset: person
+      model_file: ./model-acme.yaml
+
+    filter_reverse:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: is_customer = TRUE
+
+    default_timestamp_field: modified_at
+
+    field_mappings:
+      - target_field: person_id
+        source_field: id
+
+      - target_field: company_id
+        source_field: id
+
+      - target_field: name
+        source_field: contact_name
+
+      - target_field: email
+        source_field: contact_email

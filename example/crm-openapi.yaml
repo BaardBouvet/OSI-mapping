@@ -17,6 +17,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Company"
+  /contacts:
+    get:
+      summary: List contacts
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Contact"
 
 components:
   schemas:
@@ -37,6 +49,30 @@ components:
         account_number:
           type: string
           description: Customer account number (custom field)
+        customer_toggle:
+          type: boolean
+          description: CRM toggle indicating whether this company is a customer
+        updated_at:
+          type: string
+          format: date-time
+          description: Last modification timestamp
+    Contact:
+      type: object
+      required: [id, company_id, name, email]
+      properties:
+        id:
+          type: integer
+          description: CRM contact identifier
+        company_id:
+          type: integer
+          description: CRM company identifier this contact belongs to
+        name:
+          type: string
+          description: Contact full name
+        email:
+          type: string
+          format: email
+          description: Contact email
         updated_at:
           type: string
           format: date-time

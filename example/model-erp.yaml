@@ -43,9 +43,66 @@ semantic_model:
                   expression: account_number
             description: Customer account number
 
+          - name: contact_name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: contact.name
+            description: Embedded primary contact name on the customer row
+
+          - name: contact_email
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: contact.email
+            description: Embedded primary contact email on the customer row
+
           - name: modified_at
             expression:
               dialects:
                 - dialect: ANSI_SQL
                   expression: modified_at
             description: Last modification timestamp
+
+      - name: customer_contacts
+        source: erp.dbo.customers
+        primary_key: [customer_id]
+        unique_keys:
+          - [customer_id]
+        description: Embedded primary contact projected from the customer row
+
+        fields:
+          - name: customer_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: id
+            description: ERP customer identifier
+
+          - name: contact_name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: contact.name
+            description: Embedded primary contact name
+
+          - name: contact_email
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: contact.email
+            description: Embedded primary contact email
+
+          - name: modified_at
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: modified_at
+            description: Last modification timestamp
+
+    relationships:
+      - name: customer_contacts_to_customers
+        from: customer_contacts
+        to: customers
+        from_columns: [customer_id]
+        to_columns: [id]

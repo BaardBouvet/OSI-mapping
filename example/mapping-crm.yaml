@@ -32,3 +32,35 @@ mappings:
 
       - target_field: account
         source_field: account_number
+
+      - target_field: is_customer
+        source_field: customer_toggle
+
+  - name: contacts_to_person
+    description: CRM contacts to canonical person
+    id: id
+
+    source:
+      schema_file: ./crm-openapi.yaml
+      schema_path: "#/components/schemas/Contact"
+      schema_format: openapi
+
+    target:
+      semantic_model: acme_model
+      dataset: person
+      model_file: ./model-acme.yaml
+
+    default_timestamp_field: updated_at
+
+    field_mappings:
+      - target_field: person_id
+        source_field: id
+
+      - target_field: company_id
+        source_field: company_id
+
+      - target_field: name
+        source_field: name
+
+      - target_field: email
+        source_field: email

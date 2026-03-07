@@ -42,3 +42,46 @@ semantic_model:
                 - dialect: ANSI_SQL
                   expression: account
             description: Customer account number (COALESCE)
+
+          - name: is_customer
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: is_customer
+            description: Customer flag (ERP static true, CRM toggle)
+
+      - name: person
+        source: canonical.public.person
+        primary_key: [person_id]
+        unique_keys:
+          - [person_id]
+        description: Canonical contacts linked to companies
+
+        fields:
+          - name: person_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: person_id
+            description: Canonical person identifier
+
+          - name: company_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: company_id
+            description: Canonical company identifier this person belongs to
+
+          - name: name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: name
+            description: Contact full name
+
+          - name: email
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: email
+            description: Contact email
