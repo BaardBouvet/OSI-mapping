@@ -15,14 +15,12 @@ OSI Mapping is a schema and set of conventions for declaring bi-directional fiel
 
 ```
 specs/
-  osi-mapping-schema.json   # JSON Schema (draft-07) for mapping files
+  osi-mapping-schema.json   # JSON Schema (draft-2020-12) for mapping files
   osi-schema.json            # OSI semantic model schema (reference)
 examples/
-  osi-to-osi-minimal/        # OSI model → OSI model mapping example
-  openapi-to-osi-minimal/    # OpenAPI spec → OSI model mapping example
+  minimal/                   # Shared minimal semantic model + OSI and OpenAPI mappings
 docs/
   adr/                       # Architecture Decision Records
-PLAN.md                      # Internal planning notes
 ```
 
 ## Quick start
@@ -42,8 +40,7 @@ Each mapping file supports a YAML language-server header for in-editor validatio
 
 | Example | Source type | Description |
 |---------|-----------|-------------|
-| [osi-to-osi-minimal](examples/osi-to-osi-minimal/) | OSI model | ERP system (Norwegian columns) mapped to a company semantic model |
-| [openapi-to-osi-minimal](examples/openapi-to-osi-minimal/) | OpenAPI 3.0 | REST API company schema mapped to the same semantic model |
+| [minimal](examples/minimal/) | OSI model + OpenAPI 3.0 | Shared Acme semantic model with two mappings: ERP→OSI and OpenAPI→OSI |
 
 ## Status
 

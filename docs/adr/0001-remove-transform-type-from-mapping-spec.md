@@ -31,8 +31,8 @@ Remove `transform_type` from:
 
 1. `specs/osi-mapping-schema.json`
 2. Example mapping files:
-   - `examples/osi-to-osi-minimal/erp_to_company_mapping.yaml`
-   - `examples/openapi-to-osi-minimal/openapi_to_company_mapping.yaml`
+   - `examples/minimal/erp_to_company_mapping.yaml`
+   - `examples/minimal/openapi_to_company_mapping.yaml`
 
 `field_mapping` classification is now inferred from expression content by tooling when needed.
 
