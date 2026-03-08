@@ -2,10 +2,10 @@
 
 > **Abstract**: Defines how the engine tracks entity identity across sources and
 > how ETL pipelines feed back generated IDs to prevent duplicate inserts.
-> Introduces `links` (with optional `link_key`) on mappings as the single
-> mechanism for external identity edges, `_cluster_id` as a stable entity
-> handle on delta insert rows, and two operating modes — IVM-safe (with
-> `link_key`) and batch-safe (without).
+> Introduces `links` (with optional `link_key`) on mappings for external
+> identity edges, `cluster_members` on mappings for ETL feedback, `_cluster_id`
+> as a stable entity handle on delta insert rows, and two operating modes —
+> IVM-safe (with `link_key` or `cluster_members`) and batch-safe (without).
 
 ## Problem
 
@@ -71,9 +71,12 @@ LEFT JOIN _cluster_members_{target} cm
   ON cm._mapping = '{mapping}' AND cm._src_id = s._row_id::text
 ```
 
-`_cluster_members_{target}` is built from unpivoted `links` rows (when
-`link_key` is present). If no `links` with `link_key` are declared for the
-target, the LEFT JOIN is omitted entirely — no overhead for simple cases.
+`_cluster_members_{target}` is built from:
+- Unpivoted `links` rows (when `link_key` is present)
+- `cluster_members` tables (one per mapping that declares them)
+
+If neither `links` with `link_key` nor any `cluster_members` are declared for
+the target, the LEFT JOIN is omitted entirely — no overhead for simple cases.
 
 **Key insight**: if it works for IVM, it works for batch. Design for IVM.
 
@@ -82,12 +85,68 @@ NOT have the race problem — the source rows are already materialized when the
 link arrives. A single write (the link) triggers recomputation. The forward-
 view LEFT JOIN handles this correctly too, so one mechanism covers both cases.
 
-### Flat membership tables (Pattern A)
+### `cluster_members` — ETL feedback (Pattern A)
 
-Systems that maintain flat `(cluster_id, source, source_pk)` membership tables
-don't need a special mechanism. The mapping author pivots the flat table into
-columnar form (one column per referenced source) and maps it with `links` +
-`link_key`:
+For ETL-driven feedback where the process only knows `_cluster_id` + the new
+record's PK. Declared per-mapping — each mapping gets its own table because
+source PKs may differ in type or be composite.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `table` | `_cluster_members_{mapping}` | Table name |
+| `cluster_id` | `_cluster_id` | Cluster ID column |
+| `source_key` | `_src_id` | Source PK column |
+
+Usage from minimal to fully custom:
+
+```yaml
+mappings:
+  # Minimal — all defaults
+  # → table: _cluster_members_billing, columns: _cluster_id, _src_id
+  billing:
+    source: billing
+    target: customer
+    cluster_members: true
+    fields:
+      - { source: account_name, target: name }
+
+  # Custom table/column names
+  legacy:
+    source: legacy
+    target: customer
+    cluster_members:
+      table: legacy_feedback
+      cluster_id: entity_id
+      source_key: record_id
+    fields:
+      - { source: legacy_name, target: name }
+```
+
+The ETL writes 2 columns: `(_cluster_id, _src_id)` — no need to know anything
+about other sources. The engine injects `_mapping` as a literal when building
+`_cluster_members_{target}`:
+
+```sql
+SELECT cm._cluster_id, 'billing' AS _mapping, cm._src_id
+FROM _cluster_members_billing cm
+UNION ALL
+SELECT cm.entity_id, 'legacy' AS _mapping, cm.record_id
+FROM legacy_feedback cm
+```
+
+Per-mapping tables are the only mode — no shared-table option. Reason:
+source PKs differ in type across mappings (integer, UUID, text, etc.) and
+can't cleanly share a column. Per-mapping tables also align naturally with
+security and data mesh boundaries.
+
+**IVM-safe**: yes — same LEFT JOIN mechanism as `links` with `link_key`.
+
+### Flat membership tables from external systems
+
+External systems (MDM, entity resolution) that produce a global flat
+`(cluster_id, source, source_pk)` membership table don't fit `cluster_members`
+(which is per-mapping). The mapping author pivots the flat table into columnar
+form and maps it with `links` + `link_key`:
 
 ```sql
 CREATE VIEW membership_xref AS
@@ -99,8 +158,10 @@ FROM flat_membership
 GROUP BY cluster_id;
 ```
 
-One mechanism (`links`) covers flat membership, columnar xref, and pairwise
-decisions. The mapping author learns one concept; the engine has one code path.
+Three mechanisms, clear roles:
+- **`links`** — external systems that know about multiple sources (MDM, curation, record linkage)
+- **`cluster_members`** — ETL feedback: just `_cluster_id` + one new PK
+- **Identity fields** — shared natural keys across sources
 
 ### Three identity edge types
 
@@ -127,16 +188,15 @@ Four common curation/linking patterns exist in practice:
 
 | Pattern | Description | Supported via |
 |---------|-------------|---------------|
-| **A — Flat membership** | `(cluster_id, source, source_pk)` | Pivot to columnar → `links` + `link_key` |
+| **A — Flat membership** | `(cluster_id, source, source_pk)` | `cluster_members` (per-mapping) or pivot to columnar → `links` + `link_key` |
 | **B — Pairwise decisions** | `(source_a_pk, source_b_pk, decision)` | `links` without `link_key` (batch-safe) |
 | **C — Columnar xref** | `(match_id, crm_id, billing_id, ...)` | `links` + `link_key` |
 | **D — Golden record** | Curated master table with overrides | Out of scope — curated master is a source like any other |
 
-Patterns B and C are first-class mechanisms. Pattern C uses `links` +
-`link_key` (IVM-safe); Pattern B uses `links` without `link_key` (batch-safe —
-the engine generates connected components in the identity layer). Pattern A
-is supported by pivoting flat membership into columnar form and using `links` +
-`link_key`. Pattern D needs no special support.
+Patterns A, B, and C are all first-class. Pattern A uses `cluster_members`
+(per-mapping ETL feedback) or a pivoted view with `links` + `link_key`.
+Pattern C uses `links` + `link_key` (IVM-safe). Pattern B uses `links` without
+`link_key` (batch-safe). Pattern D needs no special support.
 
 ### Two modes for `links`: IVM-safe vs batch
 
@@ -207,13 +267,13 @@ chain is recomputed each run.
 |----------|----------|---------------------|-------|
 | **MDM platforms** | Informatica MDM, Reltio, Semarchy, Tibco EBX, Ataccama | Yes | Core concept — the "golden record ID" or "entity ID" is the cluster identifier. |
 | **Entity resolution services** | Senzing, AWS Entity Resolution, Quantexa | Yes | Output is `(entity_id, record_id)` — exactly Pattern A. |
-| **ETL feedback tables** | Custom ETL state (our own reference pattern) | Yes | The ETL creates cluster IDs when it performs inserts. By design. |
+| **ETL feedback tables** | Custom ETL state (our own reference pattern) | Yes | The ETL writes `(_cluster_id, src_pk)` per mapping via `cluster_members`. |
 | **Record linkage libraries** | Splink, Dedupe.io, Zingg, RecordLinkage (R) | **No** — pairwise only | Output is scored pairs: `(record_a, record_b, score)`. Use `links` without `link_key`. |
 | **Manual curation UIs** | Custom match/reject UIs, crowd-sourcing platforms | **No** — pairwise only | A human says "these two match" — the decision is a pair. Use `links` without `link_key`. |
 | **Probabilistic matchers** | Fellegi-Sunter implementations, fastLink | **No** — pairwise only | Output is pairs with match probabilities. Use `links` without `link_key`. |
 
-**IVM-safe path** (`link_key` present): MDM platforms, entity resolution
-services, and ETL feedback tables. These map via `links` + `link_key`.
+**IVM-safe path** (`link_key` or `cluster_members` present): MDM platforms,
+entity resolution services, and ETL feedback tables.
 
 **Batch-safe path** (no `link_key`): Record linkage tools, manual curation UIs,
 and probabilistic matchers. These use `links` without `link_key` — the engine
@@ -449,24 +509,23 @@ Run 1:
   Delta for billing: insert | _cluster_id=md5("crm:CRM1") | name=Alice | ...
 
   ETL writes to billing → gets BILL-99.
-  ETL writes to curated_matches: { match_id: "M1", crm_id: "CRM1", billing_id: "BILL-99" }
+  ETL writes to etl_billing_members: { cluster_id: md5("crm:CRM1"), src_id: "BILL-99" }
 
 Run 2:
-  billing now has BILL-99. curated_matches links CRM1 ↔ BILL-99.
+  billing now has BILL-99. cluster_members links it to cluster md5("crm:CRM1").
   Delta for billing: update (not insert).
 
   If a third system (erp) also needs Alice:
-    Delta for erp: insert | _cluster_id=<same cluster> | ...
+    Delta for erp: insert | _cluster_id=md5("crm:CRM1") | ...
     ETL writes to erp → gets ERP-42.
-    ETL adds link: { match_id: "M2", crm_id: "CRM1", erp_id: "ERP-42" }
+    ETL writes to etl_erp_members: { cluster_id: md5("crm:CRM1"), src_id: "ERP-42" }
 
 Run 3:
   All three systems linked. No more inserts.
 ```
 
-The key insight: **curated_matches + links is one mechanism for both curated
-and ETL-driven merges.** Scenario 1 (single natural key) is the only case
-that doesn't need it.
+The key insight: **`cluster_members` is the ETL feedback mechanism; `links` is
+for external linking systems.** Scenario 1 (single natural key) needs neither.
 
 ## `links` Spec Design
 
@@ -712,13 +771,20 @@ Needed for:
 - Decoupling mapping names from table names
 - `links` references (must know the referenced source's PK)
 
-### 3. Add `links` and `link_key` to mapping schema
+### 3. Add `links`, `link_key`, and `cluster_members` to mapping schema
 
 ```yaml
+# External linking (MDM, curation, record linkage)
 link_key: <column_name>           # optional — enables IVM-safe path
 links:
   - field: <string | list | map>
     references: <source_name>
+
+# ETL feedback — per-mapping table, all fields have defaults
+cluster_members: true | <object>
+  table: <table_name>             # default: _cluster_members_{mapping}
+  cluster_id: <column_name>       # default: _cluster_id
+  source_key: <column_name>       # default: _src_id
 ```
 
 ### 4. Deterministic `_entity_id` in identity view
@@ -734,17 +800,20 @@ is deterministic across runs.
 2. **Add `_cluster_id` to delta view** — emit `_entity_id_resolved` on insert
    rows in `render/delta.rs`.
 
-3. **Add `links` support** — parse on mappings, generate link-edge CTEs in
+3. **Add `cluster_members` support** — parse on mappings, generate per-mapping
+   contributions to `_cluster_members_{target}` and forward-view LEFT JOIN.
+
+4. **Add `links` support** — parse on mappings, generate link-edge CTEs in
    identity view. When `link_key` is present, also generate unpivoted
    `_cluster_members_{target}` view and forward-view LEFT JOIN (IVM-safe path).
    When `link_key` is absent, only generate pairwise link edges (batch path).
 
-4. **Add provenance view** — optional `_provenance_{target}` view.
+5. **Add provenance view** — optional `_provenance_{target}` view.
 
-5. **Update test expectations** — replace `_origin_*` with `_cluster_id` in
+6. **Update test expectations** — replace `_origin_*` with `_cluster_id` in
    all examples that have insert rows.
 
-6. **Validator rules**:
+7. **Validator rules**:
    - Warn when a target has 2+ identity fields and also has insert-producing
      mappings (the multi-value hazard).
    - Info when `links` is present without `link_key` — "batch-safe only;
@@ -753,37 +822,34 @@ is deterministic across runs.
 
 ## ETL Feedback Pattern (Documentation)
 
-The engine doesn't implement this, but the docs should describe the pattern:
+The engine doesn't implement ETL logic, but the docs should describe the
+pattern:
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    ETL Runtime                       │
 │                                                      │
-│  1. Read delta view → find inserts                   │
-│  2. Write to target system → capture generated IDs   │
-│  3. Store (cluster_id, mapping, src_pk) in state     │
-│  4. Expose state as a linking table                  │
-│  5. Author maps linking table as a source            │
-│  6. Next run: identity view links via linking table  │
-│     → insert disappears from delta                   │
+│  1. Read delta view → find inserts with _cluster_id   │
+│  2. Write to target system → capture generated ID     │
+│  3. Write (_cluster_id, new_id) to mapping's           │
+│     cluster_members table                              │
+│  4. Next run: forward view LEFT JOINs the table        │
+│     → row gets same _cluster_id as original source     │
+│     → insert disappears from delta                     │
 └─────────────────────────────────────────────────────┘
 ```
 
-The ETL's cluster state can be as simple as a single table:
+The ETL feedback table is per-mapping and minimal:
 
 ```sql
-CREATE TABLE _etl_clusters (
-  cluster_id  UUID PRIMARY KEY,
-  target_name TEXT NOT NULL,
-  created_at  TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE _etl_cluster_members (
-  cluster_id  UUID REFERENCES _etl_clusters(cluster_id),
-  mapping     TEXT NOT NULL,
-  src_pk      TEXT NOT NULL,
-  PRIMARY KEY (mapping, src_pk)
+CREATE TABLE etl_billing_members (
+  cluster_id  TEXT NOT NULL,
+  src_id      TEXT NOT NULL,
+  PRIMARY KEY (src_id)
 );
 ```
+
+The ETL only needs: the `_cluster_id` from the delta insert row + the ID it
+got back from the target system. No knowledge of other sources' PKs required.
 
 This is outside the engine's scope — it's a reference pattern for ETL authors.
