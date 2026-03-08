@@ -118,6 +118,7 @@ mappings:
 # pipeline: forward transform → resolution → reverse transform.
 tests:
 
+  # Test 1: conflict resolution across all sources
   - description: >
       Alice exists in all three systems. CRM name wins (priority 1).
       ERP title wins (more recent). Phone resolved by max().
@@ -172,7 +173,10 @@ tests:
             email: "alice@example.com"
             formatted_phone: "+15553003000" # resolved phone
 
-  - description: "Bob only in CRM — no conflict, values pass through"
+  # Test 2: single-source pass-through + inserts to other systems
+  - description: >
+      Bob exists only in CRM, so values pass through unchanged
+      except for phone normalization.
     input:
       crm:
         - id: "C2"
@@ -215,6 +219,6 @@ tests:
 
 4. **Expressions are SQL.** The `regexp_replace` on phone fields is a forward transform. The `max(phone)` on the target is an aggregation across all contributed values.
 
-5. **Tests are explicit.** Expected output always uses `{ updates: [...], inserts: [...], deletes: [...] }` — never bare arrays. Omit a key when empty.
+5. **Tests are explicit.** Expected output is an object containing one or more of `updates`, `inserts`, and `deletes` (never a bare array). Omit keys when empty.
 
 6. **Forward-only fields.** The phonebook's `name` mapping has no `source` — it's a constant contributed only during forward processing.
