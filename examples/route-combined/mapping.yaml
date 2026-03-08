@@ -1,0 +1,129 @@
+version: "1.0"
+description: >
+  Routing source (contacts split by contact_type) merged with dedicated sources
+  (crm_persons, erp_companies). Shows filters + cross-source merging.
+
+targets:
+  person:
+    fields:
+      email: identity
+      name: last_modified
+      phone: last_modified
+
+  company:
+    fields:
+      email: identity
+      name: last_modified
+      phone: last_modified
+
+mappings:
+  # Routing: contacts → person (where contact_type = 'person')
+  - name: contacts_person
+    source: { dataset: contacts }
+    target: person
+    filter: "contact_type = 'person'"
+    fields:
+      - source: email
+        target: email
+      - source: contact_name
+        target: name
+        last_modified: modified_at
+      - source: contact_phone
+        target: phone
+        last_modified: modified_at
+      - source: contact_type
+        direction: reverse_only
+        reverse_expression: "'person'"
+
+  # Routing: contacts → company (where contact_type = 'company')
+  - name: contacts_company
+    source: { dataset: contacts }
+    target: company
+    filter: "contact_type = 'company'"
+    fields:
+      - source: email
+        target: email
+      - source: contact_name
+        target: name
+        last_modified: modified_at
+      - source: contact_phone
+        target: phone
+        last_modified: modified_at
+      - source: contact_type
+        direction: reverse_only
+        reverse_expression: "'company'"
+
+  # Dedicated source for persons
+  - name: crm_persons
+    source: { dataset: crm_persons }
+    target: person
+    fields:
+      - source: email
+        target: email
+      - source: full_name
+        target: name
+        last_modified: updated_at
+      - source: phone_number
+        target: phone
+        last_modified: updated_at
+
+  # Dedicated source for companies
+  - name: erp_companies
+    source: { dataset: erp_companies }
+    target: company
+    fields:
+      - source: email
+        target: email
+      - source: company_name
+        target: name
+        last_modified: last_updated
+      - source: main_phone
+        target: phone
+        last_modified: last_updated
+
+tests:
+  - description: "Routing + dedicated sources merge via email — newer timestamps win"
+    input:
+      contacts:
+        - { id: "CON1", email: "john@example.com", contact_name: "John Doe", contact_phone: "555-1000", contact_type: "person", modified_at: "2024-01-01T10:00:00Z" }
+        - { id: "CON2", email: "info@acme.com", contact_name: "Acme Corp", contact_phone: "555-2000", contact_type: "company", modified_at: "2024-01-01T10:00:00Z" }
+        - { id: "CON3", email: "bob@example.com", contact_name: "Bob Wilson", contact_phone: "555-3000", contact_type: "person", modified_at: "2024-01-01T10:00:00Z" }
+      crm_persons:
+        - { id: "CRM1", email: "john@example.com", full_name: "John A. Doe", phone_number: "555-1001", updated_at: "2024-01-15T10:00:00Z" }
+        - { id: "CRM2", email: "alice@example.com", full_name: "Alice Brown", phone_number: "555-4000", updated_at: "2024-01-01T10:00:00Z" }
+      erp_companies:
+        - { id: "ERP1", email: "info@acme.com", company_name: "Acme Corporation", main_phone: "555-2001", last_updated: "2024-01-20T10:00:00Z" }
+        - { id: "ERP2", email: "sales@techco.com", company_name: "TechCo Inc", main_phone: "555-5000", last_updated: "2024-01-01T10:00:00Z" }
+    expected:
+      contacts:
+        updates:
+          - { id: "CON1", email: "john@example.com", contact_name: "John A. Doe", contact_phone: "555-1001", contact_type: "person" }
+          - { id: "CON2", email: "info@acme.com", contact_name: "Acme Corporation", contact_phone: "555-2001", contact_type: "company" }
+          - { id: "CON3", email: "bob@example.com", contact_name: "Bob Wilson", contact_phone: "555-3000", contact_type: "person" }
+        inserts:
+          - { _origin_crm_persons_id: ["CRM2"], email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-4000", contact_type: "person" }
+          - { _origin_erp_companies_id: ["ERP2"], email: "sales@techco.com", contact_name: "TechCo Inc", contact_phone: "555-5000", contact_type: "company" }
+      crm_persons:
+        updates:
+          - { id: "CRM1", email: "john@example.com", full_name: "John A. Doe", phone_number: "555-1001" }
+          - { id: "CRM2", email: "alice@example.com", full_name: "Alice Brown", phone_number: "555-4000" }
+        inserts:
+          - { _origin_contacts_id: ["CON3"], email: "bob@example.com", full_name: "Bob Wilson", phone_number: "555-3000" }
+      erp_companies:
+        updates:
+          - { id: "ERP1", email: "info@acme.com", company_name: "Acme Corporation", main_phone: "555-2001" }
+          - { id: "ERP2", email: "sales@techco.com", company_name: "TechCo Inc", main_phone: "555-5000" }
+
+  - description: "CRM persons insert into empty contacts table"
+    input:
+      contacts: []
+      crm_persons:
+        - { id: "CRM1", email: "alice@example.com", full_name: "Alice Brown", phone_number: "555-1000", updated_at: "2024-01-15T10:00:00Z" }
+      erp_companies: []
+    expected:
+      contacts:
+        inserts:
+          - { _origin_crm_persons_id: ["CRM1"], email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-1000", contact_type: "person" }
+      crm_persons:
+        updates:
+          - { id: "CRM1", email: "alice@example.com", full_name: "Alice Brown", phone_number: "555-1000" }

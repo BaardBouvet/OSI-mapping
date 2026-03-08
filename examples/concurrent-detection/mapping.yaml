@@ -1,0 +1,62 @@
+version: "1.0"
+description: >
+  Concurrent modification detection using include_base. Base columns in reverse
+  output allow target systems to detect when data changed since last sync.
+
+targets:
+  company:
+    fields:
+      name:
+        strategy: last_modified
+      account: coalesce
+      email: identity
+
+mappings:
+  - name: companies
+    source: { dataset: companies }
+    target: company
+    include_base: true
+    fields:
+      - source: company_email
+        target: email
+      - source: company_account
+        target: account
+        priority: 2
+      - source: company_name
+        target: name
+        last_modified: modified_at
+
+  - name: customers
+    source: { dataset: customers }
+    target: company
+    include_base: true
+    reverse_filter: "account IS NOT NULL"
+    fields:
+      - source: customer_name
+        target: name
+        last_modified: last_updated
+      - source: customer_account
+        target: account
+        priority: 1
+      - source: customer_email
+        target: email
+
+tests:
+  - description: "Base columns for optimistic locking — includes _base_ prefixed originals"
+    input:
+      companies:
+        - { id: "C1", company_email: "acme@example.org", company_name: "Acme Inc", company_account: "A12", modified_at: "2024-06-02T12:00:00Z" }
+      customers:
+        - { id: "CU1", customer_email: "acme@example.org", customer_name: "Acme", customer_account: "A12345", last_updated: "2024-06-01T12:00:00Z" }
+        - { id: "CU2", customer_email: "orphan@example.com", customer_name: "No Account", customer_account: null, last_updated: "2024-06-01T12:00:00Z" }
+    expected:
+      companies:
+        updates:
+          - { id: "C1", company_email: "acme@example.org", company_name: "Acme Inc", company_account: "A12345", _base_company_email: "acme@example.org", _base_company_name: "Acme Inc", _base_company_account: "A12" }
+        inserts:
+          - { _origin_customers_id: ["CU2"], company_email: "orphan@example.com", company_account: null, company_name: "No Account" }
+      customers:
+        updates:
+          - { id: "CU1", customer_email: "acme@example.org", customer_name: "Acme Inc", customer_account: "A12345", _base_customer_email: "acme@example.org", _base_customer_name: "Acme", _base_customer_account: "A12345" }
+        deletes:
+          - { id: "CU2", _base_customer_email: "orphan@example.com", _base_customer_name: "No Account", _base_customer_account: null }

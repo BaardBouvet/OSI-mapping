@@ -1,0 +1,100 @@
+version: "1.0"
+description: >
+  CRM has inline address fields. ERP has separate company and address tables.
+  Both map to same company + address targets.
+
+targets:
+  company:
+    fields:
+      name: identity
+      address_ref:
+        strategy: coalesce
+        references: address
+
+  address:
+    fields:
+      address_id: identity
+      street:
+        strategy: last_modified
+      city:
+        strategy: last_modified
+      postal_code:
+        strategy: last_modified
+      country:
+        strategy: last_modified
+
+mappings:
+  - name: crm_customers_company
+    source: { dataset: crm_customers }
+    target: company
+    fields:
+      - source: customer_name
+        target: name
+
+  - name: crm_customers_address
+    source: { dataset: crm_customers }
+    target: address
+    embedded: true
+    fields:
+      - source: street_address
+        target: street
+        last_modified: last_modified
+      - source: city
+        target: city
+        last_modified: last_modified
+      - source: postal_code
+        target: postal_code
+        last_modified: last_modified
+      - source: country
+        target: country
+        last_modified: last_modified
+
+  - name: erp_companies
+    source: { dataset: erp_companies }
+    target: company
+    fields:
+      - source: company_name
+        target: name
+      - source: address_id
+        target: address_ref
+
+  - name: erp_addresses
+    source: { dataset: erp_addresses }
+    target: address
+    fields:
+      - source: address_id
+        target: address_id
+      - source: street
+        target: street
+        last_modified: modified_at
+      - source: city
+        target: city
+        last_modified: modified_at
+      - source: zip_code
+        target: postal_code
+        last_modified: modified_at
+      - source: country
+        target: country
+        last_modified: modified_at
+
+tests:
+  - description: "CRM inline addresses + ERP separate address table — newer ERP address wins"
+    input:
+      crm_customers:
+        - { customer_id: "C1", customer_name: "Acme Corporation", street_address: "123 Main St", city: "Oslo", postal_code: "0150", country: "Norway", last_modified: "2024-01-15T10:00:00Z" }
+      erp_addresses:
+        - { address_id: "A100", street: "456 Business Ave", city: "Bergen", zip_code: "5000", country: "Norway", modified_at: "2024-01-20T14:00:00Z" }
+      erp_companies:
+        - { company_id: "E1", company_name: "Acme Corporation", address_id: "A100", updated_at: "2024-01-20T14:00:00Z" }
+    expected:
+      crm_customers:
+        updates:
+          - { customer_id: "C1", customer_name: "Acme Corporation", street_address: "456 Business Ave", city: "Bergen", postal_code: "5000", country: "Norway" }
+      erp_companies:
+        updates:
+          - { company_id: "E1", company_name: "Acme Corporation", address_id: "A100" }
+      erp_addresses:
+        updates:
+          - { address_id: "A100", street: "456 Business Ave", city: "Bergen", zip_code: "5000", country: "Norway" }
+        inserts:
+          - { _origin_crm_customers_customer_id: ["C1"], street: "123 Main St", city: "Oslo", zip_code: "0150", country: "Norway" }

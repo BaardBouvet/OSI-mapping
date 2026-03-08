@@ -1,0 +1,120 @@
+version: "1.0"
+description: >
+  Cross-entity references between company and person across ERP and CRM systems.
+  Each system uses its own ID namespace for reference resolution.
+
+targets:
+  company:
+    fields:
+      domain: identity
+      account_manager:
+        strategy: last_modified
+        references: person
+
+  person:
+    fields:
+      email: identity
+      primary_contact:
+        strategy: coalesce
+        references: company
+
+mappings:
+  - name: crm_company
+    source: { dataset: crm_company }
+    target: company
+    fields:
+      - source: homepage
+        target: domain
+      - source: assigned_account_manager
+        target: account_manager
+        last_modified: manager_last_updated
+
+  - name: crm_contact
+    source: { dataset: crm_contact }
+    target: person
+    fields:
+      - source: primary_email
+        target: email
+      - source: company_id
+        target: primary_contact
+        priority: 2
+
+  - name: erp_customer
+    source: { dataset: erp_customer }
+    target: company
+    fields:
+      - source: website
+        target: domain
+      - source: assigned_account_manager
+        target: account_manager
+        last_modified: manager_last_updated
+
+  - name: erp_contact
+    source: { dataset: erp_contact }
+    target: person
+    fields:
+      - source: email
+        target: email
+      - source: customer_ref
+        target: primary_contact
+        priority: 1
+
+tests:
+  - description: "Cross-system reference resolution — CRM contact moves to correct company"
+    input:
+      erp_customer:
+        - { _id: "CUST-001", website: "acme.com", assigned_account_manager: null, manager_last_updated: null }
+      erp_contact:
+        - { contact_id: "C1", customer_ref: "CUST-001", email: "john@acme.com" }
+        - { contact_id: "C2", customer_ref: null, email: "orphan@example.com" }
+      crm_company:
+        - { db_id: 1000, homepage: "acme.com", assigned_account_manager: null, manager_last_updated: null }
+        - { db_id: 2000, homepage: "wrong.com", assigned_account_manager: null, manager_last_updated: null }
+      crm_contact:
+        - { contact_id: "CC1", company_id: 2000, primary_email: "john@acme.com" }
+    expected:
+      crm_contact:
+        updates:
+          - { contact_id: "CC1", company_id: 1000, primary_email: "john@acme.com" }
+        inserts:
+          - { _origin_erp_contact_contact_id: ["C2"], company_id: null, primary_email: "orphan@example.com" }
+
+  - description: "Namespace collision — ID '100' in both systems means different things"
+    input:
+      erp_customer:
+        - { _id: "100", website: "acme.com", assigned_account_manager: null, manager_last_updated: null }
+        - { _id: "200", website: "techcorp.com", assigned_account_manager: null, manager_last_updated: null }
+      erp_contact:
+        - { contact_id: "EC1", customer_ref: "100", email: "jane@acme.com" }
+      crm_company:
+        - { db_id: 100, homepage: "wrongcompany.com", assigned_account_manager: null, manager_last_updated: null }
+        - { db_id: 200, homepage: "anotherwrong.com", assigned_account_manager: null, manager_last_updated: null }
+      crm_contact:
+        - { contact_id: "CC1", company_id: 100, primary_email: "john@wrongcompany.com" }
+    expected:
+      erp_contact:
+        updates:
+          - { contact_id: "EC1", customer_ref: "100", email: "jane@acme.com" }
+      crm_contact:
+        updates:
+          - { contact_id: "CC1", company_id: 100, primary_email: "john@wrongcompany.com" }
+
+  - description: "account_manager reference with last_modified — newer CRM wins"
+    input:
+      erp_customer:
+        - { _id: "CUST-100", website: "acme.com", assigned_account_manager: "EC1", manager_last_updated: "2024-06-05T10:00:00Z" }
+      erp_contact:
+        - { contact_id: "EC1", customer_ref: null, email: "alice@acme.com" }
+        - { contact_id: "EC2", customer_ref: null, email: "bob@acme.com" }
+      crm_company:
+        - { db_id: 300, homepage: "acme.com", assigned_account_manager: "CC2", manager_last_updated: "2024-06-10T14:00:00Z" }
+      crm_contact:
+        - { contact_id: "CC1", company_id: null, primary_email: "alice@acme.com" }
+        - { contact_id: "CC2", company_id: null, primary_email: "bob@acme.com" }
+    expected:
+      erp_customer:
+        updates:
+          - { _id: "CUST-100", website: "acme.com", assigned_account_manager: "EC2" }
+      crm_company:
+        updates:
+          - { db_id: 300, homepage: "acme.com", assigned_account_manager: "CC2" }

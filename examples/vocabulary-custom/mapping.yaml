@@ -1,0 +1,83 @@
+version: "1.0"
+description: >
+  Common vocabulary for enum values. HR uses letter codes (A/I/L), CRM uses
+  integers (1/0). Both map through a shared status vocabulary target.
+
+targets:
+  status:
+    fields:
+      name: identity
+      hr_code: identity
+      crm_code: identity
+
+  employee:
+    fields:
+      id: identity
+      status:
+        strategy: last_modified
+        references: status
+
+mappings:
+  - name: hr_status_codes
+    source: { dataset: hr_status_codes }
+    target: status
+    fields:
+      - source: hr_code
+        target: hr_code
+      - source: vocabulary_code
+        target: name
+
+  - name: crm_status_codes
+    source: { dataset: crm_status_codes }
+    target: status
+    fields:
+      - source: crm_code
+        target: crm_code
+      - source: vocabulary_code
+        target: name
+
+  - name: hr_system
+    source: { dataset: hr_system }
+    target: employee
+    last_modified: last_updated
+    fields:
+      - source: employee_id
+        target: id
+      - source: employment_status
+        target: status
+
+  - name: crm
+    source: { dataset: crm }
+    target: employee
+    last_modified: modified_date
+    fields:
+      - source: contact_id
+        target: id
+      - source: status_code
+        target: status
+
+tests:
+  - description: "CRM status (newer) wins — HR gets translated code"
+    input:
+      hr_status_codes:
+        - { hr_code: "A", vocabulary_code: "active" }
+        - { hr_code: "I", vocabulary_code: "inactive" }
+        - { hr_code: "L", vocabulary_code: "on-leave" }
+      crm_status_codes:
+        - { crm_code: 1, vocabulary_code: "active" }
+        - { crm_code: 0, vocabulary_code: "inactive" }
+      hr_system:
+        - { employee_id: "alice", employment_status: "A", last_updated: "2024-06-15T10:00:00Z" }
+        - { employee_id: "bob", employment_status: "I", last_updated: "2024-06-01T08:00:00Z" }
+      crm:
+        - { contact_id: "alice", status_code: 0, modified_date: "2024-06-20T15:00:00Z" }
+    expected:
+      hr_system:
+        updates:
+          - { employee_id: "alice", employment_status: "I" }
+          - { employee_id: "bob", employment_status: "I" }
+      crm:
+        updates:
+          - { contact_id: "alice", status_code: 0 }
+        inserts:
+          - { _origin_hr_system_employee_id: ["bob"], contact_id: "bob", status_code: 0 }

@@ -1,0 +1,69 @@
+version: "1.0"
+description: >
+  Country vocabulary: ERP uses full names ("Norway"), CRM uses ISO codes ("NO").
+  Both resolve through a shared country vocabulary target.
+
+targets:
+  country:
+    fields:
+      name: identity
+      iso_code: identity
+
+  customer:
+    fields:
+      id: identity
+      country:
+        strategy: last_modified
+        references: country
+
+mappings:
+  - name: country_vocabulary
+    source: { dataset: country_vocabulary }
+    target: country
+    fields:
+      - source: name
+        target: name
+      - source: iso_code
+        target: iso_code
+
+  - name: crm_system
+    source: { dataset: crm_system }
+    target: customer
+    fields:
+      - source: account_id
+        target: id
+      - source: country_code
+        target: country
+        last_modified: updated_at
+
+  - name: erp_system
+    source: { dataset: erp_system }
+    target: customer
+    fields:
+      - source: customer_id
+        target: id
+      - source: country
+        target: country
+        last_modified: updated_at
+
+tests:
+  - description: "CRM ISO code (newer) wins — ERP gets full country name"
+    input:
+      country_vocabulary:
+        - { name: "Norway", iso_code: "NO" }
+        - { name: "Denmark", iso_code: "DK" }
+      erp_system:
+        - { customer_id: "C001", country: "Norway", updated_at: "2024-01-10T10:00:00Z" }
+        - { customer_id: "C002", country: "Denmark", updated_at: "2024-01-15T10:00:00Z" }
+      crm_system:
+        - { account_id: "C001", country_code: "DK", updated_at: "2024-01-20T10:00:00Z" }
+    expected:
+      erp_system:
+        updates:
+          - { customer_id: "C001", country: "Denmark" }
+          - { customer_id: "C002", country: "Denmark" }
+      crm_system:
+        updates:
+          - { account_id: "C001", country_code: "DK" }
+        inserts:
+          - { _origin_erp_system_customer_id: ["C002"], account_id: "C002", country_code: "DK" }

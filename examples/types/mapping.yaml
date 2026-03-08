@@ -1,0 +1,75 @@
+version: "1.0"
+description: >
+  Multi-valued type tracking. People exist in HR (employees) and CRM (customers).
+  Type field aggregates all roles. Reverse filters restrict output per system.
+
+targets:
+  person:
+    fields:
+      email: identity
+      name: coalesce
+      phone: coalesce
+      type:
+        strategy: expression
+        expression: "string_agg(distinct type, ',' order by type)"
+      department: coalesce
+
+mappings:
+  - name: hr
+    source: { dataset: hr }
+    target: person
+    reverse_filter: "type LIKE '%employee%'"
+    fields:
+      - source: employee_email
+        target: email
+      - source: employee_name
+        target: name
+        priority: 1
+      - source: work_phone
+        target: phone
+        priority: 1
+      - target: type
+        expression: "'employee'"
+        direction: forward_only
+      - source: dept
+        target: department
+
+  - name: crm
+    source: { dataset: crm }
+    target: person
+    reverse_filter: "type LIKE '%customer%'"
+    fields:
+      - source: contact_email
+        target: email
+      - source: contact_name
+        target: name
+        priority: 2
+      - source: contact_phone
+        target: phone
+        priority: 2
+      - target: type
+        expression: "'customer'"
+        direction: forward_only
+
+tests:
+  - description: "Alice in both systems, Bob HR only, Carol CRM only — type tracks roles"
+    input:
+      hr:
+        - { employee_id: "E001", employee_email: "alice@company.com", employee_name: "Alice Anderson", work_phone: "555-1001", dept: "Sales" }
+        - { employee_id: "E002", employee_email: "bob@company.com", employee_name: "Bob Brown", work_phone: "555-1003", dept: "IT" }
+      crm:
+        - { contact_id: "C001", contact_email: "alice@company.com", contact_name: "Alice A.", contact_phone: "555-1002" }
+        - { contact_id: "C002", contact_email: "carol@external.com", contact_name: "Carol Client", contact_phone: "555-1004" }
+    expected:
+      hr:
+        updates:
+          - { employee_id: "E001", employee_email: "alice@company.com", employee_name: "Alice A.", work_phone: "555-1001", dept: "Sales" }
+          - { employee_id: "E002", employee_email: "bob@company.com", employee_name: "Bob Brown", work_phone: "555-1003", dept: "IT" }
+        inserts:
+          - { _origin_crm_contact_id: ["C002"], employee_email: "carol@external.com", employee_name: "Carol Client", work_phone: "555-1004", dept: null }
+      crm:
+        updates:
+          - { contact_id: "C001", contact_email: "alice@company.com", contact_name: "Alice A.", contact_phone: "555-1002" }
+          - { contact_id: "C002", contact_email: "carol@external.com", contact_name: "Carol Client", contact_phone: "555-1004" }
+        inserts:
+          - { _origin_hr_employee_id: ["E002"], contact_email: "bob@company.com", contact_name: "Bob Brown", contact_phone: "555-1003" }

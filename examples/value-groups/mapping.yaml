@@ -1,0 +1,49 @@
+version: "1.0"
+description: >
+  Grouped properties resolve as atomic units. Address fields (street, zip) share
+  a group and resolve from the same winning source. Name resolves independently.
+
+targets:
+  customer:
+    fields:
+      customer_id: identity
+      name:
+        strategy: last_modified
+      street:
+        strategy: last_modified
+        group: address
+      zip_code:
+        strategy: last_modified
+        group: address
+      default_status:
+        strategy: coalesce
+        default: "active"
+
+mappings:
+  - name: customers
+    source: { dataset: customers }
+    target: customer
+    fields:
+      - source: customer_id
+        target: customer_id
+      - source: customer_name
+        target: name
+        last_modified: name_updated
+      - source: street
+        target: street
+        last_modified: street_updated
+      - source: zip_code
+        target: zip_code
+        last_modified: zip_updated
+
+tests:
+  - description: "Address group resolves together; name resolves independently"
+    input:
+      customers:
+        - { cid: 1, customer_id: "C1", customer_name: "Alice", street: "123 Oak St", zip_code: "90210", name_updated: "2025-01-01T10:00:00Z", street_updated: "2025-01-15T10:00:00Z", zip_updated: "2025-01-05T10:00:00Z" }
+        - { cid: 2, customer_id: "C1", customer_name: "Alice Johnson", street: "456 Elm Ave", zip_code: "90211", name_updated: "2025-01-20T10:00:00Z", street_updated: "2025-01-01T10:00:00Z", zip_updated: "2025-01-10T10:00:00Z" }
+    expected:
+      customers:
+        updates:
+          - { cid: 1, customer_id: "C1", customer_name: "Alice Johnson", street: "123 Oak St", zip_code: "90210" }
+          - { cid: 2, customer_id: "C1", customer_name: "Alice Johnson", street: "123 Oak St", zip_code: "90210" }

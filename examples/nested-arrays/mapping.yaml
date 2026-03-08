@@ -1,0 +1,102 @@
+version: "1.0"
+description: >
+  One-to-many from nested (shop) and normalized (warehouse) sources mapping to
+  the same target entities. Shows source.path for nested array extraction with
+  parent_fields to import ancestor data.
+
+targets:
+  purchase_order:
+    fields:
+      order_ref: identity
+      total:
+        strategy: coalesce
+
+  order_line:
+    fields:
+      order_ref:
+        strategy: coalesce
+        references: purchase_order
+      line_number: coalesce
+      product: coalesce
+      quantity: coalesce
+
+mappings:
+  # Shop: parent order
+  - name: shop_orders
+    source: { dataset: shop }
+    target: purchase_order
+    fields:
+      - source: order_id
+        target: order_ref
+      - source: total
+        target: total
+
+  # Shop: nested line items extracted via source.path
+  - name: shop_lines
+    source:
+      dataset: shop
+      path: lines
+      parent_fields:
+        parent_order_id: order_id
+    target: order_line
+    fields:
+      - source: parent_order_id
+        target: order_ref
+      - source: line_num
+        target: line_number
+      - source: item
+        target: product
+      - source: qty
+        target: quantity
+
+  # Warehouse: normalized order table
+  - name: warehouse_orders
+    source: { dataset: warehouse_orders }
+    target: purchase_order
+    fields:
+      - source: order_number
+        target: order_ref
+      - source: total_amount
+        target: total
+
+  # Warehouse: normalized line items table
+  - name: warehouse_lines
+    source: { dataset: warehouse_lines }
+    target: order_line
+    fields:
+      - source: order_number
+        target: order_ref
+      - source: line_number
+        target: line_number
+      - source: product_name
+        target: product
+      - source: qty
+        target: quantity
+
+tests:
+  - description: "Nested shop lines + normalized warehouse lines map to same targets"
+    input:
+      shop:
+        - order_id: "ORD-001"
+          total: 150.00
+          lines: []
+      warehouse_orders:
+        - { id: "W1", order_number: "ORD-001", total_amount: 150.00 }
+      warehouse_lines:
+        - { line_id: "L1", order_number: "W1", line_number: 1, product_name: "Widget", qty: 2 }
+        - { line_id: "L2", order_number: "W1", line_number: 2, product_name: "Gadget", qty: 1 }
+    expected:
+      shop:
+        updates:
+          - order_id: "ORD-001"
+            total: 150.00
+            lines:
+              - { line_num: 1, item: "Widget", qty: 2 }
+              - { line_num: 2, item: "Gadget", qty: 1 }
+      warehouse_orders:
+        updates:
+          - { id: "W1", order_number: "ORD-001", total_amount: 150.00 }
+      warehouse_lines:
+        updates:
+          - { line_id: "L1", order_number: "W1", line_number: 1, product_name: "Widget", qty: 2 }
+          - { line_id: "L2", order_number: "W1", line_number: 2, product_name: "Gadget", qty: 1 }

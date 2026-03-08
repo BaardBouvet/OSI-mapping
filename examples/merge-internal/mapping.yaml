@@ -1,0 +1,48 @@
+version: "1.0"
+description: >
+  Same-source merge. Multiple CRM rows with the same email merge into one entity.
+  Demonstrates intra-source deduplication with last_modified resolution.
+
+targets:
+  company:
+    fields:
+      email: identity
+      name:
+        strategy: last_modified
+      phone: identity
+
+mappings:
+  - name: crm
+    source: { dataset: crm }
+    target: company
+    last_modified: updated_at
+    fields:
+      - source: email
+        target: email
+      - source: company_name
+        target: name
+      - source: phone
+        target: phone
+
+tests:
+  - description: "Newer record wins for last_modified field"
+    input:
+      crm:
+        - { id: "A1", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1000", updated_at: "2024-01-01T10:00:00Z" }
+        - { id: "A2", email: "contact@acme.com", company_name: "Acme Corporation", phone: "555-1001", updated_at: "2024-01-15T14:30:00Z" }
+    expected:
+      crm:
+        updates:
+          - { id: "A1", email: "contact@acme.com", company_name: "Acme Corporation", phone: "555-1000" }
+          - { id: "A2", email: "contact@acme.com", company_name: "Acme Corporation", phone: "555-1001" }
+
+  - description: "Deterministic resolution when timestamps are identical"
+    input:
+      crm:
+        - { id: "A1", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1000", updated_at: "2024-01-01T10:00:00Z" }
+        - { id: "A2", email: "contact@acme.com", company_name: "Acme Corporation", phone: "555-1001", updated_at: "2024-01-01T10:00:00Z" }
+    expected:
+      crm:
+        updates:
+          - { id: "A1", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1000" }
+          - { id: "A2", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1001" }

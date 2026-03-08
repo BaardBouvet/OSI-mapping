@@ -1,0 +1,63 @@
+version: "1.0"
+description: >
+  Single source with two mappings to the same target using different filters and
+  priorities. Primary contacts get priority 1, secondary get priority 2.
+
+targets:
+  person:
+    fields:
+      email: coalesce
+      name: coalesce
+      phone: coalesce
+      is_primary_contact: coalesce
+
+mappings:
+  - name: contacts_primary
+    source: { dataset: contacts }
+    target: person
+    filter: "is_primary = 'true'"
+    reverse_filter: "is_primary_contact = true"
+    fields:
+      - source: email
+        target: email
+        priority: 1
+      - source: contact_name
+        target: name
+        priority: 1
+      - source: phone
+        target: phone
+        priority: 1
+      - source: is_primary
+        target: is_primary_contact
+        expression: "true"
+
+  - name: contacts_secondary
+    source: { dataset: contacts }
+    target: person
+    filter: "is_primary = 'false'"
+    reverse_filter: "is_primary_contact = false"
+    fields:
+      - source: email
+        target: email
+        priority: 2
+      - source: contact_name
+        target: name
+        priority: 2
+      - source: phone
+        target: phone
+        priority: 2
+      - source: is_primary
+        target: is_primary_contact
+        expression: "false"
+
+tests:
+  - description: "Primary and secondary contacts map to same target with different priorities"
+    input:
+      contacts:
+        - { id: "C1", contact_name: "Alice Smith", email: "alice@example.com", phone: "555-0101", is_primary: "true" }
+        - { id: "C2", contact_name: "Bob Jones", email: "bob@example.com", phone: "555-0102", is_primary: "false" }
+    expected:
+      contacts:
+        updates:
+          - { id: "C1", contact_name: "Alice Smith", email: "alice@example.com", phone: "555-0101", is_primary: true }
+          - { id: "C2", contact_name: "Bob Jones", email: "bob@example.com", phone: "555-0102", is_primary: false }

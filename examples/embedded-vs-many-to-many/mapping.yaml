@@ -1,0 +1,119 @@
+version: "1.0"
+description: >
+  CRM has embedded contacts, ERP has normalized junction table. Both map to
+  the same customer + contact + customer_contact targets.
+
+targets:
+  customer:
+    fields:
+      domain: identity
+
+  contact:
+    fields:
+      name:
+        strategy: last_modified
+      email: identity
+
+  customer_contact:
+    fields:
+      customer_id:
+        strategy: coalesce
+        references: customer
+      contact_id:
+        strategy: coalesce
+        references: contact
+      relation_type: coalesce
+
+mappings:
+  - name: crm_customers
+    source: { dataset: crm_customers }
+    target: customer
+    fields:
+      - source: domain
+        target: domain
+
+  - name: crm_embedded_contacts
+    source: { dataset: crm_customers }
+    target: contact
+    embedded: true
+    fields:
+      - source: contact_name
+        target: name
+        last_modified: updated_at
+      - source: contact_email
+        target: email
+
+  - name: crm_embedded_associations
+    source: { dataset: crm_customers }
+    target: customer_contact
+    embedded: true
+    reverse_filter: "relation_type = 'primary'"
+    fields:
+      - source: id
+        target: customer_id
+        direction: forward_only
+      - target: relation_type
+        expression: "'primary'"
+        direction: forward_only
+
+  - name: erp_customers
+    source: { dataset: erp_customers }
+    target: customer
+    fields:
+      - source: domain
+        target: domain
+
+  - name: erp_contacts
+    source: { dataset: erp_contacts }
+    target: contact
+    fields:
+      - source: name
+        target: name
+        last_modified: modified_at
+      - source: email
+        target: email
+
+  - name: erp_customer_contacts
+    source: { dataset: erp_customer_contacts }
+    target: customer_contact
+    fields:
+      - source: customer_id
+        target: customer_id
+      - source: contact_id
+        target: contact_id
+      - source: relation_type
+        target: relation_type
+        last_modified: modified_at
+
+tests:
+  - description: "CRM switches primary contact, ERP has many-to-many relationships"
+    input:
+      crm_customers:
+        - { id: "C1", domain: "acme.com", contact_name: "Charlie", contact_email: "charlie@acme.com", updated_at: "2024-01-15T10:00:00Z" }
+      erp_customers:
+        - { customer_id: "100", domain: "acme.com" }
+      erp_contacts:
+        - { contact_id: "1001", name: "Alice Smith", email: "alice@acme.com", modified_at: "2024-01-20T10:00:00Z" }
+        - { contact_id: "1002", name: "Bob", email: "bob@example.com", modified_at: "2024-01-20T10:00:00Z" }
+        - { contact_id: "1003", name: "Charlie Johnson", email: "charlie@acme.com", modified_at: "2024-01-25T10:00:00Z" }
+      erp_customer_contacts:
+        - { id: "1", customer_id: "100", contact_id: "1001", relation_type: "billing", modified_at: "2024-01-20T10:00:00Z" }
+        - { id: "2", customer_id: "100", contact_id: "1002", relation_type: "support", modified_at: "2024-01-20T10:00:00Z" }
+        - { id: "3", customer_id: "100", contact_id: "1003", relation_type: "primary", modified_at: "2024-01-22T10:00:00Z" }
+    expected:
+      crm_customers:
+        updates:
+          - { id: "C1", domain: "acme.com", contact_name: "Charlie Johnson", contact_email: "charlie@acme.com" }
+      erp_customers:
+        updates:
+          - { customer_id: "100", domain: "acme.com" }
+      erp_contacts:
+        updates:
+          - { contact_id: "1001", name: "Alice Smith", email: "alice@acme.com" }
+          - { contact_id: "1002", name: "Bob", email: "bob@example.com" }
+          - { contact_id: "1003", name: "Charlie Johnson", email: "charlie@acme.com" }
+      erp_customer_contacts:
+        updates:
+          - { id: "1", customer_id: "100", contact_id: "1001", relation_type: "billing" }
+          - { id: "2", customer_id: "100", contact_id: "1002", relation_type: "support" }
+          - { id: "3", customer_id: "100", contact_id: "1003", relation_type: "primary" }

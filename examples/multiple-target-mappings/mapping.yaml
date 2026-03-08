@@ -1,0 +1,92 @@
+version: "1.0"
+description: >
+  Single source with billing and shipping address fields, each mapping to a
+  separate embedded address target. Shows multiple embedded mappings from one dataset.
+
+targets:
+  customer:
+    fields:
+      customer_id: identity
+      name: coalesce
+
+  address:
+    fields:
+      street: coalesce
+      city: coalesce
+      state: coalesce
+      zip: coalesce
+      country: coalesce
+
+mappings:
+  - name: customers
+    source: { dataset: customers }
+    target: customer
+    fields:
+      - source: customer_id
+        target: customer_id
+      - source: name
+        target: name
+
+  - name: customers_billing
+    source: { dataset: customers }
+    target: address
+    embedded: true
+    fields:
+      - source: billing_street
+        target: street
+      - source: billing_city
+        target: city
+      - source: billing_state
+        target: state
+      - source: billing_zip
+        target: zip
+      - source: billing_country
+        target: country
+
+  - name: customers_shipping
+    source: { dataset: customers }
+    target: address
+    embedded: true
+    fields:
+      - source: shipping_street
+        target: street
+      - source: shipping_city
+        target: city
+      - source: shipping_state
+        target: state
+      - source: shipping_zip
+        target: zip
+      - source: shipping_country
+        target: country
+
+tests:
+  - description: "Billing and shipping addresses round-trip through separate embedded targets"
+    input:
+      customers:
+        - customer_id: "C1"
+          name: "Acme Corp"
+          billing_street: "100 Main St"
+          billing_city: "Boston"
+          billing_state: "MA"
+          billing_zip: "02101"
+          billing_country: "US"
+          shipping_street: "200 Oak Ave"
+          shipping_city: "Cambridge"
+          shipping_state: "MA"
+          shipping_zip: "02139"
+          shipping_country: "US"
+    expected:
+      customers:
+        updates:
+          - customer_id: "C1"
+            name: "Acme Corp"
+            billing_street: "100 Main St"
+            billing_city: "Boston"
+            billing_state: "MA"
+            billing_zip: "02101"
+            billing_country: "US"
+            shipping_street: "200 Oak Ave"
+            shipping_city: "Cambridge"
+            shipping_state: "MA"
+            shipping_zip: "02139"
+            shipping_country: "US"

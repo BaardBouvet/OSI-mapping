@@ -1,0 +1,105 @@
+version: "1.0"
+description: >
+  Customer with billing + shipping addresses. CRM has inline address fields,
+  billing system has separate account table. Both embedded mappings merge.
+
+targets:
+  customer:
+    fields:
+      customer_id: identity
+      name:
+        strategy: last_modified
+
+  billing_address:
+    fields:
+      address_id: identity
+      street:
+        strategy: last_modified
+      city:
+        strategy: last_modified
+
+  shipping_address:
+    fields:
+      address_id: identity
+      street:
+        strategy: last_modified
+      city:
+        strategy: last_modified
+
+mappings:
+  - name: crm_customer
+    source: { dataset: crm }
+    target: customer
+    fields:
+      - source: customer_id
+        target: customer_id
+      - source: customer_name
+        target: name
+        last_modified: updated_at
+
+  - name: crm_billing
+    source: { dataset: crm }
+    target: billing_address
+    embedded: true
+    fields:
+      - source: billing_address_id
+        target: address_id
+      - source: billing_street
+        target: street
+        last_modified: updated_at
+      - source: billing_city
+        target: city
+        last_modified: updated_at
+
+  - name: crm_shipping
+    source: { dataset: crm }
+    target: shipping_address
+    embedded: true
+    fields:
+      - source: shipping_address_id
+        target: address_id
+      - source: shipping_street
+        target: street
+        last_modified: updated_at
+      - source: shipping_city
+        target: city
+        last_modified: updated_at
+
+  - name: billing_customer
+    source: { dataset: billing }
+    target: customer
+    fields:
+      - source: account_id
+        target: customer_id
+      - source: account_name
+        target: name
+        last_modified: modified_at
+
+  - name: billing_address
+    source: { dataset: billing }
+    target: billing_address
+    embedded: true
+    fields:
+      - source: billing_address_id
+        target: address_id
+      - source: street
+        target: street
+        last_modified: modified_at
+      - source: city
+        target: city
+        last_modified: modified_at
+
+tests:
+  - description: "Multiple embedded addresses — billing wins with newer timestamp"
+    input:
+      crm:
+        - { customer_id: "C1", customer_name: "Acme Corp", billing_address_id: "B1", billing_street: "123 Main St", billing_city: "NYC", shipping_address_id: "S1", shipping_street: "456 Oak Ave", shipping_city: "LA", updated_at: "2024-01-15T10:00:00Z" }
+      billing:
+        - { account_id: "C1", account_name: "Acme Corporation", billing_address_id: "B1", street: "123 Main Street", city: "New York", modified_at: "2024-01-20T14:00:00Z" }
+    expected:
+      crm:
+        updates:
+          - { customer_id: "C1", customer_name: "Acme Corporation", billing_address_id: "B1", shipping_address_id: "S1", billing_street: "123 Main Street", billing_city: "New York", shipping_street: "456 Oak Ave", shipping_city: "LA" }
+      billing:
+        updates:
+          - { account_id: "C1", account_name: "Acme Corporation", billing_address_id: "B1", street: "123 Main Street", city: "New York" }

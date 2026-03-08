@@ -1,0 +1,75 @@
+version: "1.0"
+description: >
+  Merging across three data sources via shared identity properties (email, phone).
+  Transitive closure connects records that share any identity value.
+
+targets:
+  company:
+    fields:
+      email: identity
+      name: coalesce
+      phone: identity
+      industry: coalesce
+
+mappings:
+  - name: source_a
+    source: { dataset: source_a }
+    target: company
+    fields:
+      - source: email
+        target: email
+      - source: company_name
+        target: name
+        priority: 1
+      - source: phone
+        target: phone
+      - source: sector
+        target: industry
+        priority: 1
+
+  - name: source_b
+    source: { dataset: source_b }
+    target: company
+    fields:
+      - source: contact_email
+        target: email
+      - source: org_name
+        target: name
+        priority: 2
+      - source: contact_phone
+        target: phone
+      - source: industry_type
+        target: industry
+        priority: 2
+
+  - name: source_c
+    source: { dataset: source_c }
+    target: company
+    fields:
+      - source: email_address
+        target: email
+      - source: business_name
+        target: name
+        priority: 3
+      - source: phone_number
+        target: phone
+
+tests:
+  - description: "Three sources merge via shared email — priority 1 name/industry wins"
+    input:
+      source_a:
+        - { id: "A1", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1000", sector: "Technology" }
+      source_b:
+        - { id: "B1", contact_email: "contact@acme.com", org_name: "ACME Inc", contact_phone: "555-2000", industry_type: "Software" }
+      source_c:
+        - { id: "C1", email_address: "contact@acme.com", business_name: "Acme International", phone_number: "555-3000" }
+    expected:
+      source_a:
+        updates:
+          - { id: "A1", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1000", sector: "Technology" }
+      source_b:
+        updates:
+          - { id: "B1", contact_email: "contact@acme.com", org_name: "Acme Corp", contact_phone: "555-2000", industry_type: "Technology" }
+      source_c:
+        updates:
+          - { id: "C1", email_address: "contact@acme.com", business_name: "Acme Corp", phone_number: "555-3000" }

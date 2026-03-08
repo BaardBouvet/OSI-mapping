@@ -1,0 +1,58 @@
+version: "1.0"
+description: >
+  Insert/delete propagation. crm_b only accepts people with a customer_id.
+  reverse_required filters out rows where customer_id is null.
+
+targets:
+  person:
+    fields:
+      email: identity
+      customer_id: coalesce
+
+mappings:
+  - name: crm_a
+    source: { dataset: crm_a }
+    target: person
+    fields:
+      - source: email
+        target: email
+      - source: customer_id
+        target: customer_id
+
+  - name: crm_b
+    source: { dataset: crm_b }
+    target: person
+    fields:
+      - source: email
+        target: email
+      - source: customer_id
+        target: customer_id
+        reverse_required: true
+
+tests:
+  - description: "reverse_required filters — inserts for people with customer_id, deletes for those without"
+    input:
+      crm_a:
+        - { person_id: "P1", email: "lead1@example.com", customer_id: null }
+        - { person_id: "P2", email: "jane@example.com", customer_id: "CUST-001" }
+        - { person_id: "P3", email: "lead2@example.com", customer_id: null }
+        - { person_id: "P4", email: "john@example.com", customer_id: "CUST-002" }
+      crm_b:
+        - { person_id: "P2", customer_id: "CUST-001", email: "jane@example.com" }
+        - { person_id: "P5", customer_id: null, email: "orphan@example.com" }
+    expected:
+      crm_a:
+        updates:
+          - { person_id: "P1", email: "lead1@example.com", customer_id: null }
+          - { person_id: "P2", email: "jane@example.com", customer_id: "CUST-001" }
+          - { person_id: "P3", email: "lead2@example.com", customer_id: null }
+          - { person_id: "P4", email: "john@example.com", customer_id: "CUST-002" }
+        inserts:
+          - { _origin_crm_b_person_id: ["P5"], person_id: "P5", email: "orphan@example.com", customer_id: null }
+      crm_b:
+        updates:
+          - { person_id: "P2", customer_id: "CUST-001", email: "jane@example.com" }
+        inserts:
+          - { person_id: "P4", _origin_crm_a_person_id: ["P4"], customer_id: "CUST-002", email: "john@example.com" }
+        deletes:
+          - { person_id: "P5" }

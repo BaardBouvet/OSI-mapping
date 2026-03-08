@@ -1,0 +1,82 @@
+version: "1.0"
+description: >
+  Maps flat CRM + normalized ERP (companies + addresses) to a single flattened
+  customer target with embedded address fields. Shows embedded is about source
+  structure, not target structure.
+
+targets:
+  customer:
+    fields:
+      name: identity
+      address_ref: identity
+      street:
+        strategy: last_modified
+      city:
+        strategy: last_modified
+      postal_code:
+        strategy: last_modified
+      country:
+        strategy: last_modified
+
+mappings:
+  - name: crm_customers
+    source: { dataset: crm_customers }
+    target: customer
+    last_modified: last_modified
+    fields:
+      - source: customer_name
+        target: name
+      - source: street_address
+        target: street
+      - source: city
+        target: city
+      - source: postal_code
+        target: postal_code
+      - source: country
+        target: country
+
+  - name: erp_companies
+    source: { dataset: erp_companies }
+    target: customer
+    last_modified: updated_at
+    fields:
+      - source: company_name
+        target: name
+      - source: address_id
+        target: address_ref
+
+  - name: erp_addresses
+    source: { dataset: erp_addresses }
+    target: customer
+    last_modified: modified_at
+    fields:
+      - source: address_id
+        target: address_ref
+      - source: street
+        target: street
+      - source: city
+        target: city
+      - source: zip_code
+        target: postal_code
+      - source: country
+        target: country
+
+tests:
+  - description: "CRM flat + ERP normalized merge — newer ERP address wins"
+    input:
+      crm_customers:
+        - { customer_id: "C1", customer_name: "Acme Corporation", street_address: "123 Main St", city: "Oslo", postal_code: "0150", country: "Norway", last_modified: "2024-01-15T10:00:00Z" }
+      erp_addresses:
+        - { address_id: "A100", street: "456 Business Ave", city: "Bergen", zip_code: "5000", country: "Norway", modified_at: "2024-01-20T14:00:00Z" }
+      erp_companies:
+        - { company_id: "E1", company_name: "Acme Corporation", address_id: "A100", updated_at: "2024-01-20T14:00:00Z" }
+    expected:
+      crm_customers:
+        updates:
+          - { customer_id: "C1", customer_name: "Acme Corporation", street_address: "456 Business Ave", city: "Bergen", postal_code: "5000", country: "Norway" }
+      erp_companies:
+        updates:
+          - { company_id: "E1", company_name: "Acme Corporation", address_id: "A100" }
+      erp_addresses:
+        updates:
+          - { address_id: "A100", street: "456 Business Ave", city: "Bergen", zip_code: "5000", country: "Norway" }

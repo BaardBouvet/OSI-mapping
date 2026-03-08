@@ -1,0 +1,97 @@
+version: "1.0"
+description: >
+  Basic embedded pattern. CRM has inline address fields, billing system has
+  separate account/address mapping. Both map to same target entities.
+
+targets:
+  customer:
+    fields:
+      email: identity
+      name:
+        strategy: last_modified
+
+  billing_address:
+    fields:
+      street:
+        strategy: last_modified
+      city:
+        strategy: last_modified
+
+  shipping_address:
+    fields:
+      street:
+        strategy: last_modified
+      city:
+        strategy: last_modified
+
+mappings:
+  - name: crm_customers
+    source: { dataset: crm }
+    target: customer
+    fields:
+      - source: customer_email
+        target: email
+      - source: customer_name
+        target: name
+        last_modified: updated_at
+
+  - name: crm_billing
+    source: { dataset: crm }
+    target: billing_address
+    embedded: true
+    fields:
+      - source: billing_street
+        target: street
+        last_modified: updated_at
+      - source: billing_city
+        target: city
+        last_modified: updated_at
+
+  - name: crm_shipping
+    source: { dataset: crm }
+    target: shipping_address
+    embedded: true
+    fields:
+      - source: shipping_street
+        target: street
+        last_modified: updated_at
+      - source: shipping_city
+        target: city
+        last_modified: updated_at
+
+  - name: billing_accounts
+    source: { dataset: billing }
+    target: customer
+    fields:
+      - source: account_email
+        target: email
+      - source: account_name
+        target: name
+        last_modified: modified_at
+
+  - name: billing_addresses
+    source: { dataset: billing }
+    target: billing_address
+    embedded: true
+    fields:
+      - source: street
+        target: street
+        last_modified: modified_at
+      - source: city
+        target: city
+        last_modified: modified_at
+
+tests:
+  - description: "CRM embedded + billing system merge on email — billing has newer address"
+    input:
+      crm:
+        - { customer_id: "C1", customer_email: "acme@example.com", customer_name: "Acme Corp", billing_street: "123 Main St", billing_city: "NYC", shipping_street: "456 Oak Ave", shipping_city: "LA", updated_at: "2024-01-15T10:00:00Z" }
+      billing:
+        - { account_id: "B100", account_email: "acme@example.com", account_name: "Acme Corporation", street: "999 Updated St", city: "New York", modified_at: "2024-01-20T10:00:00Z" }
+    expected:
+      crm:
+        updates:
+          - { customer_id: "C1", customer_email: "acme@example.com", customer_name: "Acme Corporation", billing_street: "999 Updated St", billing_city: "New York", shipping_street: "456 Oak Ave", shipping_city: "LA" }
+      billing:
+        updates:
+          - { account_id: "B100", account_email: "acme@example.com", account_name: "Acme Corporation", street: "999 Updated St", city: "New York" }

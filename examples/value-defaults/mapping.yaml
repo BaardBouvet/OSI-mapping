@@ -1,0 +1,53 @@
+version: "1.0"
+description: >
+  Default values for missing fields and constant injection via expressions.
+  Shows default (literal), default_expression, and reverse_expression constants.
+
+targets:
+  customer:
+    fields:
+      email: identity
+      name: coalesce
+      industry:
+        strategy: coalesce
+        default: "Unknown"
+      credit_limit:
+        strategy: coalesce
+        default: 1000
+      active:
+        strategy: coalesce
+        default: true
+
+mappings:
+  - name: crm_account
+    source: { dataset: crm_account }
+    target: customer
+    fields:
+      - source: customer_email
+        target: email
+      - source: customer_name
+        target: name
+      - source: industry_type
+        target: industry
+      - source: max_credit
+        target: credit_limit
+      - source: is_active
+        target: active
+      - source: source_system
+        expression: "'CRM'"
+        reverse_expression: "'CRM'"
+      - source: is_verified
+        expression: "true"
+        reverse_expression: "true"
+
+tests:
+  - description: "Defaults and constant injection round-trip"
+    input:
+      crm_account:
+        - { id: "ACC1", customer_email: "john@example.com", customer_name: "John Doe", industry_type: "Technology", max_credit: 5000, is_active: true }
+        - { id: "ACC2", customer_email: "jane@example.com", customer_name: "Jane Smith", industry_type: "Retail", max_credit: 3000, is_active: true }
+    expected:
+      crm_account:
+        updates:
+          - { id: "ACC1", customer_email: "john@example.com", customer_name: "John Doe", industry_type: "Technology", max_credit: 5000, is_active: true, source_system: "CRM", is_verified: true }
+          - { id: "ACC2", customer_email: "jane@example.com", customer_name: "Jane Smith", industry_type: "Retail", max_credit: 3000, is_active: true, source_system: "CRM", is_verified: true }

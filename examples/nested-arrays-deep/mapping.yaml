@@ -1,0 +1,102 @@
+version: "1.0"
+description: >
+  Two levels of nested arrays: parent → children → grandchildren.
+  Uses source.path and parent_fields to flatten deep nesting into three targets.
+
+targets:
+  parent:
+    fields:
+      parent_id: identity
+      name: coalesce
+
+  child:
+    fields:
+      child_id: identity
+      parent_ref:
+        strategy: coalesce
+        references: parent
+      value: coalesce
+
+  grandchild:
+    fields:
+      grandchild_id: identity
+      child_ref:
+        strategy: coalesce
+        references: child
+      data: coalesce
+
+mappings:
+  - name: source_parents
+    source: { dataset: source }
+    target: parent
+    fields:
+      - source: id
+        target: parent_id
+      - source: name
+        target: name
+
+  - name: source_children
+    source:
+      dataset: source
+      path: children
+      parent_fields:
+        parent_id: id
+    target: child
+    fields:
+      - source: child_id
+        target: child_id
+      - source: parent_id
+        target: parent_ref
+      - source: value
+        target: value
+
+  - name: source_grandchildren
+    source:
+      dataset: source
+      path: children.grandchildren
+      parent_fields:
+        parent_child_id: child_id
+    target: grandchild
+    fields:
+      - source: grandchild_id
+        target: grandchild_id
+      - source: parent_child_id
+        target: child_ref
+      - source: data
+        target: data
+
+tests:
+  - description: "Parent with children, each child having grandchildren"
+    input:
+      source:
+        - id: "P1"
+          name: "Parent A"
+          children:
+            - child_id: 1
+              value: "Child 1"
+              grandchildren:
+                - { grandchild_id: 1, data: "GC 1.1" }
+                - { grandchild_id: 2, data: "GC 1.2" }
+            - child_id: 2
+              value: "Child 2"
+              grandchildren:
+                - { grandchild_id: 1, data: "GC 2.1" }
+                - { grandchild_id: 2, data: "GC 2.2" }
+                - { grandchild_id: 3, data: "GC 2.3" }
+    expected:
+      source:
+        updates:
+          - id: "P1"
+            name: "Parent A"
+            children:
+              - child_id: 1
+                value: "Child 1"
+                grandchildren:
+                  - { grandchild_id: 1, data: "GC 1.1" }
+                  - { grandchild_id: 2, data: "GC 1.2" }
+              - child_id: 2
+                value: "Child 2"
+                grandchildren:
+                  - { grandchild_id: 1, data: "GC 2.1" }
+                  - { grandchild_id: 2, data: "GC 2.2" }
+                  - { grandchild_id: 3, data: "GC 2.3" }

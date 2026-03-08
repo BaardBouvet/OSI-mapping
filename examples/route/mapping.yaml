@@ -1,0 +1,66 @@
+version: "1.0"
+description: >
+  Routes records from a single contacts table into separate person and company
+  target entities based on the contact_type discriminator field.
+
+targets:
+  person:
+    fields:
+      email: identity
+      name: last_modified
+      phone: last_modified
+
+  company:
+    fields:
+      email: identity
+      name: last_modified
+      phone: last_modified
+
+mappings:
+  - name: contacts_person
+    source: { dataset: contacts }
+    target: person
+    filter: "contact_type = 'person'"
+    fields:
+      - source: email
+        target: email
+      - source: contact_name
+        target: name
+        last_modified: modified_at
+      - source: contact_phone
+        target: phone
+        last_modified: modified_at
+      - source: contact_type
+        direction: reverse_only
+        reverse_expression: "'person'"
+
+  - name: contacts_company
+    source: { dataset: contacts }
+    target: company
+    filter: "contact_type = 'company'"
+    fields:
+      - source: email
+        target: email
+      - source: contact_name
+        target: name
+        last_modified: modified_at
+      - source: contact_phone
+        target: phone
+        last_modified: modified_at
+      - source: contact_type
+        direction: reverse_only
+        reverse_expression: "'company'"
+
+tests:
+  - description: "Split one source into two targets by contact_type filter"
+    input:
+      contacts:
+        - { id: "CON1", email: "john@example.com", contact_name: "John Doe", contact_phone: "555-1000", contact_type: "person" }
+        - { id: "CON2", email: "jane@example.com", contact_name: "Jane Smith", contact_phone: "555-2000", contact_type: "person" }
+        - { id: "CON3", email: "info@acme.com", contact_name: "Acme Corp", contact_phone: "555-3000", contact_type: "company" }
+    expected:
+      contacts:
+        updates:
+          - { id: "CON1", email: "john@example.com", contact_name: "John Doe", contact_phone: "555-1000", contact_type: "person" }
+          - { id: "CON2", email: "jane@example.com", contact_name: "Jane Smith", contact_phone: "555-2000", contact_type: "person" }
+          - { id: "CON3", email: "info@acme.com", contact_name: "Acme Corp", contact_phone: "555-3000", contact_type: "company" }

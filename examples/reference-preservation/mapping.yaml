@@ -1,0 +1,63 @@
+version: "1.0"
+description: >
+  When duplicate companies merge (same domain), contacts preserve their original
+  company_id references during reverse transformation.
+
+targets:
+  company:
+    fields:
+      id: identity
+      domain: identity
+      name: last_modified
+
+  contact:
+    fields:
+      id: identity
+      company:
+        strategy: identity
+        references: company
+
+mappings:
+  - name: crm_companies
+    source: { dataset: crm_companies }
+    target: company
+    last_modified: updated_at
+    fields:
+      - source: company_id
+        target: id
+      - source: domain
+        target: domain
+      - source: name
+        target: name
+
+  - name: crm_contacts
+    source: { dataset: crm_contacts }
+    target: contact
+    fields:
+      - source: contact_id
+        target: id
+      - source: company_id
+        target: company
+
+tests:
+  - description: "Preserve original company_id when duplicate companies merge"
+    input:
+      crm_companies:
+        - { company_id: "100", domain: "acme.com", name: "Acme Corp", updated_at: "2024-01-01T12:00:00Z" }
+        - { company_id: "200", domain: "acme.com", name: "ACME Corporation", updated_at: "2024-02-01T12:00:00Z" }
+        - { company_id: "300", domain: "techcorp.com", name: "TechCorp", updated_at: "2024-01-01T12:00:00Z" }
+      crm_contacts:
+        - { contact_id: "C1", company_id: "100" }
+        - { contact_id: "C2", company_id: "200" }
+        - { contact_id: "C3", company_id: "300" }
+    expected:
+      crm_contacts:
+        updates:
+          - { contact_id: "C1", company_id: "100" }
+          - { contact_id: "C2", company_id: "200" }
+          - { contact_id: "C3", company_id: "300" }
+      crm_companies:
+        updates:
+          - { company_id: "100", domain: "acme.com", name: "ACME Corporation" }
+          - { company_id: "200", domain: "acme.com", name: "ACME Corporation" }
+          - { company_id: "300", domain: "techcorp.com", name: "TechCorp" }

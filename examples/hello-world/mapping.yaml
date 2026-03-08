@@ -1,0 +1,45 @@
+version: "1.0"
+description: >
+  Two systems, one shared contact, synced by email.
+
+targets:
+  contact:
+    fields:
+      email: identity
+      name: coalesce
+
+mappings:
+  - name: crm
+    source: { dataset: crm }
+    target: contact
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+        priority: 1
+
+  - name: erp
+    source: { dataset: erp }
+    target: contact
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+        priority: 2
+
+tests:
+  - description: "CRM name wins (priority 1) and propagates to ERP"
+    input:
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+      erp:
+        - { id: "100", email: "alice@example.com", name: "A. Smith" }
+    expected:
+      crm:
+        updates:
+          - { id: "1", email: "alice@example.com", name: "Alice" }
+      erp:
+        updates:
+          - { id: "100", email: "alice@example.com", name: "Alice" }

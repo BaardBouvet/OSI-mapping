@@ -1,0 +1,69 @@
+version: "1.0"
+description: >
+  Bidirectional value transformations between two systems with different data
+  formats. Date format conversion, name splitting/joining, phone normalization.
+
+targets:
+  person:
+    fields:
+      email: identity
+      date_of_birth: coalesce
+      first_name: coalesce
+      last_name: coalesce
+      phone: coalesce
+
+mappings:
+  - name: system_a
+    source: { dataset: system_a }
+    target: person
+    priority: 1
+    fields:
+      - source: person_id
+        target: email
+      - source: dob
+        target: date_of_birth
+        expression: "TO_DATE(dob, 'DD/MM/YY')"
+        reverse_expression: "TO_CHAR(date_of_birth, 'DD/MM/YY')"
+      - source: first_name
+        target: first_name
+      - source: last_name
+        target: last_name
+      - source: phone_number
+        target: phone
+        expression: "REGEXP_REPLACE(phone_number, '[^0-9]', '')"
+        reverse_expression: "'+' || SUBSTRING(phone, 1, 1) || ' ' || SUBSTRING(phone, 2, 3) || '-' || SUBSTRING(phone, 5)"
+
+  - name: system_b
+    source: { dataset: system_b }
+    target: person
+    priority: 2
+    fields:
+      - source: user_id
+        target: email
+      - source: birthdate
+        target: date_of_birth
+      - source: name
+        target: first_name
+        expression: "SPLIT_PART(name, ' ', 1)"
+        reverse_expression: "first_name || ' ' || last_name"
+      - source: name
+        target: last_name
+        expression: "SPLIT_PART(name, ' ', 2)"
+        direction: forward_only
+      - source: contact_phone
+        target: phone
+
+tests:
+  - description: "Scalar conversions — date, name split/join, phone normalization"
+    input:
+      system_a:
+        - { person_id: "P001", dob: "15/06/85", first_name: "John", last_name: "Doe", phone_number: "+1 555-1234" }
+      system_b:
+        - { user_id: "P001", birthdate: "1985-06-15", name: "John Doe", contact_phone: "15551234" }
+    expected:
+      system_a:
+        updates:
+          - { person_id: "P001", dob: "15/06/85", first_name: "John", last_name: "Doe", phone_number: "+1 555-1234" }
+      system_b:
+        updates:
+          - { user_id: "P001", birthdate: "1985-06-15", name: "John Doe", contact_phone: "15551234" }

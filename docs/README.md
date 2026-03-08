@@ -1,7 +1,10 @@
-# OSI Specification Reference
+# Documentation
 
-| Document | Description |
-|----------|-------------|
-| [Mapping Schema](mapping-schema.md) | Field mappings between data sources and OSI semantic models |
-| [Resolution Schema](resolution-schema.md) | Conflict resolution rules when multiple sources target the same dataset |
+Reference documentation for the Integration Mapping Schema.
 
+## Contents
+
+- [Annotated Example](annotated-example.md) — A fully commented mapping file explaining every part
+- [Schema Reference](schema-reference.md) — Complete reference for all schema primitives with examples
+- [AI Agent Guidelines](ai-guidelines.md) — Guidelines for AI agents producing mapping files
+- [Design Rationale](design-rationale.md) — Why the schema is shaped the way it is

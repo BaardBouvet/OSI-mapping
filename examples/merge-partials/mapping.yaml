@@ -1,0 +1,110 @@
+version: "1.0"
+description: >
+  Partial contributions. Invoices contribute is_customer=true flag via embedded
+  mapping. ERP only receives organizations flagged as customers.
+
+targets:
+  organization:
+    fields:
+      email: identity
+      name:
+        strategy: last_modified
+      is_customer:
+        strategy: expression
+        expression: "bool_or(is_customer)"
+
+  invoice:
+    fields:
+      invoice_number: identity
+      amount:
+        strategy: last_modified
+      invoice_date:
+        strategy: last_modified
+      customer_email: coalesce
+
+mappings:
+  - name: crm_contacts
+    source: { dataset: crm_contacts }
+    target: organization
+    fields:
+      - source: contact_email
+        target: email
+      - source: contact_name
+        target: name
+        last_modified: updated_at
+
+  - name: crm_invoices_org
+    source: { dataset: crm_invoices }
+    target: organization
+    embedded: true
+    fields:
+      - source: customer_email
+        target: email
+      - target: is_customer
+        expression: "true"
+        direction: forward_only
+
+  - name: crm_invoices
+    source: { dataset: crm_invoices }
+    target: invoice
+    fields:
+      - source: invoice_number
+        target: invoice_number
+      - source: invoice_amount
+        target: amount
+        last_modified: invoice_date
+      - source: invoice_date
+        target: invoice_date
+        last_modified: invoice_date
+      - source: customer_email
+        target: customer_email
+
+  - name: erp_customers
+    source: { dataset: erp_customers }
+    target: organization
+    reverse_filter: "is_customer = true"
+    fields:
+      - source: customer_email
+        target: email
+      - source: customer_name
+        target: name
+        last_modified: modified_at
+
+tests:
+  - description: "Partial flag from invoices — ERP gets only organizations with invoices"
+    input:
+      crm_contacts:
+        - { contact_id: "C1", contact_email: "acme@example.com", contact_name: "Acme Corp", updated_at: "2024-01-10T10:00:00Z" }
+        - { contact_id: "C2", contact_email: "widgets@example.com", contact_name: "Widget Co", updated_at: "2024-01-10T10:00:00Z" }
+      crm_invoices:
+        - { invoice_id: "INV1", customer_email: "acme@example.com", invoice_amount: 1000.00, invoice_number: "2024-001", invoice_date: "2024-01-15T10:00:00Z" }
+      erp_customers:
+        - { customer_id: "E1", customer_email: "acme@example.com", customer_name: "Acme Corporation", modified_at: "2024-01-15T10:00:00Z" }
+    expected:
+      crm_contacts:
+        updates:
+          - { contact_id: "C1", contact_email: "acme@example.com", contact_name: "Acme Corporation" }
+          - { contact_id: "C2", contact_email: "widgets@example.com", contact_name: "Widget Co" }
+      crm_invoices:
+        updates:
+          - { invoice_id: "INV1", customer_email: "acme@example.com", invoice_amount: 1000.00, invoice_number: "2024-001", invoice_date: "2024-01-15T10:00:00Z" }
+      erp_customers:
+        updates:
+          - { customer_id: "E1", customer_email: "acme@example.com", customer_name: "Acme Corporation" }
+        inserts:
+          - { _origin_crm_contacts_contact_id: ["C2"], _origin_crm_invoices_invoice_id: null, customer_email: "widgets@example.com", customer_name: "Widget Co" }
+
+  - description: "ERP customer without invoices gets deleted (is_customer = false)"
+    input:
+      crm_contacts:
+        - { contact_id: "C1", contact_email: "oldcust@example.com", contact_name: "Old Customer", updated_at: "2024-01-10T10:00:00Z" }
+      crm_invoices: []
+      erp_customers:
+        - { customer_id: "E1", customer_email: "oldcust@example.com", customer_name: "Old Customer Inc", modified_at: "2024-01-15T10:00:00Z" }
+    expected:
+      crm_contacts:
+        updates:
+          - { contact_id: "C1", contact_email: "oldcust@example.com", contact_name: "Old Customer Inc" }
+      erp_customers:
+        deletes:
+          - { customer_id: "E1" }

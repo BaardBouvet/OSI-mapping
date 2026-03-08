@@ -1,0 +1,111 @@
+version: "1.0"
+description: >
+  Three-system merge using generated ID linkage tables. Each system contributes
+  its own IDs; linkage tables connect them for transitive merge.
+
+targets:
+  user:
+    fields:
+      name: coalesce
+      system_a_id: identity
+      system_b_id: identity
+      system_c_id: identity
+
+mappings:
+  - name: system_a
+    source: { dataset: system_a }
+    target: user
+    fields:
+      - source: id
+        target: system_a_id
+      - source: name
+        target: name
+        priority: 1
+
+  - name: system_b
+    source: { dataset: system_b }
+    target: user
+    fields:
+      - source: id
+        target: system_b_id
+      - source: full_name
+        target: name
+        priority: 2
+
+  - name: system_c
+    source: { dataset: system_c }
+    target: user
+    fields:
+      - source: id
+        target: system_c_id
+      - source: full_name
+        target: name
+        priority: 3
+
+  - name: system_a_linkage
+    source: { dataset: system_a_linkage }
+    target: user
+    fields:
+      - source: system_a_id
+        target: system_a_id
+      - source: system_b_id
+        target: system_b_id
+      - source: system_c_id
+        target: system_c_id
+
+  - name: system_b_linkage
+    source: { dataset: system_b_linkage }
+    target: user
+    fields:
+      - source: system_b_id
+        target: system_b_id
+      - source: system_a_id
+        target: system_a_id
+      - source: system_c_id
+        target: system_c_id
+
+  - name: system_c_linkage
+    source: { dataset: system_c_linkage }
+    target: user
+    fields:
+      - source: system_c_id
+        target: system_c_id
+      - source: system_a_id
+        target: system_a_id
+      - source: system_b_id
+        target: system_b_id
+
+tests:
+  - description: "Three-system merge via linkage tables — transitive closure"
+    input:
+      system_a:
+        - { id: 1, name: "Alice Johnson" }
+        - { id: 2, name: "Bob Smith" }
+      system_b:
+        - { id: 101, full_name: "Alice J" }
+        - { id: 103, full_name: "Charlie Brown" }
+      system_c:
+        - { id: 1001, full_name: "Alice Johnson" }
+        - { id: 1002, full_name: "Diana Prince" }
+      system_a_linkage:
+        - { system_a_id: 1, system_b_id: 101, system_c_id: null }
+        - { system_a_id: 2, system_b_id: null, system_c_id: null }
+      system_b_linkage:
+        - { system_b_id: 101, system_a_id: 1, system_c_id: null }
+        - { system_b_id: 103, system_a_id: null, system_c_id: null }
+      system_c_linkage:
+        - { system_c_id: 1001, system_a_id: 1, system_b_id: null }
+        - { system_c_id: 1002, system_a_id: null, system_b_id: 103 }
+    expected:
+      system_a:
+        updates:
+          - { id: 1, name: "Alice Johnson" }
+          - { id: 2, name: "Bob Smith" }
+      system_b:
+        updates:
+          - { id: 101, full_name: "Alice Johnson" }
+          - { id: 103, full_name: "Charlie Brown" }
+      system_c:
+        updates:
+          - { id: 1001, full_name: "Alice Johnson" }
+          - { id: 1002, full_name: "Charlie Brown" }

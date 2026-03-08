@@ -1,0 +1,103 @@
+version: "1.0"
+description: >
+  Embedded billing and shipping addresses without IDs routing to the same address
+  target. Identity comes from the parent customer.
+
+targets:
+  customer:
+    fields:
+      id: identity
+      name: coalesce
+
+  address:
+    fields:
+      street: coalesce
+      city: coalesce
+      state: coalesce
+      zip: coalesce
+
+mappings:
+  - name: customers
+    source: { dataset: customers }
+    target: customer
+    fields:
+      - source: customer_id
+        target: id
+      - source: customer_name
+        target: name
+
+  - name: customers_billing
+    source: { dataset: customers }
+    target: address
+    embedded: true
+    fields:
+      - source: billing_street
+        target: street
+      - source: billing_city
+        target: city
+      - source: billing_state
+        target: state
+      - source: billing_zip
+        target: zip
+
+  - name: customers_shipping
+    source: { dataset: customers }
+    target: address
+    embedded: true
+    fields:
+      - source: shipping_street
+        target: street
+      - source: shipping_city
+        target: city
+      - source: shipping_state
+        target: state
+      - source: shipping_zip
+        target: zip
+
+tests:
+  - description: "Embedded billing + shipping addresses round-trip without IDs"
+    input:
+      customers:
+        - customer_id: "C1"
+          customer_name: "Acme Corp"
+          billing_street: "123 Main St"
+          billing_city: "Boston"
+          billing_state: "MA"
+          billing_zip: "02101"
+          shipping_street: "456 Oak Ave"
+          shipping_city: "Cambridge"
+          shipping_state: "MA"
+          shipping_zip: "02139"
+        - customer_id: "C2"
+          customer_name: "Widget Inc"
+          billing_street: "789 Elm St"
+          billing_city: "Seattle"
+          billing_state: "WA"
+          billing_zip: "98101"
+          shipping_street: "789 Elm St"
+          shipping_city: "Seattle"
+          shipping_state: "WA"
+          shipping_zip: "98101"
+    expected:
+      customers:
+        updates:
+          - customer_id: "C1"
+            customer_name: "Acme Corp"
+            billing_street: "123 Main St"
+            billing_city: "Boston"
+            billing_state: "MA"
+            billing_zip: "02101"
+            shipping_street: "456 Oak Ave"
+            shipping_city: "Cambridge"
+            shipping_state: "MA"
+            shipping_zip: "02139"
+          - customer_id: "C2"
+            customer_name: "Widget Inc"
+            billing_street: "789 Elm St"
+            billing_city: "Seattle"
+            billing_state: "WA"
+            billing_zip: "98101"
+            shipping_street: "789 Elm St"
+            shipping_city: "Seattle"
+            shipping_state: "WA"
+            shipping_zip: "98101"

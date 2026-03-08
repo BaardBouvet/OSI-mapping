@@ -1,0 +1,161 @@
+version: "1.0"
+description: >
+  One-to-many (ERP embedded contacts) ↔ many-to-many (CRM association table).
+  Uses reverse_filter to only push 'employee' associations back to ERP.
+
+targets:
+  company:
+    fields:
+      email: identity
+      name: last_modified
+
+  person:
+    fields:
+      email: identity
+      name: last_modified
+
+  company_person_association:
+    fields:
+      company_id:
+        strategy: coalesce
+        references: company
+      person_id:
+        strategy: identity
+        link_group: relationship
+        references: person
+      relation_type:
+        strategy: identity
+        link_group: relationship
+
+mappings:
+  # CRM normalized tables
+  - name: crm_companies
+    source: { dataset: crm_companies }
+    target: company
+    fields:
+      - source: company_email
+        target: email
+      - source: company_name
+        target: name
+        last_modified: updated_at
+
+  - name: crm_contacts
+    source: { dataset: crm_contacts }
+    target: person
+    fields:
+      - source: contact_email
+        target: email
+      - source: contact_name
+        target: name
+        last_modified: updated_at
+
+  - name: crm_associations
+    source: { dataset: crm_associations }
+    target: company_person_association
+    fields:
+      - source: company_id
+        target: company_id
+      - source: contact_id
+        target: person_id
+      - source: relation_type
+        target: relation_type
+
+  # ERP denormalized — company mapping
+  - name: erp_companies
+    source: { dataset: erp_companies }
+    target: company
+    last_modified: modified_at
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+
+  # ERP denormalized — embedded person from same row
+  - name: erp_companies_person
+    source: { dataset: erp_companies }
+    target: person
+    embedded: true
+    last_modified: modified_at
+    fields:
+      - source: contact_name
+        target: name
+      - source: contact_email
+        target: email
+
+  # ERP denormalized — embedded association (employee only)
+  - name: erp_companies_assoc
+    source: { dataset: erp_companies }
+    target: company_person_association
+    embedded: true
+    reverse_filter: "relation_type = 'employee'"
+    fields:
+      - source: id
+        target: company_id
+        direction: forward_only
+      - source: id
+        target: person_id
+        direction: forward_only
+      - target: relation_type
+        expression: "'employee'"
+        direction: forward_only
+
+tests:
+  - description: "ERP embedded contact creates person + association in CRM"
+    input:
+      crm_companies:
+        - { company_id: "C1", company_name: "Acme Corp", company_email: "info@acme.com", updated_at: "2024-01-15T10:00:00Z" }
+        - { company_id: "C2", company_name: "TechStart", company_email: "hello@techstart.com", updated_at: "2024-01-15T10:00:00Z" }
+      crm_contacts:
+        - { contact_id: "P1", contact_name: "Alice Johnson", contact_email: "alice@example.com", updated_at: "2024-01-15T10:00:00Z" }
+        - { contact_id: "P2", contact_name: "Bob Smith", contact_email: "bob@example.com", updated_at: "2024-01-15T10:00:00Z" }
+      crm_associations:
+        - { company_id: "C1", contact_id: "P1", relation_type: "decision_maker" }
+        - { company_id: "C2", contact_id: "P2", relation_type: "employee" }
+      erp_companies:
+        - { id: "100", name: "Acme Corp", email: "info@acme.com", contact_name: "Charlie Brown", contact_email: "charlie@example.com", modified_at: "2024-01-10T10:00:00Z" }
+    expected:
+      crm_companies:
+        updates:
+          - { company_id: "C1", company_name: "Acme Corp", company_email: "info@acme.com" }
+          - { company_id: "C2", company_name: "TechStart", company_email: "hello@techstart.com" }
+      crm_contacts:
+        updates:
+          - { contact_id: "P1", contact_name: "Alice Johnson", contact_email: "alice@example.com" }
+          - { contact_id: "P2", contact_name: "Bob Smith", contact_email: "bob@example.com" }
+        inserts:
+          - { _origin_erp_companies_id: ["100"], contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
+      crm_associations:
+        updates:
+          - { company_id: "C1", contact_id: "P1", relation_type: "decision_maker" }
+          - { company_id: "C2", contact_id: "P2", relation_type: "employee" }
+        inserts:
+          - { _origin_erp_companies_id: ["100"], company_id: "C1", contact_id: null, relation_type: "employee" }
+      erp_companies:
+        updates:
+          - { id: "100", name: "Acme Corp", email: "info@acme.com", contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
+        inserts:
+          - { _origin_crm_companies_company_id: ["C2"], name: "TechStart", email: "hello@techstart.com", contact_name: "Bob Smith", contact_email: "bob@example.com" }
+
+  - description: "CRM employee association triggers insert in ERP (ERP starts empty)"
+    input:
+      crm_companies:
+        - { company_id: "C1", company_name: "Acme Corp", company_email: "info@acme.com", updated_at: "2024-01-15T10:00:00Z" }
+      crm_contacts:
+        - { contact_id: "P1", contact_name: "Alice Employee", contact_email: "alice@acme.com", updated_at: "2024-01-15T10:00:00Z" }
+      crm_associations:
+        - { company_id: "C1", contact_id: "P1", relation_type: "employee" }
+      erp_companies: []
+    expected:
+      crm_companies:
+        updates:
+          - { company_id: "C1", company_name: "Acme Corp", company_email: "info@acme.com" }
+      crm_contacts:
+        updates:
+          - { contact_id: "P1", contact_name: "Alice Employee", contact_email: "alice@acme.com" }
+      crm_associations:
+        updates:
+          - { company_id: "C1", contact_id: "P1", relation_type: "employee" }
+      erp_companies:
+        inserts:
+          - { _origin_crm_companies_company_id: ["C1"], name: "Acme Corp", email: "info@acme.com", contact_name: "Alice Employee", contact_email: "alice@acme.com" }

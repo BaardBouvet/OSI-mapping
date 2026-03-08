@@ -1,0 +1,115 @@
+version: "1.0"
+description: >
+  Composite keys for order lines. Orders merge via external reference. Lines
+  identified by (order_ref, line_number) tuple using link_group.
+
+targets:
+  purchase_order:
+    fields:
+      external_order_ref: identity
+      order_date: coalesce
+      customer_name: coalesce
+      status:
+        strategy: last_modified
+
+  order_line:
+    fields:
+      order_ref:
+        strategy: coalesce
+        references: purchase_order
+      line_number:
+        strategy: coalesce
+      product_name: coalesce
+      quantity: coalesce
+      unit_price: coalesce
+
+mappings:
+  - name: erp_orders
+    source: { dataset: erp_orders }
+    target: purchase_order
+    fields:
+      - source: external_ref
+        target: external_order_ref
+      - source: order_date
+        target: order_date
+      - source: customer_name
+        target: customer_name
+      - source: status
+        target: status
+        last_modified: updated_at
+
+  - name: erp_order_lines
+    source: { dataset: erp_order_lines }
+    target: order_line
+    fields:
+      - source: order_id
+        target: order_ref
+      - source: line_no
+        target: line_number
+      - source: product_name
+        target: product_name
+      - source: quantity
+        target: quantity
+      - source: unit_price
+        target: unit_price
+
+  - name: crm_orders
+    source: { dataset: crm_orders }
+    target: purchase_order
+    fields:
+      - source: external_ref
+        target: external_order_ref
+      - source: order_date
+        target: order_date
+      - source: customer_name
+        target: customer_name
+      - source: status
+        target: status
+        last_modified: last_updated
+
+  - name: crm_line_items
+    source: { dataset: crm_line_items }
+    target: order_line
+    last_modified: modified_at
+    fields:
+      - source: order_ref
+        target: order_ref
+      - source: product_name
+        target: product_name
+        last_modified: modified_at
+      - source: quantity
+        target: quantity
+      - source: price
+        target: unit_price
+
+tests:
+  - description: "Composite key — orders merge via external ref, lines preserved independently"
+    input:
+      erp_orders:
+        - { order_id: "ORD-100", external_ref: "PO-2024-001", order_date: "2024-01-15", customer_name: "Acme Corp", status: "pending" }
+      erp_order_lines:
+        - { order_id: "ORD-100", line_no: 1, product_name: "Widget A", quantity: 5, unit_price: 10.50 }
+        - { order_id: "ORD-100", line_no: 2, product_name: "Widget B", quantity: 3, unit_price: 15.75 }
+      crm_orders:
+        - { order_number: "CRM-500", external_ref: "PO-2024-001", order_date: "2024-01-20", customer_name: "Acme Corp", status: "shipped" }
+      crm_line_items:
+        - { line_item_id: "LI-1001", order_ref: "CRM-500", product_name: "Gadget X", quantity: 10, price: 25.00 }
+    expected:
+      erp_orders:
+        updates:
+          - { order_id: "ORD-100", external_ref: "PO-2024-001", order_date: "2024-01-20", customer_name: "Acme Corp", status: "shipped" }
+      erp_order_lines:
+        updates:
+          - { order_id: "ORD-100", line_no: 1, product_name: "Widget A", quantity: 5, unit_price: 10.50 }
+          - { order_id: "ORD-100", line_no: 2, product_name: "Widget B", quantity: 3, unit_price: 15.75 }
+        inserts:
+          - { _origin_crm_line_items_line_item_id: ["LI-1001"], order_id: "ORD-100", product_name: "Gadget X", quantity: 10, unit_price: 25.00 }
+      crm_orders:
+        updates:
+          - { order_number: "CRM-500", external_ref: "PO-2024-001", order_date: "2024-01-20", customer_name: "Acme Corp", status: "shipped" }
+      crm_line_items:
+        updates:
+          - { line_item_id: "LI-1001", order_ref: "CRM-500", product_name: "Gadget X", quantity: 10, price: 25.00 }
+        inserts:
+          - { _origin_erp_order_lines_id: [{ order_id: "ORD-100", line_no: 1 }], order_ref: "CRM-500", product_name: "Widget A", quantity: 5, price: 10.50 }
+          - { _origin_erp_order_lines_id: [{ order_id: "ORD-100", line_no: 2 }], order_ref: "CRM-500", product_name: "Widget B", quantity: 3, price: 15.75 }

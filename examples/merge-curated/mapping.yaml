@@ -1,0 +1,63 @@
+version: "1.0"
+description: >
+  Human-curated merge decisions via a linking table. The merges source connects
+  CRM and billing records by providing both IDs in the same row.
+
+targets:
+  customer:
+    fields:
+      name: coalesce
+      crm_id: identity
+      billing_id: identity
+
+mappings:
+  - name: crm
+    source: { dataset: crm }
+    target: customer
+    fields:
+      - source: crm_id
+        target: crm_id
+      - source: customer_name
+        target: name
+        priority: 1
+
+  - name: billing
+    source: { dataset: billing }
+    target: customer
+    fields:
+      - source: billing_id
+        target: billing_id
+      - source: account_name
+        target: name
+        priority: 2
+
+  - name: merges
+    source: { dataset: merges }
+    target: customer
+    fields:
+      - source: crm_id
+        target: crm_id
+      - source: billing_id
+        target: billing_id
+
+tests:
+  - description: "Linking table merges CRM + billing — CRM name wins via priority"
+    input:
+      crm:
+        - { crm_id: "CRM1", customer_name: "John Doe" }
+        - { crm_id: "CRM2", customer_name: "Jane Smith" }
+      billing:
+        - { billing_id: "BILL1", account_name: "J. Doe" }
+        - { billing_id: "BILL2", account_name: "Jane Smith" }
+      merges:
+        - { merge_id: "1", crm_id: "CRM1", billing_id: "BILL1" }
+        - { merge_id: "2", crm_id: "CRM2", billing_id: "BILL2" }
+    expected:
+      crm:
+        updates:
+          - { crm_id: "CRM1", customer_name: "John Doe" }
+          - { crm_id: "CRM2", customer_name: "Jane Smith" }
+      billing:
+        updates:
+          - { billing_id: "BILL1", account_name: "John Doe" }
+          - { billing_id: "BILL2", account_name: "Jane Smith" }

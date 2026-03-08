@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BaardBouvet/OSI-mapping/specs/mapping-schema.json",
+  "title": "Integration Mapping Schema",
+  "description": "Unified schema for source-to-target field mapping and conflict resolution. Combines mapping definitions (how source fields map to target fields) with resolution rules (how conflicts between multiple sources are resolved) into a single cohesive document.",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this mapping file does."
+    },
+    "targets": {
+      "type": "object",
+      "description": "Target entity definitions with resolution rules. Keys are entity names used as references in mappings[].target.",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/$defs/Target" }
+    },
+    "mappings": {
+      "type": "array",
+      "description": "Source-to-target field mappings. Each entry maps fields from one source dataset to one target entity.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Mapping" }
+    },
+    "tests": {
+      "type": "array",
+      "description": "Embedded test cases for validation. Each test defines input data per source and expected output after forward+resolution+reverse.",
+      "items": { "$ref": "#/$defs/TestCase" }
+    }
+  },
+  "anyOf": [
+    { "required": ["targets"] },
+    { "required": ["mappings"] }
+  ],
+
+  "$defs": {
+
+    "Target": {
+      "type": "object",
+      "description": "A target entity definition: what the unified/golden record looks like and how multi-source conflicts are resolved.",
+      "required": ["fields"],
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "fields": {
+          "type": "object",
+          "description": "Target field definitions with resolution strategies. Keys are field names.",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/TargetField" }
+        }
+      }
+    },
+
+    "TargetField": {
+      "description": "Resolution rule for a target field. String shorthand for simple strategies; object for advanced configuration.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["identity", "collect", "coalesce", "last_modified"],
+          "description": "Shorthand: just the strategy name. 'identity' = collect all values and use for entity linking. 'collect' = collect all values (no linking). 'coalesce' = pick from highest-priority source. 'last_modified' = pick from most recently updated source."
+        },
+        { "$ref": "#/$defs/TargetFieldDef" }
+      ]
+    },
+
+    "TargetFieldDef": {
+      "type": "object",
+      "description": "Full target field definition with strategy and optional configuration.",
+      "required": ["strategy"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["identity", "collect", "coalesce", "last_modified", "expression"],
+          "description": "Resolution strategy. 'identity' = collect values + entity linking (transitive closure). 'collect' = aggregate all values. 'coalesce' = priority-based pick. 'last_modified' = recency-based pick. 'expression' = custom SQL aggregation."
+        },
+        "expression": {
+          "$ref": "#/$defs/Expression",
+          "description": "SQL aggregation expression. Required when strategy is 'expression'. References the target field name as the column (e.g. \"max(price)\" for a field named 'price')."
+        },
+        "references": {
+          "type": "string",
+          "description": "Foreign key: name of another target entity this field references. Enables FK resolution during entity linking."
+        },
+        "default": {
+          "description": "Static fallback value when no source provides data for this field.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "boolean" }
+          ]
+        },
+        "default_expression": {
+          "$ref": "#/$defs/Expression",
+          "description": "Computed fallback when no source provides data. SQL expression that can reference other target fields."
+        },
+        "group": {
+          "type": "string",
+          "description": "Atomic resolution group name. All fields sharing the same group resolve from the same winning source (the source with the most recent timestamp across any field in the group). Typically paired with 'last_modified' strategy."
+        },
+        "link_group": {
+          "type": "string",
+          "description": "Composite identity group name. Records from different sources are linked only when ALL fields sharing the same link_group match as a tuple. Paired with 'identity' strategy."
+        },
+        "description": { "type": "string" }
+      }
+    },
+
+
+    "Mapping": {
+      "type": "object",
+      "description": "Maps fields from one source dataset to one target entity.",
+      "required": ["name", "source", "target", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique identifier for this mapping.",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "description": { "type": "string" },
+        "source": {
+          "$ref": "#/$defs/SourceRef",
+          "description": "The source dataset to map from."
+        },
+        "target": {
+          "description": "Target entity. String = reference to a key in 'targets'. Object = external dataset reference.",
+          "oneOf": [
+            { "type": "string", "description": "Reference to a target entity defined in the targets section." },
+            { "$ref": "#/$defs/DatasetRef", "description": "External target dataset reference." }
+          ]
+        },
+        "embedded": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, this mapping extracts a sub-entity from the same source row as a parent mapping. The embedded entity shares the parent's source identity."
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Source priority for COALESCE resolution — lower number wins. When two sources provide the same field, the source with the lower priority number takes precedence."
+        },
+        "last_modified": {
+          "$ref": "#/$defs/TimestampRef",
+          "description": "Mapping-level last-modified timestamp for LAST_MODIFIED resolution. Applies to all fields unless overridden by a per-field last_modified."
+        },
+        "filter": {
+          "$ref": "#/$defs/Expression",
+          "description": "Forward filter: SQL WHERE condition. Only source rows matching this are mapped to the target. Used for routing one source to multiple targets."
+        },
+        "reverse_filter": {
+          "$ref": "#/$defs/Expression",
+          "description": "Reverse filter: SQL WHERE condition. Only target rows matching this are mapped back to this source."
+        },
+        "include_base": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, reverse output includes _base_ columns with original source values. Enables optimistic locking and concurrent modification detection in target systems."
+        },
+        "fields": {
+          "type": "array",
+          "description": "Field-level mappings from source to target.",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/FieldMapping" }
+        }
+      }
+    },
+
+    "FieldMapping": {
+      "type": "object",
+      "description": "Maps a single source field to a single target field. Must have at least one of source or target. Omit source for forward-only computed fields. Omit target for reverse-only source reconstruction.",
+      "additionalProperties": false,
+      "anyOf": [
+        { "required": ["source"] },
+        { "required": ["target"] }
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Source field name. Omit for forward-only computed/constant fields."
+        },
+        "target": {
+          "type": "string",
+          "description": "Target field name. Omit for reverse-only source field reconstruction."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["bidirectional", "forward_only", "reverse_only"],
+          "description": "Mapping direction. Default: 'bidirectional' when source is present, 'forward_only' when source is omitted."
+        },
+        "expression": {
+          "$ref": "#/$defs/Expression",
+          "description": "Forward transform: SQL expression mapping source to target. When omitted, the source field value is copied directly."
+        },
+        "reverse_expression": {
+          "$ref": "#/$defs/Expression",
+          "description": "Reverse transform: SQL expression mapping target back to source."
+        },
+        "reverse_required": {
+          "type": "boolean",
+          "description": "When true, the entire row is excluded from reverse output if this field's resolved value is null. Enables insert/delete propagation."
+        },
+        "last_modified": {
+          "$ref": "#/$defs/TimestampRef",
+          "description": "Per-field last-modified timestamp. Overrides the mapping-level last_modified."
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Per-field COALESCE priority. Overrides the mapping-level priority."
+        },
+        "description": { "type": "string" }
+      }
+    },
+
+
+    "SourceRef": {
+      "type": "object",
+      "description": "Reference to a source dataset, optionally with nested array extraction.",
+      "required": ["dataset"],
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "type": "string",
+          "description": "Source dataset/table name."
+        },
+        "path": {
+          "type": "string",
+          "description": "Dot-delimited path to a nested array in the source. When set, the mapping operates on each item in that array. Use dot notation for deep nesting (e.g. 'lines.sub_items')."
+        },
+        "parent_fields": {
+          "type": "object",
+          "description": "Import ancestor-level fields into scope when mapping nested arrays. Keys are alias names; values identify the ancestor field.",
+          "additionalProperties": { "$ref": "#/$defs/ParentFieldRef" }
+        }
+      }
+    },
+
+    "DatasetRef": {
+      "type": "object",
+      "description": "Reference to an external dataset (used when target is not defined in the same file).",
+      "required": ["dataset"],
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "type": "string",
+          "description": "Dataset/table name."
+        }
+      }
+    },
+
+
+    "Expression": {
+      "type": "string",
+      "description": "SQL expression (ANSI SQL)."
+    },
+
+    "ParentFieldRef": {
+      "description": "Reference to an ancestor-level field. String shorthand for root-level fields; object for intermediate ancestors.",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Field name from the root source object (parent of the nested path)."
+        },
+        {
+          "type": "object",
+          "description": "Qualified ancestor field reference for deep nesting.",
+          "required": ["field"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Dot-delimited path to the ancestor scope (e.g. 'lines' when source path is 'lines.sub_items')."
+            },
+            "field": {
+              "type": "string",
+              "description": "Field name within the ancestor scope."
+            }
+          }
+        }
+      ]
+    },
+
+    "TestCase": {
+      "type": "object",
+      "description": "A test case with input data and expected output after processing (forward transform → resolution → reverse transform).",
+      "required": ["input", "expected"],
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "What this test case verifies."
+        },
+        "input": {
+          "type": "object",
+          "description": "Input data keyed by source dataset name (matching mapping source.dataset). Each value is an array of row objects.",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        },
+        "expected": {
+          "type": "object",
+          "description": "Expected output keyed by source dataset name. Each value is always an object with explicit updates/inserts/deletes arrays. Omit a key if that category is empty.",
+          "additionalProperties": {
+            "type": "object",
+            "description": "Expected result for one source dataset. Always explicit — never a bare array.",
+            "additionalProperties": false,
+            "properties": {
+              "updates": { "type": "array", "items": { "type": "object" }, "description": "Rows that exist in input and are returned (potentially modified) after resolution. Includes all surviving rows." },
+              "inserts": { "type": "array", "items": { "type": "object" }, "description": "New rows to create in this source (originated from other sources)." },
+              "deletes": { "type": "array", "items": { "type": "object" }, "description": "Rows to remove from this source (failed reverse_required or filter)." }
+            }
+          }
+        }
+      }
+    },
+
+    "TimestampRef": {
+      "description": "Timestamp source for LAST_MODIFIED resolution. String shorthand for a field name; object for expression-based timestamps.",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Source field name containing the timestamp."
+        },
+        {
+          "type": "object",
+          "description": "Timestamp from a field, an expression, or both.",
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "type": "string",
+              "description": "Source field containing the timestamp."
+            },
+            "expression": {
+              "$ref": "#/$defs/Expression",
+              "description": "Expression producing a timestamp value."
+            }
+          },
+          "anyOf": [
+            { "required": ["field"] },
+            { "required": ["expression"] }
+          ]
+        }
+      ]
+    }
+  }
+}

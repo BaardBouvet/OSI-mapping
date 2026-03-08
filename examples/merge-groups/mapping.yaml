@@ -1,0 +1,70 @@
+version: "1.0"
+description: >
+  Composite merge keys. Records merge if (first_name AND last_name) match OR
+  email matches. Uses link_group for AND logic within the name tuple.
+
+targets:
+  person:
+    fields:
+      first_name:
+        strategy: identity
+        link_group: name
+      last_name:
+        strategy: identity
+        link_group: name
+      email: identity
+      phone: coalesce
+
+mappings:
+  - name: crm_contacts
+    source: { dataset: crm_contacts }
+    target: person
+    fields:
+      - source: first_name
+        target: first_name
+      - source: last_name
+        target: last_name
+      - source: email
+        target: email
+      - source: phone
+        target: phone
+        priority: 1
+
+  - name: erp_employees
+    source: { dataset: erp_employees }
+    target: person
+    fields:
+      - source: first_name
+        target: first_name
+      - source: last_name
+        target: last_name
+      - source: email
+        target: email
+      - source: phone
+        target: phone
+        priority: 2
+
+tests:
+  - description: "Composite merge — (first+last) OR email; Bob Smith ≠ Bob Davis"
+    input:
+      crm_contacts:
+        - { contact_id: "C1", first_name: "Alice", last_name: "Johnson", email: "alice@example.com", phone: "+1234567890" }
+        - { contact_id: "C2", first_name: "Bob", last_name: "Smith", email: "bob@example.com", phone: "+1234567891" }
+        - { contact_id: "C3", first_name: "Alice", last_name: "Johnson", email: "alice.j@work.com", phone: "+1234567892" }
+      erp_employees:
+        - { employee_id: "E1", first_name: "Alice", last_name: "Johnson", email: "ajohnson@company.com", phone: "+1987654321" }
+        - { employee_id: "E2", first_name: "Bob", last_name: "Davis", email: "bob@work.com", phone: "+1987654322" }
+    expected:
+      crm_contacts:
+        updates:
+          - { contact_id: "C1", first_name: "Alice", last_name: "Johnson", email: "alice@example.com", phone: "+1234567890" }
+          - { contact_id: "C2", first_name: "Bob", last_name: "Smith", email: "bob@example.com", phone: "+1234567891" }
+          - { contact_id: "C3", first_name: "Alice", last_name: "Johnson", email: "alice.j@work.com", phone: "+1234567890" }
+        inserts:
+          - { _origin_erp_employees_employee_id: ["E2"], first_name: "Bob", last_name: "Davis", email: "bob@work.com", phone: "+1987654322" }
+      erp_employees:
+        updates:
+          - { employee_id: "E1", first_name: "Alice", last_name: "Johnson", email: "ajohnson@company.com", phone: "+1234567890" }
+          - { employee_id: "E2", first_name: "Bob", last_name: "Davis", email: "bob@work.com", phone: "+1987654322" }
+        inserts:
+          - { _origin_crm_contacts_contact_id: ["C2"], first_name: "Bob", last_name: "Smith", email: "bob@example.com", phone: "+1234567891" }
