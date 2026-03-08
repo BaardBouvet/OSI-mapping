@@ -31,11 +31,21 @@ graph LR
     subgraph CRM["CRM (OpenAPI)"]
         crm_companies[Company]
         crm_contacts[Contact]
-        crm_companies -.-> crm_cc["contact_associations.roles (deep nested)"]
+        crm_orders[Order]
     end
 
     subgraph ERP["ERP (OSI model)"]
         erp_customers[customers]
+    end
+
+    subgraph MAP["Mappings"]
+        m1[companies_to_company]
+        m2[contacts_to_person]
+        m3["company_contacts_to_company_person<br/>(nested)"]
+        m7["orders_to_company<br/>(constant)"]
+        m4["customers_to_company<br/>(filtered)"]
+        m5["customers_to_person<br/>(embedded, filtered)"]
+        m6["customers_to_company_person<br/>(embedded, filtered)"]
     end
 
     subgraph ACME["Acme Target"]
@@ -44,18 +54,33 @@ graph LR
         company_person[company_person]
     end
 
-    crm_companies -->|companies_to_company| company
-    crm_contacts -->|contacts_to_person| person
-    crm_cc -.->|"company_contacts_to_company_person (source_path + parent_fields)"| company_person
-    erp_customers -->|customers_to_company| company
-    erp_customers -.->|"customers_to_person (embedded)"| person
-    erp_customers -.->|"customers_to_company_person (embedded)"| company_person
+    crm_companies --- m1
+    m1 --- company
+
+    crm_contacts --- m2
+    m2 --- person
+
+    crm_companies -.- m3
+    m3 -.- company_person
+
+    crm_orders -.-> m7
+    m7 -.-> company
+
+    erp_customers --- m4
+    m4 --- company
+
+    erp_customers -.- m5
+    m5 -.- person
+
+    erp_customers -.- m6
+    m6 -.- company_person
 ```
 
 Both sources map `name` and `account` into the shared `company` dataset.
 They also contribute a canonical `is_customer` flag:
 - ERP sets `is_customer` to a static `TRUE`.
 - CRM maps `customer_toggle` to `is_customer`.
+- CRM `Order` records assign a customer role by setting `is_customer = TRUE` as a static value.
 
 ERP reverse mapping only applies to rows where `is_customer = TRUE`.
 Companies are matched across sources by their customer account number (`account_number` in both CRM and ERP).
@@ -63,7 +88,7 @@ Entity linking: companies are linked by `account`, persons are linked by `email`
 
 For person data:
 - CRM provides standalone `Contact` records. Contact associations are deeply nested on the `Company` object: each company has a `contact_associations` array of contacts, and each contact has a `roles` array with `relation_type`. The mapping uses `source_path: contact_associations.roles` (deep nesting) with `parent_fields` to pull the company `id` from the root and `contact_id` from the intermediate `contact_associations` level.
-- CRM provides `firstname` + `lastname` (and maps `fullname` via expression).
+- CRM provides `firstname` + `lastname`.
 - ERP provides only embedded `fullname` for person names.
 - ERP provides an embedded primary contact inside each customer row, mapped to `company_person` with a static `relation_type = 'primary-contact'`.
 - ERP reverse on `company_person` is filtered to `relation_type = 'primary-contact'` so only that role flows back.
@@ -74,7 +99,7 @@ For person data:
 |-------|----------|--------|
 | name | COALESCE | ERP (priority 1) |
 | account | COLLECT (link) | Entity linking field |
-| is_customer | COALESCE | ERP static TRUE, otherwise CRM toggle |
+| is_customer | COALESCE | ERP static TRUE, CRM toggle, or CRM order existence |
 
 `person` resolution:
 

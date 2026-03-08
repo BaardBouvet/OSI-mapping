@@ -29,6 +29,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Contact"
+  /orders:
+    get:
+      summary: List orders
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
 
 
 components:
@@ -93,3 +105,23 @@ components:
           items:
             type: string
             description: "Relation type (e.g. primary-contact, billing, technical)"
+    Order:
+      type: object
+      required: [id, company_id, order_number]
+      properties:
+        id:
+          type: integer
+          description: CRM order identifier
+        company_id:
+          type: integer
+          description: CRM company identifier (the buyer)
+        order_number:
+          type: string
+          description: Human-readable order number
+        status:
+          type: string
+          description: "Order status (e.g. open, closed, cancelled)"
+        created_at:
+          type: string
+          format: date-time
+          description: Order creation timestamp
