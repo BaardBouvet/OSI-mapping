@@ -119,9 +119,7 @@ mappings:
 tests:
 
   # Test 1: conflict resolution across all sources
-  - description: >
-      Alice exists in all three systems. CRM name wins (priority 1).
-      ERP title wins (more recent). Phone resolved by max().
+  - description: "Alice exists in all three systems. CRM name wins (priority 1). ERP title wins (more recent). Phone resolved by max()."
 
     # Input: one array of rows per source dataset.
     # Keys must match mapping source.dataset names.
@@ -174,9 +172,7 @@ tests:
             formatted_phone: "+15553003000" # resolved phone
 
   # Test 2: single-source pass-through + inserts to other systems
-  - description: >
-      Bob exists only in CRM, so values pass through unchanged
-      except for phone normalization.
+  - description: "Bob exists only in CRM, so values pass through unchanged except for phone normalization."
     input:
       crm:
         - id: "C2"
