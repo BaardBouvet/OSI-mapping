@@ -4,56 +4,17 @@ A declarative schema for defining how fields from multiple source systems map to
 
 One YAML file describes the full picture: target entities, field mappings, resolution strategies, and test cases.
 
-## Quick Example
+## Quick Start
 
-```yaml
-version: "1.0"
-description: Two systems, one shared contact, synced by email.
+Use the docs and examples instead of learning from a dense inline snippet:
 
-targets:
-  contact:
-    fields:
-      email: identity
-      name: coalesce
+- Start here: [`examples/hello-world/README.md`](examples/hello-world/README.md)
+- Step-by-step walkthrough: [`docs/annotated-example.md`](docs/annotated-example.md)
+- Full schema reference: [`docs/schema-reference.md`](docs/schema-reference.md)
+- Design background and tradeoffs: [`docs/design-rationale.md`](docs/design-rationale.md)
+- AI authoring guidance: [`docs/ai-guidelines.md`](docs/ai-guidelines.md)
 
-mappings:
-  - name: crm
-    source: { dataset: crm }
-    target: contact
-    fields:
-      - source: email
-        target: email
-      - source: name
-        target: name
-        priority: 1
-
-  - name: erp
-    source: { dataset: erp }
-    target: contact
-    fields:
-      - source: email
-        target: email
-      - source: name
-        target: name
-        priority: 2
-
-tests:
-  - description: "CRM name wins (priority 1) and propagates to ERP"
-    input:
-      crm:
-        - { id: "1", email: "alice@example.com", name: "Alice" }
-      erp:
-        - { id: "100", email: "alice@example.com", name: "A. Smith" }
-    expected:
-      crm:
-        updates:
-          - { id: "1", email: "alice@example.com", name: "Alice" }
-      erp:
-        updates:
-          - { id: "100", email: "alice@example.com", name: "Alice" }
-```
-
-Two sources share a `contact` entity. Records are matched by `email` (identity). When names conflict, `coalesce` picks the value from the source with the highest priority (lowest number wins). The test verifies that CRM's name propagates to ERP.
+If you want a minimal complete file, see [`examples/minimal/mapping.yaml`](examples/minimal/mapping.yaml).
 
 ## Structure
 
@@ -67,7 +28,8 @@ examples/
 docs/
   ai-guidelines.md       # Guidelines for AI agents working with mapping files
   design-rationale.md    # Design decisions and rationale
-validate.py              # Multi-pass validator
+validation/
+  validate.py            # Multi-pass validator
 ```
 
 ## Resolution Strategies
@@ -111,16 +73,16 @@ The validator performs 7 passes:
 
 ```bash
 # Validate all examples
-python3 validate.py
+python3 validation/validate.py
 
 # Validate a specific file
-python3 validate.py examples/hello-world/mapping.yaml
+python3 validation/validate.py examples/hello-world/mapping.yaml
 
 # Verbose output
-python3 validate.py -v
+python3 validation/validate.py -v
 
 # Quiet mode (summary only)
-python3 validate.py -q
+python3 validation/validate.py -q
 ```
 
 ### Install dependencies
@@ -132,46 +94,7 @@ pip install sqlglot  # optional, for SQL expression validation
 
 ## Examples
 
-| Example | Demonstrates |
-|---|---|
-| `hello-world` | Simplest mapping — two sources, one target, coalesce |
-| `minimal` | Minimal complete mapping with identity + resolution |
-| `composite-keys` | Multi-field identity (compound match key) |
-| `concurrent-detection` | Detecting and handling concurrent edits |
-| `custom-resolution` | Custom resolution strategy via expression |
-| `embedded-simple` | Single embedded sub-entity |
-| `embedded-objects` | Nested embedded objects |
-| `embedded-multiple` | Multiple embedded entities |
-| `embedded-vs-many-to-many` | Embedded vs. reference-based relationships |
-| `flattened` | Flattened source structure into normalized target |
-| `inserts-and-deletes` | Handling new and removed records |
-| `merge-curated` | Curated merge with manual overrides |
-| `merge-generated-ids` | Merge with system-generated identifiers |
-| `merge-groups` | Group-based atomic resolution |
-| `merge-internal` | Internal merge within a single source |
-| `merge-partials` | Partial record merge |
-| `merge-threeway` | Three-way merge between sources |
-| `multiple-target-mappings` | Multiple targets in one file |
-| `nested-arrays` | Array-of-objects field mapping |
-| `nested-arrays-deep` | Deeply nested array structures |
-| `nested-arrays-multiple` | Multiple nested arrays |
-| `reference-preservation` | Preserving foreign-key references |
-| `references` | Foreign-key references between targets |
-| `relationship-embedded` | Embedded relationship mapping |
-| `relationship-mapping` | Standalone relationship mapping |
-| `route` | Routing records by field values |
-| `route-combined` | Combined routing logic |
-| `route-embedded` | Routing within embedded objects |
-| `route-multiple` | Multiple routing rules |
-| `types` | Type conversion and coercion |
-| `value-conversions` | Value mapping / vocabulary conversion |
-| `value-defaults` | Default values and default expressions |
-| `value-derived` | Derived / computed fields |
-| `value-groups` | Field group resolution |
-| `vocabulary-custom` | Custom vocabulary definitions |
-| `vocabulary-standard` | Standard vocabulary usage |
-
-Each example directory contains a `README.md` explaining the scenario and a `mapping.yaml` with the full definition including test cases.
+See [`examples/README.md`](examples/README.md) for the full example catalog and what each scenario demonstrates.
 
 ## License
 

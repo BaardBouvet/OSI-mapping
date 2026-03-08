@@ -3,9 +3,9 @@
 Validate OSI mapping files: JSON Schema + semantic consistency checks.
 
 Usage:
-    python validate.py                     # all examples in v2/examples/
-    python validate.py path/to/mapping.yaml  # single file
-    python validate.py --all path/to/dir/    # all mapping.yaml in dir tree
+    python validation/validate.py                     # all examples in ./examples/
+    python validation/validate.py path/to/mapping.yaml  # single file
+    python validation/validate.py --all path/to/dir/    # all mapping.yaml in dir tree
 """
 import json, yaml, sys, argparse
 from pathlib import Path
@@ -390,8 +390,8 @@ def main():
     parser.add_argument("-q", "--quiet", action="store_true", help="Only show failures")
     args = parser.parse_args()
 
-    root = Path(__file__).parent
-    schema_path = root / "spec" / "mapping-schema.json"
+    repo_root = Path(__file__).resolve().parent.parent
+    schema_path = repo_root / "spec" / "mapping-schema.json"
 
     with open(schema_path) as f:
         schema = json.load(f)
@@ -408,7 +408,7 @@ def main():
             print(f"Error: {p} not found")
             sys.exit(2)
     else:
-        files = sorted((root / "examples").rglob("mapping.yaml"))
+        files = sorted((repo_root / "examples").rglob("mapping.yaml"))
 
     total_errors = 0
     total_warnings = 0

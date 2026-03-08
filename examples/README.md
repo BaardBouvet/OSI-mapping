@@ -1,0 +1,61 @@
+# Examples
+
+This directory contains runnable mapping examples, each in its own subdirectory.
+
+## What You Will Find
+
+- One scenario per folder (for example: `hello-world`, `composite-keys`, `references`, `nested-arrays`)
+- A `mapping.yaml` file with a complete mapping definition
+- A local `README.md` explaining the scenario, why it exists, and what feature it demonstrates
+
+## Suggested Starting Points
+
+- `hello-world/` for the simplest end-to-end example
+- `minimal/` for the smallest complete multi-source mapping
+- `merge-threeway/` for merge behavior across multiple systems
+- `reference-preservation/` for foreign-key handling across merged entities
+
+Use these examples together with `../docs/annotated-example.md` and `../docs/schema-reference.md`.
+
+## Full Example Catalog
+
+| Example | Demonstrates |
+|---|---|
+| [`hello-world`](hello-world/README.md) | Simplest mapping - two sources, one target, coalesce |
+| [`minimal`](minimal/README.md) | Minimal complete mapping with identity + resolution |
+| [`composite-keys`](composite-keys/README.md) | Multi-field identity (compound match key) |
+| [`concurrent-detection`](concurrent-detection/README.md) | Detecting and handling concurrent edits |
+| [`custom-resolution`](custom-resolution/README.md) | Custom resolution strategy via expression |
+| [`embedded-simple`](embedded-simple/README.md) | Single embedded sub-entity |
+| [`embedded-objects`](embedded-objects/README.md) | Nested embedded objects |
+| [`embedded-multiple`](embedded-multiple/README.md) | Multiple embedded entities |
+| [`embedded-vs-many-to-many`](embedded-vs-many-to-many/README.md) | Embedded vs. reference-based relationships |
+| [`flattened`](flattened/README.md) | Flattened source structure into normalized target |
+| [`inserts-and-deletes`](inserts-and-deletes/README.md) | Handling new and removed records |
+| [`merge-curated`](merge-curated/README.md) | Curated merge with manual overrides |
+| [`merge-generated-ids`](merge-generated-ids/README.md) | Merge with system-generated identifiers |
+| [`merge-groups`](merge-groups/README.md) | Group-based atomic resolution |
+| [`merge-internal`](merge-internal/README.md) | Internal merge within a single source |
+| [`merge-partials`](merge-partials/README.md) | Partial record merge |
+| [`merge-threeway`](merge-threeway/README.md) | Three-way merge between sources |
+| [`multiple-target-mappings`](multiple-target-mappings/README.md) | Multiple targets in one file |
+| [`nested-arrays`](nested-arrays/README.md) | Array-of-objects field mapping |
+| [`nested-arrays-deep`](nested-arrays-deep/README.md) | Deeply nested array structures |
+| [`nested-arrays-multiple`](nested-arrays-multiple/README.md) | Multiple nested arrays |
+| [`reference-preservation`](reference-preservation/README.md) | Preserving foreign-key references |
+| [`references`](references/README.md) | Foreign-key references between targets |
+| [`relationship-embedded`](relationship-embedded/README.md) | Embedded relationship mapping |
+| [`relationship-mapping`](relationship-mapping/README.md) | Standalone relationship mapping |
+| [`route`](route/README.md) | Routing records by field values |
+| [`route-combined`](route-combined/README.md) | Combined routing logic |
+| [`route-embedded`](route-embedded/README.md) | Routing within embedded objects |
+| [`route-multiple`](route-multiple/README.md) | Multiple routing rules |
+| [`types`](types/README.md) | Type conversion and coercion |
+| [`value-conversions`](value-conversions/README.md) | Value mapping / vocabulary conversion |
+| [`value-defaults`](value-defaults/README.md) | Default values and default expressions |
+| [`value-derived`](value-derived/README.md) | Derived / computed fields |
+| [`value-groups`](value-groups/README.md) | Field group resolution |
+| [`vocabulary-custom`](vocabulary-custom/README.md) | Custom vocabulary definitions |
+| [`vocabulary-standard`](vocabulary-standard/README.md) | Standard vocabulary usage |
+
+Each example directory contains a local `README.md` and a `mapping.yaml` with the full definition including test cases.
