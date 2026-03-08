@@ -48,7 +48,7 @@ semantic_model:
               dialects:
                 - dialect: ANSI_SQL
                   expression: contact.name
-            description: Embedded primary contact name on the customer row
+            description: Embedded primary contact full name on the customer row
 
           - name: contact_email
             expression:
@@ -84,7 +84,7 @@ semantic_model:
               dialects:
                 - dialect: ANSI_SQL
                   expression: contact.name
-            description: Embedded primary contact name
+            description: Embedded primary contact full name
 
           - name: contact_email
             expression:

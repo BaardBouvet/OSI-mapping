@@ -3,10 +3,11 @@
 # Resolution rules for the Acme target model.
 # Two sources (CRM + ERP) both map to company.
 # name: COALESCE (ERP priority 1 wins).
-# email: LAST_MODIFIED (most recently updated wins).
-# account: COALESCE (first non-null wins — both sources contribute).
+# account: COLLECT with link (entity linking field).
 # is_customer: COALESCE (ERP static TRUE wins when present; CRM toggle applies otherwise).
-# Link groups: records are linked when account + email tuple matches.
+# Entity linking: companies linked by account, persons linked by email.
+# company_person: relation_type uses COLLECT.
+# person name fields: firstname/lastname/fullname resolve atomically.
 
 version: "1.0"
 
@@ -24,21 +25,14 @@ resolutions:
         strategy:
           type: COALESCE
 
-      email:
-        strategy:
-          type: LAST_MODIFIED
-
       account:
         strategy:
-          type: COALESCE
+          type: COLLECT
+          link: true
 
       is_customer:
         strategy:
           type: COALESCE
-
-    link_groups:
-      company_identity:
-        fields: [account, email]
 
   - name: person_resolution
     description: Resolution rules for the person dataset
@@ -49,18 +43,36 @@ resolutions:
       model_file: ./model-acme.yaml
 
     fields:
-      person_id:
+      firstname:
         strategy:
-          type: COALESCE
+          type: LAST_MODIFIED
 
-      company_id:
+      lastname:
         strategy:
-          type: COALESCE
+          type: LAST_MODIFIED
 
-      name:
+      fullname:
         strategy:
-          type: COALESCE
+          type: LAST_MODIFIED
 
       email:
         strategy:
-          type: LAST_MODIFIED
+          type: COLLECT
+          link: true
+
+    atomic_groups:
+      person_name:
+        fields: [firstname, lastname, fullname]
+
+  - name: company_person_resolution
+    description: Resolution rules for the company_person link dataset
+
+    target:
+      semantic_model: acme_model
+      dataset: company_person
+      model_file: ./model-acme.yaml
+
+    fields:
+      relation_type:
+        strategy:
+          type: COLLECT

@@ -29,13 +29,6 @@ semantic_model:
                   expression: name
             description: Company name (COALESCE — ERP wins)
 
-          - name: email
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: email
-            description: Contact email (LAST_MODIFIED)
-
           - name: account
             expression:
               dialects:
@@ -65,18 +58,25 @@ semantic_model:
                   expression: person_id
             description: Canonical person identifier
 
-          - name: company_id
+          - name: firstname
             expression:
               dialects:
                 - dialect: ANSI_SQL
-                  expression: company_id
-            description: Canonical company identifier this person belongs to
+                  expression: "COALESCE(firstname, SPLIT_PART(fullname, ' ', 1))"
+            description: Contact first name
 
-          - name: name
+          - name: lastname
             expression:
               dialects:
                 - dialect: ANSI_SQL
-                  expression: name
+                  expression: "COALESCE(lastname, SPLIT_PART(fullname, ' ', 2))"
+            description: Contact last name
+
+          - name: fullname
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: "COALESCE(fullname, CONCAT(firstname, ' ', lastname))"
             description: Contact full name
 
           - name: email
@@ -85,3 +85,45 @@ semantic_model:
                 - dialect: ANSI_SQL
                   expression: email
             description: Contact email
+
+      - name: company_person
+        source: canonical.public.company_person
+        primary_key: [company_id, person_id]
+        unique_keys:
+          - [company_id, person_id]
+        description: Association between companies and persons with relation type
+
+        fields:
+          - name: company_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: company_id
+            description: Canonical company identifier
+
+          - name: person_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: person_id
+            description: Canonical person identifier
+
+          - name: relation_type
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: relation_type
+            description: "Relation type (e.g. primary-contact, billing, technical)"
+
+    relationships:
+      - name: company_person_to_company
+        from: company_person
+        to: company
+        from_columns: [company_id]
+        to_columns: [company_id]
+
+      - name: company_person_to_person
+        from: company_person
+        to: person
+        from_columns: [person_id]
+        to_columns: [person_id]

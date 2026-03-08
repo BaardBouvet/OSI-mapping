@@ -27,9 +27,6 @@ mappings:
         source_field: name
         priority: 2
 
-      - target_field: email
-        source_field: email
-
       - target_field: account
         source_field: account_number
 
@@ -56,11 +53,49 @@ mappings:
       - target_field: person_id
         source_field: id
 
-      - target_field: company_id
-        source_field: company_id
+      - target_field: firstname
+        source_field: firstname
 
-      - target_field: name
-        source_field: name
+      - target_field: lastname
+        source_field: lastname
 
       - target_field: email
         source_field: email
+
+  - name: company_contacts_to_company_person
+    description: CRM company–contact associations to canonical company_person
+    id: [parent_company_id, parent_contact_id, role]
+
+    source:
+      schema_file: ./crm-openapi.yaml
+      schema_path: "#/components/schemas/Company"
+      schema_format: openapi
+
+    target:
+      semantic_model: acme_model
+      dataset: company_person
+      model_file: ./model-acme.yaml
+
+    source_path: contact_associations.roles
+    scalar_field: role
+
+    parent_fields:
+      parent_company_id:
+        field: id
+      parent_contact_id:
+        path: contact_associations
+        field: contact_id
+      parent_updated_at:
+        field: updated_at
+
+    default_timestamp_field: parent_updated_at
+
+    field_mappings:
+      - target_field: company_id
+        source_field: parent_company_id
+
+      - target_field: person_id
+        source_field: parent_contact_id
+
+      - target_field: relation_type
+        source_field: role

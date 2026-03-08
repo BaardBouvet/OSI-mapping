@@ -32,9 +32,6 @@ mappings:
         source_field: customer_name
         priority: 1
 
-      - target_field: email
-        source_field: customer_email
-
       - target_field: account
         source_field: account_number
 
@@ -71,11 +68,43 @@ mappings:
       - target_field: person_id
         source_field: id
 
-      - target_field: company_id
-        source_field: id
-
-      - target_field: name
+      - target_field: fullname
         source_field: contact_name
 
       - target_field: email
         source_field: contact_email
+
+  - name: customers_to_company_person
+    description: ERP embedded customer contact to canonical company_person link
+    id: id
+    embedded: true
+
+    source:
+      semantic_model: erp_model
+      dataset: customers
+      model_file: ./model-erp.yaml
+
+    target:
+      semantic_model: acme_model
+      dataset: company_person
+      model_file: ./model-acme.yaml
+
+    filter_reverse:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "ARRAY_CONTAINS(relation_type, 'primary-contact')"
+
+    default_timestamp_field: modified_at
+
+    field_mappings:
+      - target_field: company_id
+        source_field: id
+
+      - target_field: person_id
+        source_field: id
+
+      - target_field: relation_type
+        expression_forward:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: "'primary-contact'"

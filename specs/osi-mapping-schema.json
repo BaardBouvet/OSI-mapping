@@ -54,6 +54,11 @@
           "type": "string",
           "description": "Dot-delimited path to an array field in the source object. When present, this mapping operates on each item in that array rather than on the source object itself. Use dot notation for deep nesting (e.g. 'lines.sub_items')."
         },
+        "scalar_field": {
+          "type": "string",
+          "description": "When source_path resolves to a scalar array (e.g. an array of strings), this property assigns a field name to each scalar value so it can be referenced in field_mappings and id. Only meaningful when source_path is set and the array items are scalars, not objects.",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
         "parent_fields": {
           "type": "object",
           "description": "Pulls ancestor-level fields into scope under explicit aliases. Keys are alias names usable in expressions; values specify which ancestor field to import. Only meaningful when source_path is set.",
@@ -167,6 +172,10 @@
         "timestamp_field": {
           "type": "string",
           "description": "Source field driving LAST_MODIFIED resolution. Overrides the mapping-level default_timestamp_field."
+        },
+        "omit_reverse": {
+          "type": "boolean",
+          "description": "When true, this field is forward-only — it is never written back to the source during reverse mapping. Useful for computed or derived fields that have no meaningful reverse path."
         },
         "required": {
           "type": "boolean",
