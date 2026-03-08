@@ -282,187 +282,12 @@ osi-engine validate -q                       # only show failures
 
 ## Phase 8 — Real Primary Keys
 
-### Problem
+See [PRIMARY-KEYS-PLAN.md](PRIMARY-KEYS-PLAN.md).
 
-The engine currently injects a synthetic `_row_id SERIAL PRIMARY KEY` into every
-source table (in the test harness) and threads it through the entire pipeline as
-`_src_id`. This works, but:
-
-1. **Deployment gap** — real source tables don't have `_row_id`; the deployer must
-   add one or wrap the table.
-2. **Semantic loss** — the spec's test data already carries meaningful PKs, but the
-   engine ignores them. A survey of the 36 examples reveals **40+ distinct PK column
-   names** across source datasets: `id`, `_id`, `db_id`, `cid`, `customer_id`,
-   `person_id`, `contact_id`, `employee_id`, `order_id`, `billing_id`, `line_item_id`,
-   `invoice_id`, `order_number`, `user_id`, etc.
-3. **Composite keys** — some sources have multi-column PKs
-   (e.g. `erp_order_lines` → `(order_id, line_no)`). Synthetic `_row_id` collapses
-   this information.
-4. **Delta quality** — the delta view's `FULL OUTER JOIN` on `_row_id = _src_id` only
-   works because both sides come from the same physical table. With real PKs, the
-   delta can join on business-meaningful keys, enabling true insert/delete detection
-   across systems.
-
-### Spec Extension
-
-Add an optional `primary_key` property to `SourceRef`:
-
-```yaml
-# Single column (string shorthand)
-source:
-  dataset: crm_contacts
-  primary_key: contact_id
-
-# Composite key (array)
-source:
-  dataset: erp_order_lines
-  primary_key: [order_id, line_no]
-```
-
-Schema addition to `SourceRef`:
-
-```json
-"primary_key": {
-  "description": "Column(s) that uniquely identify a row. String for single-column PK, array for composite. When omitted, the engine assumes a synthetic _row_id column exists.",
-  "oneOf": [
-    { "type": "string" },
-    { "type": "array", "items": { "type": "string" }, "minItems": 1 }
-  ]
-}
-```
-
-**Backward compatibility**: When `primary_key` is omitted, the engine falls back to
-`_row_id` (current behavior). No existing mapping files break.
-
-### Engine Changes
-
-#### 1. Model (`model.rs`)
-
-```rust
-pub struct SourceRef {
-    pub dataset: String,
-    pub path: Option<String>,
-    pub parent_fields: IndexMap<String, ParentFieldRef>,
-    pub primary_key: Option<PrimaryKey>,  // NEW
-}
-
-pub enum PrimaryKey {
-    Single(String),
-    Composite(Vec<String>),
-}
-
-impl SourceRef {
-    /// Normalized PK columns. Falls back to ["_row_id"] when unset.
-    pub fn pk_columns(&self) -> Vec<&str> { ... }
-}
-```
-
-#### 2. Forward View (`forward.rs`)
-
-Replace the hardcoded `_row_id AS _src_id` with the declared PK:
-
-```sql
--- Single PK:  contact_id AS _src_pk
--- Composite:  order_id AS _src_pk__order_id, line_no AS _src_pk__line_no
-
--- Also emit a single _src_id for downstream convenience:
--- Single:     contact_id AS _src_id
--- Composite:  ROW(order_id, line_no)::text AS _src_id   (or hash)
-```
-
-For composite keys, every PK column is emitted individually (for reverse join)
-plus a combined `_src_id` (for identity/resolution grouping).
-
-#### 3. Identity View (`identity.rs`)
-
-No structural change — `_src_id` and per-column PKs flow through via `SELECT *`.
-The recursive CTE already works on `_entity_id` (row number), which is independent
-of the PK.
-
-#### 4. Resolution View (`resolution.rs`)
-
-No change — groups by `_entity_id_resolved`, which is row-numbering-based.
-
-#### 5. Reverse View (`reverse.rs`)
-
-Replace `id._src_id` with the original PK columns:
-
-```sql
--- Single PK:
-SELECT id._src_pk AS contact_id, ...
-
--- Composite PK:
-SELECT id._src_pk__order_id AS order_id, id._src_pk__line_no AS line_no, ...
-```
-
-The PK columns become the leading output columns of the reverse view, restoring
-the source's natural key.
-
-#### 6. Delta View (`delta.rs`)
-
-Join on real PK instead of `_row_id = _src_id`:
-
-```sql
--- Single PK:
-FROM source AS src
-FULL OUTER JOIN _rev_{name} AS rev ON src.contact_id = rev.contact_id
-
--- Composite PK:
-FROM source AS src
-FULL OUTER JOIN _rev_{name} AS rev
-  ON src.order_id = rev.order_id AND src.line_no = rev.line_no
-```
-
-This enables the delta to detect true inserts (records that exist in the resolved
-target but not in this source) and true deletes (records filtered out by
-`reverse_required`/`reverse_filter`).
-
-#### 7. Test Harness (`integration.rs`)
-
-- When `primary_key` is declared: create table with the declared PK as
-  `PRIMARY KEY`, no `_row_id` column.
-- When `primary_key` is omitted: current behavior (`_row_id SERIAL PRIMARY KEY`).
-- Reverse view comparison joins on declared PK columns, not `_row_id`.
-
-#### 8. Validator (`validate.rs`)
-
-New validation checks:
-- PK column(s) must exist in every test input row for that dataset.
-- PK values must be unique within a test input dataset.
-- PK column(s) should not also be mapped as target fields (warning, not error).
-
-### Migration Path
-
-1. **Phase 8a**: Add `primary_key` to schema + model + parser. No engine behavior
-   change yet. Validator checks PK consistency.
-2. **Phase 8b**: Update forward/reverse/delta renderers to use declared PK when
-   present, fall back to `_row_id` when absent.
-3. **Phase 8c**: Update all 36 example mapping files to declare `primary_key`.
-   This is the bulk of the work — each source dataset needs its PK identified
-   from the test input data.
-4. **Phase 8d**: Update integration test harness. Remove `_row_id` injection for
-   examples that declare PKs. Run all examples end-to-end.
-5. **Phase 8e** (optional): Make `primary_key` required in spec v1.1. Deprecate
-   `_row_id` fallback.
-
-### Impact on Examples
-
-From the survey of all 36 examples, the PK declarations would look like:
-
-| Dataset pattern | Typical PK | Composite? |
-|-----------------|-----------|------------|
-| `crm`, `erp`, `source_*`, `system_*` | `id` | No |
-| `crm_contacts`, `erp_contacts` | `contact_id` | No |
-| `crm_companies`, `erp_companies` | `company_id` | No |
-| `erp_customer` | `_id` | No |
-| `crm_company` | `db_id` | No |
-| `customers` | `id`, `cid`, or `customer_id` | No |
-| `erp_order_lines` | `[order_id, line_no]` | **Yes** |
-| `warehouse_lines` | `line_id` | No |
-| `*_linkage` tables | `[system_a_id, ...]` | **Yes** |
-| vocabulary tables | `name` or `code` | No |
-
-Approximately 3–4 datasets have composite PKs. The rest are single-column.
+Summary: add `sources:` section with `primary_key` declarations. Replace synthetic
+`_row_id` with real PKs. Single PKs become `pk::text AS _src_id`; composite PKs
+become `jsonb_build_object(...)::text AS _src_id`. Backward compatible — omitting
+`sources:` falls back to `_row_id`.
 
 ### SQL Generation Strategy
 
@@ -554,3 +379,13 @@ The original `validation/validate.py` is preserved for reference but
    based on field usage (timestamps, integers, etc.).
    → **Decision: Use TEXT** as the default; explicitly cast in expressions. This avoids
    type mismatch errors and matches the loosely-typed nature of integration data.
+
+---
+
+## Phase 9 — Insert Origin & Feedback
+
+See [ORIGIN-PLAN.md](ORIGIN-PLAN.md).
+
+Summary: the engine emits `_cluster_id` (deterministic hash) on delta insert rows
+and an optional provenance view. All origin tracking, cluster management, and
+generated-ID feedback is ETL runtime state — not the engine's concern.

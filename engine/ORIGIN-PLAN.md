@@ -1,0 +1,789 @@
+# Origin & Insert Feedback — Design Plan
+
+> **Abstract**: Defines how the engine tracks entity identity across sources and
+> how ETL pipelines feed back generated IDs to prevent duplicate inserts.
+> Introduces `links` (with optional `link_key`) on mappings as the single
+> mechanism for external identity edges, `_cluster_id` as a stable entity
+> handle on delta insert rows, and two operating modes — IVM-safe (with
+> `link_key`) and batch-safe (without).
+
+## Problem
+
+When the delta view produces an **insert** — a resolved entity that has no
+corresponding row in a particular source — the consumer ETL pipeline needs to:
+
+1. Write the new row to the target system.
+2. Capture the generated ID from the target system.
+3. Link that generated ID back to the entity so the next sync run doesn't
+   produce a duplicate insert.
+
+## Responsibility Split
+
+| Concern | Owner | Stateful? |
+|---------|-------|-----------|
+| Identify entities, compute inserts | **Engine** (views) | No — pure SQL |
+| Track which inserts have been performed, link generated IDs back | **ETL** (runtime) | Yes — persistent state |
+
+The engine is stateless. It emits `_cluster_id` on insert rows so the ETL has a
+handle for the entity. Everything else — recording origins, managing clusters,
+feeding back generated IDs — is ETL runtime state.
+
+## Design Decisions
+
+### Links on mappings (not references on sources)
+
+Identity edges from linking tables are declared as `links` on the mapping, not
+as `references` on the source. Rationale:
+
+- **Scoped to target**: a link is an instruction about entity resolution for a
+  specific target. A reference on a source is a structural fact that doesn't
+  know which target it applies to.
+- **Unambiguous**: if the same source maps to multiple targets, `links` on each
+  mapping make it clear which target gets the edges.
+- **Familiar pattern**: a mapping is the unit of "how source data participates
+  in a target." Links are part of that participation.
+
+A mapping with `links` and no `fields` is a "linkage-only" mapping — it
+contributes identity edges but no business data.
+
+### IVM-safe architecture (push cluster join into forward view)
+
+With Incremental View Maintenance (IVM), the forward view and identity view
+update independently. If a new source row arrives and its cluster link is
+written as a separate transaction, there's a window where the identity view
+sees the source row but not yet the link — producing a phantom singleton
+entity (and a phantom insert in the delta).
+
+**Solution**: LEFT JOIN cluster membership data directly in the forward view,
+before the identity layer. A source row and its cluster membership arrive as
+a single composite row. IVM sees both facts atomically.
+
+The forward view becomes:
+
+```sql
+SELECT
+  s._row_id AS _src_id,
+  '{mapping}' AS _mapping,
+  COALESCE(cm._cluster_id, md5('{mapping}' || ':' || s._row_id::text)) AS _cluster_id,
+  ...
+FROM {source_table} s
+LEFT JOIN _cluster_members_{target} cm
+  ON cm._mapping = '{mapping}' AND cm._src_id = s._row_id::text
+```
+
+`_cluster_members_{target}` is built from unpivoted `links` rows (when
+`link_key` is present). If no `links` with `link_key` are declared for the
+target, the LEFT JOIN is omitted entirely — no overhead for simple cases.
+
+**Key insight**: if it works for IVM, it works for batch. Design for IVM.
+
+Note: curated merges (human adds a link to already-existing source rows) do
+NOT have the race problem — the source rows are already materialized when the
+link arrives. A single write (the link) triggers recomputation. The forward-
+view LEFT JOIN handles this correctly too, so one mechanism covers both cases.
+
+### Flat membership tables (Pattern A)
+
+Systems that maintain flat `(cluster_id, source, source_pk)` membership tables
+don't need a special mechanism. The mapping author pivots the flat table into
+columnar form (one column per referenced source) and maps it with `links` +
+`link_key`:
+
+```sql
+CREATE VIEW membership_xref AS
+SELECT
+  cluster_id,
+  MAX(source_key) FILTER (WHERE mapping = 'crm') AS crm_id,
+  MAX(source_key) FILTER (WHERE mapping = 'billing') AS billing_id
+FROM flat_membership
+GROUP BY cluster_id;
+```
+
+One mechanism (`links`) covers flat membership, columnar xref, and pairwise
+decisions. The mapping author learns one concept; the engine has one code path.
+
+### Three identity edge types
+
+The identity view has three sources of edges, all feeding into the same
+connected-components algorithm:
+
+1. **Identity-field edges**: two forward rows with the same non-NULL value
+   for an identity field → edge.
+2. **Cluster-ID edges**: two forward rows with the same `_cluster_id`
+   (from unpivoted `links` with `link_key`) → edge. These appear
+   naturally because the forward view carries `_cluster_id` from the
+   LEFT JOIN.
+3. **Link edges**: explicit pairwise edges from `links` declarations —
+   a linking-table row that references two sources creates an edge
+   between them. Present in **both** `link_key` and no-`link_key` modes.
+   With `link_key`, these are redundant with cluster-ID edges but harmless;
+   without `link_key`, these are the **only** mechanism connecting linked rows.
+
+Edge types compose freely. A target can use any combination.
+
+### Supported curation patterns
+
+Four common curation/linking patterns exist in practice:
+
+| Pattern | Description | Supported via |
+|---------|-------------|---------------|
+| **A — Flat membership** | `(cluster_id, source, source_pk)` | Pivot to columnar → `links` + `link_key` |
+| **B — Pairwise decisions** | `(source_a_pk, source_b_pk, decision)` | `links` without `link_key` (batch-safe) |
+| **C — Columnar xref** | `(match_id, crm_id, billing_id, ...)` | `links` + `link_key` |
+| **D — Golden record** | Curated master table with overrides | Out of scope — curated master is a source like any other |
+
+Patterns B and C are first-class mechanisms. Pattern C uses `links` +
+`link_key` (IVM-safe); Pattern B uses `links` without `link_key` (batch-safe —
+the engine generates connected components in the identity layer). Pattern A
+is supported by pivoting flat membership into columnar form and using `links` +
+`link_key`. Pattern D needs no special support.
+
+### Two modes for `links`: IVM-safe vs batch
+
+The engine supports `links` in two modes, depending on whether `link_key` is
+present:
+
+| | `links` **with** `link_key` | `links` **without** `link_key` |
+|---|---|---|
+| **Cluster ID source** | Pre-computed — the `link_key` column value | Derived — engine computes connected components in the identity layer |
+| **Forward-view behaviour** | LEFT JOIN `_cluster_members_{target}` carries `_cluster_id` into the forward view | No LEFT JOIN — forward view stays simple |
+| **IVM-safe?** | Yes — source row + cluster membership arrive atomically | **No** — link arriving after source row causes a stale identity view until next full refresh |
+| **Best for** | ETL feedback, MDM platforms, entity resolution services | Record linkage tools (Splink, Dedupe), manual curation UIs, probabilistic matchers |
+| **When to choose** | Continuous/IVM pipelines, or when the source already provides cluster IDs | Batch/scheduled pipelines consuming pairwise decisions |
+
+#### Why `link_key` enables IVM safety
+
+Three properties of `link_key` make the IVM-safe path possible:
+
+1. **Cluster ID in the forward view.** The LEFT JOIN needs a `_cluster_id`
+   column to join on. `link_key` provides it directly — no graph computation
+   needed before the forward view.
+2. **No circular dependency.** Without `link_key`, the forward view would
+   need cluster IDs → cluster IDs come from connected components over links →
+   links reference forward-view rows. `link_key` breaks the cycle by providing
+   cluster IDs from outside the view DAG.
+3. **No recursive CTE in the hot path.** Connected components via recursive
+   CTE is O(V + E) and non-incremental (a single new edge can merge two
+   large clusters). Some IVM implementations may support incremental
+   recursive CTEs, but this is not universal — `link_key` avoids the
+   dependency entirely.
+
+#### How `links` without `link_key` works
+
+The engine generates the same pairwise edge SQL it already generates for
+`links` with `link_key`, but instead of unpivoting into `_cluster_members`,
+it feeds those edges directly into the identity layer's connected-components
+algorithm — alongside identity-field edges.
+
+```sql
+-- Engine-generated: pairwise link edges in the identity layer
+_link_edges AS (
+  SELECT
+    a._entity_id AS entity_a,
+    b._entity_id AS entity_b
+  FROM linking_table lt
+  JOIN _id_numbered a
+    ON a._mapping = 'crm' AND a._src_id = lt.crm_id::text
+  JOIN _id_numbered b
+    ON b._mapping = 'billing' AND b._src_id = lt.billing_id::text
+  WHERE lt.crm_id IS NOT NULL AND lt.billing_id IS NOT NULL
+)
+```
+
+These edges are UNIONed with identity-field edges before the recursive
+connected-components CTE runs. The result is `_entity_id_resolved` — which
+becomes `_cluster_id` on delta insert rows, same as the `link_key` path.
+
+**Trade-off**: This path is **not IVM-safe**. If a link row is inserted
+after the source rows are already materialised, IVM may not recompute the
+recursive CTE (depends on the IVM implementation — some support incremental
+recursive CTEs, many don't). The identity view may stay stale until the next
+full refresh. For batch/scheduled pipelines this is fine — the entire view
+chain is recomputed each run.
+
+### Cluster IDs in practice — who provides them and who doesn't
+
+| Category | Examples | Provides cluster ID? | Notes |
+|----------|----------|---------------------|-------|
+| **MDM platforms** | Informatica MDM, Reltio, Semarchy, Tibco EBX, Ataccama | Yes | Core concept — the "golden record ID" or "entity ID" is the cluster identifier. |
+| **Entity resolution services** | Senzing, AWS Entity Resolution, Quantexa | Yes | Output is `(entity_id, record_id)` — exactly Pattern A. |
+| **ETL feedback tables** | Custom ETL state (our own reference pattern) | Yes | The ETL creates cluster IDs when it performs inserts. By design. |
+| **Record linkage libraries** | Splink, Dedupe.io, Zingg, RecordLinkage (R) | **No** — pairwise only | Output is scored pairs: `(record_a, record_b, score)`. Use `links` without `link_key`. |
+| **Manual curation UIs** | Custom match/reject UIs, crowd-sourcing platforms | **No** — pairwise only | A human says "these two match" — the decision is a pair. Use `links` without `link_key`. |
+| **Probabilistic matchers** | Fellegi-Sunter implementations, fastLink | **No** — pairwise only | Output is pairs with match probabilities. Use `links` without `link_key`. |
+
+**IVM-safe path** (`link_key` present): MDM platforms, entity resolution
+services, and ETL feedback tables. These map via `links` + `link_key`.
+
+**Batch-safe path** (no `link_key`): Record linkage tools, manual curation UIs,
+and probabilistic matchers. These use `links` without `link_key` — the engine
+generates connected-components SQL in the identity layer.
+
+Users who need IVM safety with pairwise-only systems can still pre-compute
+cluster IDs themselves (e.g., a materialised view that pivots pairs into
+columnar xref) and use `link_key`. But this is no longer required — the
+engine handles the common case directly.
+
+### Composite PK representation (Option A: text, JSONB-as-text for composite)
+
+`_src_id` is always `TEXT`:
+
+- **Single PK**: plain text cast — `person_id::text` → `'P4'`
+- **Composite PK**: JSONB object cast to text — `jsonb_build_object('crm_id',
+  crm_id, 'region', region)::text` → `'{"crm_id": "CRM1", "region": "EU"}'`
+
+JSONB key ordering is alphabetical in PostgreSQL — deterministic across runs.
+Since the engine generates all SQL, key order is controlled (always alphabetical).
+
+Entity ID hashing: `md5(_mapping || ':' || _src_id)` works for both.
+
+Link join for composite PKs:
+```sql
+ON crm._src_id = jsonb_build_object('crm_id', md.crm_identifier, 'region', md.crm_region)::text
+```
+
+Why not always JSONB? 80%+ of examples are single-PK. `_src_id = '1'` is clean;
+`_src_id = '{"person_id": "P4"}'` is not.
+
+## Two Insert Scenarios
+
+| Scenario | When | Insert mechanism |
+|----------|------|------------------|
+| **Single natural key** | Exactly 1 identity field on the target | Identity value self-relinks. No feedback needed. |
+| **Cluster identity** | 0 or 2+ identity fields, or curated/ETL links | `_cluster_id` + linking table. ETL feeds back. |
+
+The single-natural-key shortcut only works when there is **exactly one**
+identity field on the target. With multiple identity fields, transitive
+closure can accumulate multiple distinct values for the same field — see
+"Multi-value hazard" below. Everything else uses `_cluster_id` + `links`.
+
+### Multi-value hazard (why multiple identity fields break inserts)
+
+Consider three source rows with two identity fields (`email` and `phone`):
+
+```
+System A: {email: "alice@x.com", phone: NULL,       name: "Alice"}
+System B: {email: "alice@x.com", phone: "555-1234", name: "A. Smith"}
+System C: {email: "bob@x.com",   phone: "555-1234", name: "Bob"}
+```
+
+Transitive closure merges all three:
+- A ↔ B via email
+- B ↔ C via phone
+
+The entity now has two email values: `alice@x.com` and `bob@x.com`. The
+resolution view picks one (e.g. `min()` → `alice@x.com`). If we insert this
+into System D:
+
+```
+Insert into D: {email: "alice@x.com", phone: "555-1234"}
+```
+
+This inserted row is a **synthetic composite** — it carries identity values
+that never co-occurred in a single source row. On the next run, it becomes a
+hub that creates edges via both email AND phone, which may transitively connect
+unrelated entities that happen to share one of those values.
+
+With a single identity field, this can't happen: all rows in the cluster share
+the same value for that field (that's what made them a cluster). The resolved
+value is unambiguous.
+
+**Conclusion**: the "no feedback needed" shortcut only applies when the target
+has exactly one identity field. Multiple identity fields require `_cluster_id`
++ linking table feedback, same as the "no natural keys" case.
+
+### Scenario 1 — Single natural key
+
+Both sources share exactly one identity field. No linking table needed.
+
+```yaml
+sources:
+  hr_west:
+    table: hr_west
+    primary_key: [emp_no]
+  hr_east:
+    table: hr_east
+    primary_key: [emp_no]
+
+targets:
+  employee:
+    fields:
+      employee_number: identity    # THE single identity field
+      name: coalesce
+      department: coalesce
+
+mappings:
+  hr_west:
+    source: hr_west
+    target: employee
+    fields:
+      - { source: emp_no, target: employee_number }
+      - { source: full_name, target: name, priority: 1 }
+      - { source: dept, target: department, priority: 1 }
+
+  hr_east:
+    source: hr_east
+    target: employee
+    fields:
+      - { source: emp_no, target: employee_number }
+      - { source: name, target: name, priority: 2 }
+      - { source: dept, target: department, priority: 2 }
+
+tests:
+  - description: "Shared employee_number — auto-merge, insert carries the key"
+    input:
+      hr_west:
+        - { emp_no: "E42", full_name: "Alice Johnson", dept: "Engineering" }
+        - { emp_no: "E43", full_name: "Bob Smith", dept: "Sales" }
+      hr_east:
+        - { emp_no: "E42", name: "A. Johnson", dept: "Eng" }
+    expected:
+      hr_west:
+        updates:
+          - { emp_no: "E42", full_name: "Alice Johnson", dept: "Engineering" }
+          - { emp_no: "E43", full_name: "Bob Smith", dept: "Sales" }
+      hr_east:
+        updates:
+          - { emp_no: "E42", name: "Alice Johnson", dept: "Engineering" }
+        inserts:
+          # The identity field value IS the merge key. ETL writes it.
+          # Next run: hr_east has E43 → identity match → done.
+          - { employee_number: "E43", name: "Bob Smith", department: "Sales" }
+```
+
+**No `_cluster_id` needed.** The ETL writes `employee_number=E43` to hr_east.
+Next run, the identity view matches on it automatically.
+
+### Scenario 2 — Cluster identity (curated, ETL-driven, or multi-field)
+
+Applies to:
+- No shared identity fields between sources
+- Multiple identity fields (transitive closure → multi-value hazard)
+- Any case where a human or ETL process manages linkages
+
+All use the same mechanism: a linking table with `links`.
+
+```yaml
+sources:
+  crm:
+    table: crm_contacts
+    primary_key: [crm_id]
+  billing:
+    table: billing_accounts
+    primary_key: [billing_id]
+  curated_matches:
+    table: curated_matches
+    primary_key: [match_id]
+
+targets:
+  customer:
+    fields:
+      name: coalesce
+      email: coalesce
+      # Clean business model. No source PKs.
+
+mappings:
+  crm:
+    source: crm
+    target: customer
+    fields:
+      - { source: contact_name, target: name, priority: 1 }
+      - { source: contact_email, target: email }
+
+  billing:
+    source: billing
+    target: customer
+    fields:
+      - { source: account_name, target: name, priority: 2 }
+      - { source: billing_email, target: email }
+
+  curated_matches:
+    source: curated_matches
+    target: customer
+    link_key: match_id
+    links:
+      - { field: crm_id, references: crm }
+      - { field: billing_id, references: billing }
+    # No fields — pure linkage mapping (IVM-safe via link_key)
+
+tests:
+  - description: "Curated merge via linking table — target model has no source PKs"
+    input:
+      crm_contacts:
+        - { crm_id: "CRM1", contact_name: "John Doe", contact_email: "john@example.com" }
+        - { crm_id: "CRM2", contact_name: "Jane Smith", contact_email: "jane@example.com" }
+      billing_accounts:
+        - { billing_id: "BILL1", account_name: "J. Doe", billing_email: "john@example.com" }
+      curated_matches:
+        - { match_id: "M1", crm_id: "CRM1", billing_id: "BILL1" }
+    expected:
+      crm:
+        updates:
+          - { crm_id: "CRM1", contact_name: "John Doe", contact_email: "john@example.com" }
+          - { crm_id: "CRM2", contact_name: "Jane Smith", contact_email: "jane@example.com" }
+      billing:
+        updates:
+          - { billing_id: "BILL1", account_name: "John Doe", billing_email: "john@example.com" }
+        inserts:
+          # Jane has no billing record. The insert carries _cluster_id.
+          - { name: "Jane Smith", email: "jane@example.com",
+              _cluster_id: "..." }
+```
+
+**What happens next**: the ETL writes Jane to billing, gets BILL-99, and adds
+`{ match_id: "M2", crm_id: "CRM2", billing_id: "BILL-99" }` to the
+curated_matches table. Next run, the link connects them → no more insert.
+
+### Propagation — same mechanism, ETL writes the links
+
+The mapping above works identically when the ETL populates `curated_matches`
+instead of a human. The only difference is who writes the rows.
+
+```
+Run 1:
+  crm_contacts:  [{ crm_id: "CRM1", contact_name: "Alice", ... }]
+  billing:       [] (empty)
+  curated_matches: [] (empty)
+
+  Identity view: CRM1 is a singleton entity.
+  Delta for billing: insert | _cluster_id=md5("crm:CRM1") | name=Alice | ...
+
+  ETL writes to billing → gets BILL-99.
+  ETL writes to curated_matches: { match_id: "M1", crm_id: "CRM1", billing_id: "BILL-99" }
+
+Run 2:
+  billing now has BILL-99. curated_matches links CRM1 ↔ BILL-99.
+  Delta for billing: update (not insert).
+
+  If a third system (erp) also needs Alice:
+    Delta for erp: insert | _cluster_id=<same cluster> | ...
+    ETL writes to erp → gets ERP-42.
+    ETL adds link: { match_id: "M2", crm_id: "CRM1", erp_id: "ERP-42" }
+
+Run 3:
+  All three systems linked. No more inserts.
+```
+
+The key insight: **curated_matches + links is one mechanism for both curated
+and ETL-driven merges.** Scenario 1 (single natural key) is the only case
+that doesn't need it.
+
+## `links` Spec Design
+
+### Syntax
+
+```yaml
+mappings:
+  # IVM-safe: link_key provides pre-computed cluster identity
+  mdm_links:
+    source: mdm_xref
+    target: customer
+    link_key: entity_id                  # column providing cluster identity
+    links:
+      - field: crm_id
+        references: crm
+      - field: billing_id
+        references: billing
+
+  # Batch-safe: no link_key — engine computes clusters in identity layer
+  splink_matches:
+    source: splink_output
+    target: customer
+    links:
+      - field: crm_id                    # single PK — string
+        references: crm
+      - field: [region, billing_id]      # composite PK — list (names match)
+        references: billing
+      - field:                           # composite PK — map (names differ)
+          src_region: region
+          src_billing_id: billing_id
+        references: billing
+```
+
+`link_key` is **optional**. When present, it names a column in the linking
+table whose value serves as the cluster identifier — enabling the IVM-safe
+path (LEFT JOIN `_cluster_members_{target}` in the forward view).
+
+When `link_key` is **omitted**, the engine falls back to the batch-safe path:
+pairwise link edges are computed directly in the identity layer's connected-
+components algorithm. No `_cluster_members` join, no forward-view LEFT JOIN.
+This is simpler but not IVM-safe (see "Two modes for links" above).
+
+The engine unpivots each `links` row into `_cluster_members_{target}`:
+
+```sql
+-- For a link row with link_key=M1, crm_id=CRM1, billing_id=BILL1:
+-- unpivots to:
+--   (_cluster_id='M1', _mapping='crm',     _src_id='CRM1')
+--   (_cluster_id='M1', _mapping='billing',  _src_id='BILL1')
+```
+
+`field` is polymorphic:
+
+| Type | Meaning |
+|------|---------|
+| `string` | Single PK, link column name = PK column name |
+| `list` | Composite PK, link column names = PK column names |
+| `map` | Composite PK, link column → PK column name mapping |
+
+### Semantics
+
+Each row in the linking table produces an identity edge for every **pair** of
+referenced sources. If a row has `crm_id=CRM1` and `billing_id=BILL1`, the
+edge is: "the crm row with PK CRM1 and the billing row with PK BILL1 are the
+same entity for this target."
+
+A NULL value in a link field means "no reference for this source in this row" —
+no edge produced for that pair. This allows partial links (e.g., an xref row
+that links crm↔billing but not yet erp).
+
+### Identity view integration
+
+The identity view gains a second edge source alongside identity-field matching:
+
+```sql
+WITH
+_link_edges AS (
+  -- Pre-computed edges from links declarations
+  SELECT
+    crm._entity_id AS entity_a,
+    billing._entity_id AS entity_b
+  FROM curated_matches md
+  JOIN _id_numbered crm
+    ON crm._mapping = 'crm' AND crm._src_id = md.crm_id::text
+  JOIN _id_numbered billing
+    ON billing._mapping = 'billing' AND billing._src_id = md.billing_id::text
+  WHERE md.crm_id IS NOT NULL AND md.billing_id IS NOT NULL
+)
+```
+
+These edges feed into the same connected-components algorithm alongside
+identity-field edges. Both edge types compose cleanly.
+
+A mapping with `links` and no `fields` does NOT produce a forward view — it
+only contributes identity edges (and, when `link_key` is present, cluster
+membership rows for the LEFT JOIN).
+
+## Multi-valued xref columns
+
+In practice, columnar xref tables sometimes contain multi-valued columns —
+comma-separated strings, arrays, or JSON arrays — representing internal merges:
+
+```
+match_id | crm_ids          | billing_id
+M1       | "CRM1,CRM2"      | BILL1
+M2       | "CRM3"           | BILL2
+```
+
+Here `crm_ids` holds two CRM identifiers that have been merged within CRM.
+To produce correct cluster membership, the engine would need to unnest
+`"CRM1,CRM2"` into two separate edges.
+
+### Recommendation: push to data layer
+
+The mapping language does **not** handle unnesting of multi-valued columns.
+This is a pre-processing concern:
+
+1. **Create a view** that normalizes the xref table before mapping:
+   ```sql
+   CREATE VIEW curated_matches_normalized AS
+   SELECT match_id, unnest(string_to_array(crm_ids, ',')) AS crm_id, billing_id
+   FROM curated_matches;
+   ```
+2. **Map against the view** instead of the raw table.
+
+**Rationale**:
+- Multi-valued encoding is diverse (CSV strings, PG arrays, JSON arrays,
+  pipe-delimited, etc.). Supporting all formats would add significant
+  complexity to the mapping language for a niche concern.
+- A normalizing view is a one-liner in SQL and can be validated independently.
+- The engine expects each row in a linking table to represent one link per
+  referenced source. If a row logically contains multiple links, the source
+  should present them as multiple rows.
+- The mapping author controls what the engine sees via `sources.table`, which
+  can be a view. Normalising multi-valued columns is a natural fit for this
+  boundary.
+
+## What the Engine Provides
+
+### `_cluster_id` on insert rows
+
+The delta view emits `_cluster_id` for every insert row:
+
+```sql
+CASE
+  WHEN src._row_id IS NULL THEN rev._cluster_id
+  ELSE NULL
+END AS _cluster_id
+```
+
+Where `_cluster_id` comes from the identity view's `_entity_id_resolved`.
+
+### Deterministic cluster identity
+
+The identity view assigns each entity a deterministic identifier:
+
+- **Without linking state**: `md5(_mapping || ':' || _src_id)`, propagated
+  through connected-components → `MIN()` across the cluster. Same input data
+  → same `_cluster_id`. Changes if the canonical (minimum) member changes.
+
+- **With linking state** (ETL feeds back a linking table as a source): the
+  link edges produce larger, stable clusters. The `_cluster_id` is as stable
+  as the linking table's data.
+
+### Provenance view (optional)
+
+```sql
+CREATE OR REPLACE VIEW _provenance_{target} AS
+SELECT
+  _entity_id_resolved AS _cluster_id,
+  _mapping,
+  _src_id
+FROM _id_{target};
+```
+
+Lists all source rows belonging to each cluster. Useful for the ETL to
+understand cluster composition, but not required for basic operation.
+
+## What the Engine Does NOT Provide
+
+- **Persistent cluster state** — the ETL manages its own state
+- **Insert tracking** — the ETL knows what it has written
+- **Generated ID feedback** — the ETL feeds this back via a linking table that
+  the author maps as a regular source with `links`
+
+## Current Spec Pattern (to be replaced)
+
+The spec currently uses per-source `_origin_{mapping}_{pk}` columns on insert
+rows in test expectations:
+
+```yaml
+inserts:
+  - { person_id: "P4", _origin_crm_a_person_id: ["P4"], customer_id: "CUST-002" }
+```
+
+### Problems
+
+| Issue | Severity |
+|-------|----------|
+| Column explosion (N sources → N columns) | High |
+| Schema instability (adding a source changes all delta views) | High |
+| Column name length (63-char PG limit risk) | Medium |
+| Composite key encoding (objects in arrays) | Medium |
+| **Forces source PKs onto the target model** (e.g. `crm_id: identity`) | **High** |
+
+The last problem is the most insidious: the `merge-curated` and
+`merge-generated-ids` examples require every source system's PK to be a field
+on the canonical target. Adding a 4th source means adding a 4th identity field,
+changing every view in the pipeline. The `links` mechanism solves this by
+keeping source PKs in the linking mapping, off the target model entirely.
+
+### Proposed replacement
+
+Replace all `_origin_*` columns with a single `_cluster_id`:
+
+```yaml
+inserts:
+  - person_id: "P4"
+    customer_id: "CUST-002"
+    _cluster_id: "a7f3b2..."
+```
+
+One column, stable schema, scalar value. The ETL joins against the provenance
+view if it needs to know which sources contributed.
+
+## Spec Changes Required
+
+### 1. Replace `_origin_*` with `_cluster_id` in test expectations
+
+All examples with `_origin_*` columns update to use `_cluster_id`.
+
+### 2. Add `sources:` section (shared with Phase 8)
+
+```yaml
+sources:
+  crm_a:
+    table: crm_a_contacts
+    primary_key: [person_id]
+```
+
+Needed for:
+- Real primary keys (Phase 8)
+- Decoupling mapping names from table names
+- `links` references (must know the referenced source's PK)
+
+### 3. Add `links` and `link_key` to mapping schema
+
+```yaml
+link_key: <column_name>           # optional — enables IVM-safe path
+links:
+  - field: <string | list | map>
+    references: <source_name>
+```
+
+### 4. Deterministic `_entity_id` in identity view
+
+Replace `ROW_NUMBER()` with `md5(_mapping || ':' || _src_id)` so `_cluster_id`
+is deterministic across runs.
+
+## Implementation Phases
+
+1. **Switch identity view to deterministic hashing** — `render/identity.rs`.
+   Replace `ROW_NUMBER()` with `md5()`.
+
+2. **Add `_cluster_id` to delta view** — emit `_entity_id_resolved` on insert
+   rows in `render/delta.rs`.
+
+3. **Add `links` support** — parse on mappings, generate link-edge CTEs in
+   identity view. When `link_key` is present, also generate unpivoted
+   `_cluster_members_{target}` view and forward-view LEFT JOIN (IVM-safe path).
+   When `link_key` is absent, only generate pairwise link edges (batch path).
+
+4. **Add provenance view** — optional `_provenance_{target}` view.
+
+5. **Update test expectations** — replace `_origin_*` with `_cluster_id` in
+   all examples that have insert rows.
+
+6. **Validator rules**:
+   - Warn when a target has 2+ identity fields and also has insert-producing
+     mappings (the multi-value hazard).
+   - Info when `links` is present without `link_key` — "batch-safe only;
+     add `link_key` for IVM safety."
+   - Warn when a `links` mapping also has `fields` (unusual but allowed).
+
+## ETL Feedback Pattern (Documentation)
+
+The engine doesn't implement this, but the docs should describe the pattern:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    ETL Runtime                       │
+│                                                      │
+│  1. Read delta view → find inserts                   │
+│  2. Write to target system → capture generated IDs   │
+│  3. Store (cluster_id, mapping, src_pk) in state     │
+│  4. Expose state as a linking table                  │
+│  5. Author maps linking table as a source            │
+│  6. Next run: identity view links via linking table  │
+│     → insert disappears from delta                   │
+└─────────────────────────────────────────────────────┘
+```
+
+The ETL's cluster state can be as simple as a single table:
+
+```sql
+CREATE TABLE _etl_clusters (
+  cluster_id  UUID PRIMARY KEY,
+  target_name TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE _etl_cluster_members (
+  cluster_id  UUID REFERENCES _etl_clusters(cluster_id),
+  mapping     TEXT NOT NULL,
+  src_pk      TEXT NOT NULL,
+  PRIMARY KEY (mapping, src_pk)
+);
+```
+
+This is outside the engine's scope — it's a reference pattern for ETL authors.
