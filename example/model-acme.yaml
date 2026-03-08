@@ -115,6 +115,51 @@ semantic_model:
                   expression: relation_type
             description: "Relation type (e.g. primary-contact, billing, technical)"
 
+      - name: order
+        source: canonical.public.order
+        primary_key: [order_id]
+        unique_keys:
+          - [order_id]
+        description: Canonical orders linked to companies
+
+        fields:
+          - name: order_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: order_id
+            description: Canonical order identifier
+
+          - name: company_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: company_id
+            description: Canonical company identifier
+
+          - name: order_number
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: order_number
+            description: Human-readable order number
+
+          - name: status
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: status
+            description: Order status
+
+          - name: created_at
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: created_at
+            dimension:
+              is_time: true
+            description: Order creation timestamp
+
     relationships:
       - name: company_person_to_company
         from: company_person
@@ -127,3 +172,9 @@ semantic_model:
         to: person
         from_columns: [person_id]
         to_columns: [person_id]
+
+      - name: order_to_company
+        from: order
+        to: company
+        from_columns: [company_id]
+        to_columns: [company_id]

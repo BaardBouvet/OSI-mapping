@@ -103,6 +103,7 @@ mappings:
   - name: orders_to_company
     description: CRM orders assign customer role with static is_customer
     id: company_id
+    embedded: true
 
     source:
       schema_file: ./crm-openapi.yaml
@@ -120,3 +121,35 @@ mappings:
           dialects:
             - dialect: ANSI_SQL
               expression: "TRUE"
+
+  - name: orders_to_order
+    description: CRM orders to canonical order
+    id: id
+
+    source:
+      schema_file: ./crm-openapi.yaml
+      schema_path: "#/components/schemas/Order"
+      schema_format: openapi
+
+    target:
+      semantic_model: acme_model
+      dataset: order
+      model_file: ./model-acme.yaml
+
+    default_timestamp_field: created_at
+
+    field_mappings:
+      - target_field: order_id
+        source_field: id
+
+      - target_field: company_id
+        source_field: company_id
+
+      - target_field: order_number
+        source_field: order_number
+
+      - target_field: status
+        source_field: status
+
+      - target_field: created_at
+        source_field: created_at

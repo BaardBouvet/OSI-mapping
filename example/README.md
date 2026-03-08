@@ -1,4 +1,4 @@
-# Example: Company + Person Merge
+# Example: Company + Person + Order Merge
 
 Two sources contribute to canonical company and person datasets.
 
@@ -11,7 +11,7 @@ Two sources contribute to canonical company and person datasets.
 
 ## Target
 
-The canonical **Acme** model ([model-acme.yaml](model-acme.yaml)) has three datasets: `company`, `person`, and `company_person` (association/link table).
+The canonical **Acme** model ([model-acme.yaml](model-acme.yaml)) has four datasets: `company`, `person`, `company_person` (association/link table), and `order`.
 
 ### ER Diagram
 
@@ -20,8 +20,10 @@ erDiagram
     company
     person
     company_person
+    order
     company ||--o{ company_person : ""
     person ||--o{ company_person : ""
+    company ||--o{ order : ""
 ```
 
 ## Mappings
@@ -42,7 +44,8 @@ graph LR
         m1[companies_to_company]
         m2[contacts_to_person]
         m3["company_contacts_to_company_person<br/>(nested)"]
-        m7["orders_to_company<br/>(constant)"]
+        m7["orders_to_company<br/>(embedded)"]
+        m8[orders_to_order]
         m4["customers_to_company<br/>(filtered)"]
         m5["customers_to_person<br/>(embedded, filtered)"]
         m6["customers_to_company_person<br/>(embedded, filtered)"]
@@ -52,6 +55,7 @@ graph LR
         company[company]
         person[person]
         company_person[company_person]
+        order[order]
     end
 
     crm_companies --- m1
@@ -65,6 +69,9 @@ graph LR
 
     crm_orders -.-> m7
     m7 -.-> company
+
+    crm_orders --- m8
+    m8 --- order
 
     erp_customers --- m4
     m4 --- company
@@ -116,6 +123,8 @@ For person data:
 |-------|----------|--------|
 | relation_type | COLLECT | All relation types retained |
 
+`order` dataset is currently sourced only from CRM (`orders_to_order`), so no cross-source resolution is required.
+
 ## Files
 
 | File | Description |
@@ -123,6 +132,6 @@ For person data:
 | [crm-openapi.yaml](crm-openapi.yaml) | CRM OpenAPI schema |
 | [model-erp.yaml](model-erp.yaml) | ERP source model (customers + embedded contact projection with relationship) |
 | [model-acme.yaml](model-acme.yaml) | Acme target model |
-| [mapping-crm.yaml](mapping-crm.yaml) | CRM → company + person + company_person |
+| [mapping-crm.yaml](mapping-crm.yaml) | CRM → company + person + company_person + order |
 | [mapping-erp.yaml](mapping-erp.yaml) | ERP → company + embedded person/company_person, reverse filtered |
 | [resolution-acme.yaml](resolution-acme.yaml) | Company + person + company_person resolution rules |
