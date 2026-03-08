@@ -3,9 +3,11 @@
 > **Abstract**: Defines how the engine tracks entity identity across sources and
 > how ETL pipelines feed back generated IDs to prevent duplicate inserts.
 > Introduces `links` (with optional `link_key`) on mappings for external
-> identity edges, `cluster_members` on mappings for ETL feedback, `_cluster_id`
+> identity edges, `cluster_members` for ETL feedback via a separate table,
+> `cluster_field` for feedback stored directly in the source, `_cluster_id`
 > as a stable entity handle on delta insert rows, and two operating modes —
-> IVM-safe (with `link_key` or `cluster_members`) and batch-safe (without).
+> IVM-safe (with `link_key`, `cluster_members`, or `cluster_field`) and
+> batch-safe (without).
 
 ## Problem
 
@@ -141,6 +143,54 @@ security and data mesh boundaries.
 
 **IVM-safe**: yes — same LEFT JOIN mechanism as `links` with `link_key`.
 
+### `cluster_field` — cluster ID stored in the source
+
+Some target systems support storing custom properties on records. If the ETL
+writes `_cluster_id` as a field on the target record, the source table itself
+carries the cluster identity on the next run — no separate feedback table
+needed.
+
+```yaml
+mappings:
+  billing:
+    source: billing
+    target: customer
+    cluster_field: entity_cluster_id      # column in billing table
+    fields:
+      - { source: account_name, target: name }
+```
+
+The engine uses `cluster_field` directly in the forward view:
+
+```sql
+SELECT
+  s._row_id AS _src_id,
+  'billing' AS _mapping,
+  COALESCE(s.entity_cluster_id, md5('billing' || ':' || s._row_id::text)) AS _cluster_id,
+  ...
+FROM billing s
+```
+
+If `entity_cluster_id` is populated, the row joins its cluster directly. If
+NULL (pre-existing rows not written by the ETL), it falls back to the default
+singleton cluster ID. No LEFT JOIN needed — the cluster ID is part of the
+source row.
+
+**IVM-safe**: yes — the source row carries its own cluster identity atomically.
+
+**Trade-offs vs `cluster_members`**:
+
+| | `cluster_field` | `cluster_members` |
+|---|---|---|
+| **Separate table** | No — data in source | Yes — per-mapping table |
+| **ETL complexity** | Include `_cluster_id` when writing the record | Write to feedback table after writing |
+| **Requirement** | Target system must support custom fields | Works with any target system |
+| **Source purity** | Adds engine metadata to source data | Metadata stays in engine tables |
+
+Both produce the same result: a forward-view row carrying `_cluster_id`.
+`cluster_field` is simpler when the target system supports it; `cluster_members`
+is the universal fallback. A mapping should declare one or the other, not both.
+
 ### Flat membership tables from external systems
 
 External systems (MDM, entity resolution) that produce a global flat
@@ -158,9 +208,10 @@ FROM flat_membership
 GROUP BY cluster_id;
 ```
 
-Three mechanisms, clear roles:
+Four mechanisms, clear roles:
 - **`links`** — external systems that know about multiple sources (MDM, curation, record linkage)
-- **`cluster_members`** — ETL feedback: just `_cluster_id` + one new PK
+- **`cluster_members`** — ETL feedback via separate table: just `_cluster_id` + one new PK
+- **`cluster_field`** — ETL feedback via source column: `_cluster_id` stored on the target record itself
 - **Identity fields** — shared natural keys across sources
 
 ### Three identity edge types
@@ -261,6 +312,79 @@ recursive CTEs, many don't). The identity view may stay stale until the next
 full refresh. For batch/scheduled pipelines this is fine — the entire view
 chain is recomputed each run.
 
+#### Insert feedback with `links` without `link_key`
+
+The batch-safe path produces `_cluster_id` on delta insert rows — the
+connected-components result works the same as the `link_key` path. But `links`
+without `link_key` only provides **identity resolution** (connecting existing
+rows via pairwise edges). It does NOT provide **insert feedback**.
+
+If a target uses `links` without `link_key` and has insert-producing mappings,
+those mappings must declare their own feedback mechanism — either
+`cluster_members` or `cluster_field`:
+
+```yaml
+mappings:
+  splink_matches:
+    source: splink_output
+    target: customer
+    links:                              # batch-safe — no link_key
+      - { field: crm_id, references: crm }
+      - { field: billing_id, references: billing }
+
+  billing:
+    source: billing
+    target: customer
+    cluster_members: true               # OR: cluster_field: _cluster_id
+    fields:
+      - { source: account_name, target: name }
+```
+
+The `links` mapping provides pairwise identity edges. The data mapping's
+feedback mechanism (`cluster_members` or `cluster_field`) provides the loop.
+On the next run, the new row gets the same `_cluster_id` as the original
+source → the insert disappears from the delta.
+
+#### Cluster ID stability without `link_key`
+
+Without `link_key`, `_cluster_id` is derived — `MIN()` of
+`md5(_mapping || ':' || _src_id)` across the connected component. This has
+stability implications for insert feedback.
+
+**What the value is**: for a component containing {crm:CRM1, billing:BILL1},
+`_cluster_id = MIN(md5('crm:CRM1'), md5('billing:BILL1'))` — whichever
+hashes lower. It's anchored to a specific source row, not to an external
+stable identifier.
+
+**When it's stable**:
+- The anchoring row (the one whose hash is the MIN) remains in the source.
+- New members join or leave the cluster via link edges — the MIN doesn't
+  change as long as the anchoring row persists.
+
+**When it breaks**:
+- **Anchoring row deleted**: if the source row whose hash is the MIN is
+  deleted, the `_cluster_id` for the entire cluster changes to the next
+  lowest hash. Any feedback rows written with the old `_cluster_id` become
+  orphaned — the forward view's COALESCE falls back to the row's own default
+  singleton hash, and the row becomes disconnected from its entity.
+- **Cluster split**: if link data changes and the component splits into two,
+  each sub-component gets a new MIN. Feedback rows may end up pointing at a
+  `_cluster_id` that now belongs to a different (smaller) cluster.
+- **Race between delta read and ETL write**: if the link system re-runs (e.g.
+  Splink recomputes) between the ETL reading the delta and writing feedback,
+  the `_cluster_id` may have shifted. The ETL must use the `_cluster_id` it
+  read from the delta, not recompute.
+
+**Contrast with `link_key`**: when `link_key` is present, `_cluster_id` is
+the external identifier from the linking table (e.g. MDM entity ID). It's
+as stable as the external system. Feedback rows survive topology changes
+because the cluster ID is externally managed, not derived.
+
+**Practical impact**: for batch pipelines with stable link data (Splink runs
+once, results don't change between ETL cycles), this is fine. For volatile
+link data or long-running pipelines, prefer `link_key` or accept that
+orphaned feedback rows may require periodic cleanup.
+
 ### Cluster IDs in practice — who provides them and who doesn't
 
 | Category | Examples | Provides cluster ID? | Notes |
@@ -272,8 +396,8 @@ chain is recomputed each run.
 | **Manual curation UIs** | Custom match/reject UIs, crowd-sourcing platforms | **No** — pairwise only | A human says "these two match" — the decision is a pair. Use `links` without `link_key`. |
 | **Probabilistic matchers** | Fellegi-Sunter implementations, fastLink | **No** — pairwise only | Output is pairs with match probabilities. Use `links` without `link_key`. |
 
-**IVM-safe path** (`link_key` or `cluster_members` present): MDM platforms,
-entity resolution services, and ETL feedback tables.
+**IVM-safe path** (`link_key`, `cluster_members`, or `cluster_field` present):
+MDM platforms, entity resolution services, and ETL feedback tables.
 
 **Batch-safe path** (no `link_key`): Record linkage tools, manual curation UIs,
 and probabilistic matchers. These use `links` without `link_key` — the engine
@@ -310,12 +434,13 @@ Why not always JSONB? 80%+ of examples are single-PK. `_src_id = '1'` is clean;
 | Scenario | When | Insert mechanism |
 |----------|------|------------------|
 | **Single natural key** | Exactly 1 identity field on the target | Identity value self-relinks. No feedback needed. |
-| **Cluster identity** | 0 or 2+ identity fields, or curated/ETL links | `_cluster_id` + linking table. ETL feeds back. |
+| **Cluster identity** | 0 or 2+ identity fields, or curated/ETL links | `_cluster_id` + feedback (`cluster_members`, `cluster_field`, or `links` + `link_key`). |
 
 The single-natural-key shortcut only works when there is **exactly one**
 identity field on the target. With multiple identity fields, transitive
 closure can accumulate multiple distinct values for the same field — see
-"Multi-value hazard" below. Everything else uses `_cluster_id` + `links`.
+"Multi-value hazard" below. Everything else uses `_cluster_id` + a feedback
+mechanism (`cluster_members`, `cluster_field`, or `links` with `link_key`).
 
 ### Multi-value hazard (why multiple identity fields break inserts)
 
@@ -771,7 +896,7 @@ Needed for:
 - Decoupling mapping names from table names
 - `links` references (must know the referenced source's PK)
 
-### 3. Add `links`, `link_key`, and `cluster_members` to mapping schema
+### 3. Add `links`, `link_key`, `cluster_members`, and `cluster_field` to mapping schema
 
 ```yaml
 # External linking (MDM, curation, record linkage)
@@ -785,6 +910,9 @@ cluster_members: true | <object>
   table: <table_name>             # default: _cluster_members_{mapping}
   cluster_id: <column_name>       # default: _cluster_id
   source_key: <column_name>       # default: _src_id
+
+# ETL feedback — cluster ID stored on the source record
+cluster_field: <column_name>        # column in source table holding _cluster_id
 ```
 
 ### 4. Deterministic `_entity_id` in identity view
@@ -800,8 +928,10 @@ is deterministic across runs.
 2. **Add `_cluster_id` to delta view** — emit `_entity_id_resolved` on insert
    rows in `render/delta.rs`.
 
-3. **Add `cluster_members` support** — parse on mappings, generate per-mapping
-   contributions to `_cluster_members_{target}` and forward-view LEFT JOIN.
+3. **Add `cluster_members` and `cluster_field` support** — parse on mappings.
+   For `cluster_members`: generate per-mapping contributions to
+   `_cluster_members_{target}` and forward-view LEFT JOIN. For `cluster_field`:
+   use `COALESCE(s.{cluster_field}, md5(...))` directly in the forward view.
 
 4. **Add `links` support** — parse on mappings, generate link-edge CTEs in
    identity view. When `link_key` is present, also generate unpivoted
@@ -818,28 +948,44 @@ is deterministic across runs.
      mappings (the multi-value hazard).
    - Info when `links` is present without `link_key` — "batch-safe only;
      add `link_key` for IVM safety."
+   - Error when a mapping declares both `cluster_members` and `cluster_field`.
+   - Warn when `links` without `link_key` is used but no insert-producing
+     mapping for the same target has `cluster_members` or `cluster_field`.
    - Warn when a `links` mapping also has `fields` (unusual but allowed).
 
 ## ETL Feedback Pattern (Documentation)
 
-The engine doesn't implement ETL logic, but the docs should describe the
-pattern:
+The engine doesn't implement ETL logic, but the docs should describe both
+feedback paths:
+
+**Path A — `cluster_members` (separate feedback table):**
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    ETL Runtime                       │
-│                                                      │
-│  1. Read delta view → find inserts with _cluster_id   │
-│  2. Write to target system → capture generated ID     │
-│  3. Write (_cluster_id, new_id) to mapping's           │
-│     cluster_members table                              │
+┌──────────────────────────────────────────────────────┐
+│  1. Read delta view → find inserts with _cluster_id    │
+│  2. Write to target system → capture generated ID      │
+│  3. Write (_cluster_id, new_id) to cluster_members     │
 │  4. Next run: forward view LEFT JOINs the table        │
-│     → row gets same _cluster_id as original source     │
-│     → insert disappears from delta                     │
-└─────────────────────────────────────────────────────┘
+│     → row gets _cluster_id → insert disappears         │
+└──────────────────────────────────────────────────────┘
 ```
 
-The ETL feedback table is per-mapping and minimal:
+**Path B — `cluster_field` (cluster ID stored on the target record):**
+
+```
+┌──────────────────────────────────────────────────────┐
+│  1. Read delta view → find inserts with _cluster_id    │
+│  2. Write to target system, including _cluster_id      │
+│     as a custom property on the record                 │
+│  3. Next run: source reads the row with cluster_field    │
+│     populated → forward view uses it → insert gone     │
+└──────────────────────────────────────────────────────┘
+```
+
+Path B is simpler (no separate table) but requires the target system to
+support storing `_cluster_id` as a custom field. Path A works universally.
+
+The ETL feedback table (Path A) is per-mapping and minimal:
 
 ```sql
 CREATE TABLE etl_billing_members (
