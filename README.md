@@ -2,7 +2,7 @@
 
 A declarative schema for defining how fields from multiple source systems map to a shared target model—and how conflicts between sources are resolved.
 
-One YAML file describes the full picture: target entities, field mappings, resolution strategies, and test cases.
+One YAML file describes the full picture: target entities, field mappings, resolution strategies, and test cases. All related entities (e.g., company, contact, country) belong in the same file — not one file per entity. This is essential for cross-entity references and holistic conflict resolution.
 
 ## Quick Start
 

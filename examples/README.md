@@ -8,6 +8,8 @@ This directory contains runnable mapping examples, each in its own subdirectory.
 - A `mapping.yaml` file with a complete mapping definition
 - A local `README.md` explaining the scenario, why it exists, and what feature it demonstrates
 
+**Note:** Most real-world mappings contain multiple target entities in a single file. Simple examples like `hello-world` use one target for clarity, but when your integration involves related entities (e.g., company + contact + country), they all go in one file. See `references/` and `relationship-mapping/` for multi-entity examples.
+
 ## Suggested Starting Points
 
 - `hello-world/` for the simplest end-to-end example

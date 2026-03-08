@@ -2,6 +2,51 @@
 
 This document helps AI agents (code generators, copilots, validation tools) produce correct mapping files that conform to the Integration Mapping Schema.
 
+## One File Per Integration — Not One File Per Entity
+
+**All target entities for an integration belong in a single YAML file.** Do not split entities into separate files (e.g., `customer.yaml`, `company.yaml`, `country.yaml`). The schema is designed so that one file describes the complete integration picture.
+
+Why this matters:
+- **Cross-entity references** (`references: company` on a contact field) only resolve when both entities are in the same file
+- **Test cases** can exercise interactions between entities (e.g., FK resolution across ID namespaces)
+- **The resolution engine** needs the full entity graph to link records and translate foreign keys
+
+A typical file defines multiple targets, with multiple mappings per target (one per source system):
+
+```yaml
+targets:
+  company:
+    fields:
+      domain: identity
+      name: coalesce
+  contact:
+    fields:
+      email: identity
+      company_id:
+        strategy: coalesce
+        references: company
+
+mappings:
+  - name: crm_companies
+    source: { dataset: crm }
+    target: company
+    fields: [...]
+  - name: erp_companies
+    source: { dataset: erp }
+    target: company
+    fields: [...]
+  - name: crm_contacts
+    source: { dataset: crm }
+    target: contact
+    fields: [...]
+  - name: erp_contacts
+    source: { dataset: erp }
+    target: contact
+    fields: [...]
+```
+
+See [`examples/references/mapping.yaml`](../examples/references/mapping.yaml) and [`examples/relationship-mapping/mapping.yaml`](../examples/relationship-mapping/mapping.yaml) for complete multi-entity examples.
+
 ## File Structure
 
 Every mapping file is a YAML document with four top-level keys:
@@ -286,3 +331,4 @@ default_expression: "current_timestamp"
 5. **Duplicate field targets** — Don't map two source fields to the same target field in one mapping
 6. **Forgetting `embedded: true`** — Sub-entities from the same source row need this flag
 7. **Missing `parent_fields`** — Nested arrays usually need parent-level fields imported
+8. **Splitting entities into separate files** — All entities for an integration go in one file. Separate files break cross-entity references and prevent holistic resolution

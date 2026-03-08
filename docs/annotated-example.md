@@ -2,6 +2,8 @@
 
 A complete mapping file with comments explaining every part. This example syncs contacts between a CRM, an ERP, and a shared phone directory — covering identity matching, multiple resolution strategies, expressions, and tests.
 
+> **Note:** This walkthrough uses a single target entity for simplicity. Real-world mappings typically define multiple related entities (company, contact, address, etc.) in the same file. See [`examples/references/`](../examples/references/) and [`examples/relationship-mapping/`](../examples/relationship-mapping/) for multi-entity examples. Never split entities into separate files — cross-entity references and FK resolution require all entities in one file.
+
 ```yaml
 # ─── Schema version (required, always "1.0") ───────────────────────
 version: "1.0"
