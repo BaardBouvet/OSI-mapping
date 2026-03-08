@@ -24,7 +24,7 @@ This document explains the key design decisions behind the Integration Mapping S
 
 ## Identity-Based Record Matching
 
-**Decision:** Records from different sources are linked by matching `identity` field values (transitive closure), not by requiring pre-assigned global IDs.
+**Decision:** Records from different sources are linked by matching `identity` field values (transitive closure), not by requiring pre-assigned shared IDs.
 
 **Why:** In real integrations, systems rarely share a common primary key. Email addresses, tax IDs, or composite keys (name + date of birth) are the natural match keys. The schema supports this directly via `identity` strategy and `link_group` for composite matching.
 

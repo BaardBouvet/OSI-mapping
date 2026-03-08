@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validate OSI mapping files: JSON Schema + semantic consistency checks.
+Validate mapping files: JSON Schema + semantic consistency checks.
 
 Usage:
     python validation/validate.py                     # all examples in ./examples/
@@ -383,7 +383,7 @@ def validate_file(filepath, schema_validator, *, verbose=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate OSI mapping files")
+    parser = argparse.ArgumentParser(description="Validate mapping files")
     parser.add_argument("path", nargs="?", help="File or directory to validate")
     parser.add_argument("--all", action="store_true", help="Recursively find mapping.yaml in directory")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show warnings")

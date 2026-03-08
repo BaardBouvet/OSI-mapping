@@ -1,6 +1,6 @@
 # Hello World
 
-The absolute simplest OSI mapping: two systems that each have a contacts table,
+The absolute simplest mapping: two systems that each have a contacts table,
 synced by email address.
 
 ## How it works

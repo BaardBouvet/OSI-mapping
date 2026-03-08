@@ -1,4 +1,4 @@
-# Flattened Global
+# Flattened Mapping
 
 Maps different source structures (flat CRM, normalized ERP) to a single flattened target entity with embedded address properties.
 
