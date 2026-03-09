@@ -347,43 +347,108 @@ source → the insert disappears from the delta.
 
 #### Cluster ID stability without `link_key`
 
-Without `link_key`, `_cluster_id` is derived — `MIN()` of
-`md5(_mapping || ':' || _src_id)` across the connected component. This has
-stability implications for insert feedback.
+Without `link_key`, `_cluster_id` on delta insert rows is derived —
+`_entity_id_resolved` = `MIN()` of `md5(_mapping || ':' || _src_id)` across
+the connected component. This looks fragile, but the feedback mechanism is
+more resilient than it first appears.
 
-**What the value is**: for a component containing {crm:CRM1, billing:BILL1},
-`_cluster_id = MIN(md5('crm:CRM1'), md5('billing:BILL1'))` — whichever
-hashes lower. It's anchored to a specific source row, not to an external
-stable identifier.
+**Key insight**: the `_cluster_id` value in feedback (`cluster_members` or
+`cluster_field`) creates a **cluster-ID edge**, not an assignment. Two
+forward-view rows sharing the same `_cluster_id` value form an edge in the
+identity layer. The feedback row doesn't need its `_cluster_id` to equal the
+current `_entity_id_resolved` — it just needs to match at least one other
+forward-view row's `_cluster_id` to stay connected.
 
-**When it's stable**:
-- The anchoring row (the one whose hash is the MIN) remains in the source.
-- New members join or leave the cluster via link edges — the MIN doesn't
-  change as long as the anchoring row persists.
+**How this works in practice**:
 
-**When it breaks**:
-- **Anchoring row deleted**: if the source row whose hash is the MIN is
-  deleted, the `_cluster_id` for the entire cluster changes to the next
-  lowest hash. Any feedback rows written with the old `_cluster_id` become
-  orphaned — the forward view's COALESCE falls back to the row's own default
-  singleton hash, and the row becomes disconnected from its entity.
-- **Cluster split**: if link data changes and the component splits into two,
-  each sub-component gets a new MIN. Feedback rows may end up pointing at a
-  `_cluster_id` that now belongs to a different (smaller) cluster.
-- **Race between delta read and ETL write**: if the link system re-runs (e.g.
-  Splink recomputes) between the ETL reading the delta and writing feedback,
-  the `_cluster_id` may have shifted. The ETL must use the `_cluster_id` it
-  read from the delta, not recompute.
+```
+Setup:
+  CRM has CRM1 (Alice). Billing has BILL1 (A. Smith).
+  Splink pair: CRM1 ↔ BILL1 → links without link_key.
+  No row in ERP.
+
+Run 1:
+  Identity layer: CRM1 ↔ BILL1 via link edge → one entity.
+  Delta for ERP: insert | _cluster_id = MIN(md5('crm:CRM1'), md5('billing:BILL1'))
+  Let's say _cluster_id = md5('billing:BILL1') (whichever hashes lower).
+
+  ETL writes to ERP → gets ERP-42.
+  ETL writes feedback: (_cluster_id = md5('billing:BILL1'), src_id = 'ERP-42')
+
+Run 2:
+  ERP's forward view: ERP-42 gets _cluster_id = md5('billing:BILL1') (from feedback).
+  BILL1's forward view: _cluster_id = md5('billing:BILL1') (its default — no feedback).
+  Cluster-ID edge: ERP-42 ↔ BILL1 (same _cluster_id value).
+  Link edge: CRM1 ↔ BILL1 (from Splink).
+  Full component: {CRM1, BILL1, ERP-42}. Insert gone. ✓
+```
+
+**Stable across cluster merges**:
+
+```
+Splink adds a new pair: CRM1 ↔ CRM2. Clusters merge.
+
+Before: {CRM1, BILL1, ERP-42}
+After:  {CRM1, CRM2, BILL1, ERP-42}
+
+ERP-42's feedback still says _cluster_id = md5('billing:BILL1').
+BILL1's default is still md5('billing:BILL1').
+Cluster-ID edge ERP-42 ↔ BILL1 still exists.
+BILL1 ↔ CRM1 via link edge, CRM1 ↔ CRM2 via link edge.
+ERP-42 reaches the merged cluster transitively. ✓
+
+The _entity_id_resolved changes (new MIN across larger component),
+but that's an output, not an input. Feedback is not affected.
+```
+
+**Stable across cluster splits**:
+
+```
+Splink removes the CRM1 ↔ BILL1 pair (false match).
+
+Cluster-ID edge: ERP-42 ↔ BILL1 (still exists — from feedback, not links).
+No link edge between CRM1 and BILL1 anymore.
+Result: {BILL1, ERP-42} stay connected. CRM1 becomes a singleton.
+
+This is correct: ERP-42 was written to ERP for the BILL1 entity.
+The link system said CRM1 doesn't belong. ERP-42 stays with BILL1. ✓
+```
+
+**Anchor row deletion — not a problem**:
+
+If the original source row that seeded the `_cluster_id` hash is deleted, the
+feedback rows that reference it don't break:
+
+- **Multiple feedback rows** (A→B, A→C, then A deleted): B and C both carry
+  `_cluster_id = md5('a:A1')` from feedback. They still share the value →
+  cluster-ID edge → connected. The anchor is gone but the feedback rows
+  anchor each other.
+- **Single feedback row** (only ERP-42 has `md5('billing:BILL1')`, BILL1
+  deleted): ERP-42 is a singleton. But a singleton is just a record that
+  exists in one system — that's the correct state, not an error. The delta
+  for ERP shows an update (the record exists). Other systems may show inserts
+  for this entity, which is correct behaviour.
+
+**Summary**: derived `_cluster_id` (without `link_key`) is stable across
+merges, splits, and anchor deletions. No orphan-detection or cleanup logic
+is needed.
+
+**Post-merge duplicates**: when two clusters merge, a target system that
+already has a row for each ends up with two rows in the same entity. The
+engine correctly reports both as updates with the same resolved values — both
+rows get synced. It won't insert a third (the entity already has rows there)
+and it won't de-duplicate them (detecting and deleting post-merge duplicates
+is outside the engine's scope). The system owner decides whether to merge or
+keep both.
 
 **Contrast with `link_key`**: when `link_key` is present, `_cluster_id` is
 the external identifier from the linking table (e.g. MDM entity ID). It's
-as stable as the external system. Feedback rows survive topology changes
-because the cluster ID is externally managed, not derived.
-
-**Practical impact**: for batch pipelines with stable link data (Splink runs
-once, results don't change between ETL cycles), this is fine. For volatile
-link data or long-running pipelines, prefer `link_key` or accept that
-orphaned feedback rows may require periodic cleanup.
+as stable as the external system — if it merges or splits entities, it updates
+the xref table and all forward-view rows reflect the change atomically. The
+derived path is equally stable for a different reason: the feedback value
+creates edges between forward-view rows, and those edges persist regardless
+of what happens to the original anchor.
+change atomically.
 
 ### Cluster IDs in practice — who provides them and who doesn't
 
