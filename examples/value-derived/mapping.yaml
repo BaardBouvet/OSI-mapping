@@ -3,6 +3,12 @@ description: >
   Grouped name fields with default_expression to derive missing components.
   HR first+last wins via last_modified; CRM full_name is derived.
 
+sources:
+  crm:
+    primary_key: contact_id
+  hr:
+    primary_key: employee_id
+
 targets:
   person:
     fields:

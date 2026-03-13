@@ -16,6 +16,12 @@
       "type": "string",
       "description": "Human-readable description of what this mapping file does."
     },
+    "sources": {
+      "type": "object",
+      "description": "Optional source metadata keyed by dataset name. Used to declare physical table names and primary keys.",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/$defs/SourceMeta" }
+    },
     "targets": {
       "type": "object",
       "description": "Target entity definitions with resolution rules. Keys are entity names used as references in mappings[].target.",
@@ -41,6 +47,26 @@
   ],
 
   "$defs": {
+
+    "SourceMeta": {
+      "type": "object",
+      "description": "Metadata for a source dataset.",
+      "required": ["primary_key"],
+      "additionalProperties": false,
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Physical table/view name. Defaults to the source key when omitted."
+        },
+        "primary_key": {
+          "description": "Column(s) that uniquely identify a source row.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          ]
+        }
+      }
+    },
 
     "Target": {
       "type": "object",

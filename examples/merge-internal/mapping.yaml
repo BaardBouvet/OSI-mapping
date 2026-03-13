@@ -3,6 +3,10 @@ description: >
   Same-source merge. Multiple CRM rows with the same email merge into one entity.
   Demonstrates intra-source deduplication with last_modified resolution.
 
+sources:
+  crm:
+    primary_key: id
+
 targets:
   company:
     fields:

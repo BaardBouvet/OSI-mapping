@@ -3,6 +3,16 @@ description: >
   Composite keys for order lines. Orders merge via external reference. Lines
   identified by (order_ref, line_number) tuple using link_group.
 
+sources:
+  crm_line_items:
+    primary_key: line_item_id
+  crm_orders:
+    primary_key: order_number
+  erp_order_lines:
+    primary_key: [order_id, line_no]
+  erp_orders:
+    primary_key: order_id
+
 targets:
   purchase_order:
     fields:

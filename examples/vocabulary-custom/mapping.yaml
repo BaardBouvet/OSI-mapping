@@ -3,6 +3,16 @@ description: >
   Common vocabulary for enum values. HR uses letter codes (A/I/L), CRM uses
   integers (1/0). Both map through a shared status vocabulary target.
 
+sources:
+  crm:
+    primary_key: contact_id
+  crm_status_codes:
+    primary_key: crm_code
+  hr_status_codes:
+    primary_key: hr_code
+  hr_system:
+    primary_key: employee_id
+
 targets:
   status:
     fields:

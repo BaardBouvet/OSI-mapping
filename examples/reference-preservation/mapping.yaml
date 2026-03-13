@@ -3,6 +3,12 @@ description: >
   When duplicate companies merge (same domain), contacts preserve their original
   company_id references during reverse transformation.
 
+sources:
+  crm_companies:
+    primary_key: company_id
+  crm_contacts:
+    primary_key: contact_id
+
 targets:
   company:
     fields:

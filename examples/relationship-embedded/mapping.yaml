@@ -3,6 +3,16 @@ description: >
   One-to-many (ERP embedded contacts) ↔ many-to-many (CRM association table).
   Uses reverse_filter to only push 'employee' associations back to ERP.
 
+sources:
+  crm_associations:
+    primary_key: [company_id, contact_id, relation_type]
+  crm_companies:
+    primary_key: company_id
+  crm_contacts:
+    primary_key: contact_id
+  erp_companies:
+    primary_key: id
+
 targets:
   company:
     fields:

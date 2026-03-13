@@ -3,6 +3,10 @@ description: >
   Grouped properties resolve as atomic units. Address fields (street, zip) share
   a group and resolve from the same winning source. Name resolves independently.
 
+sources:
+  customers:
+    primary_key: cid
+
 targets:
   customer:
     fields:

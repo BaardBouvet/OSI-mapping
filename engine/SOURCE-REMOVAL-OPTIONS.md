@@ -1,216 +1,195 @@
-# Source Removal and Cluster Split Risk
+# Source Removal and Cluster Splits
 
-## Purpose
+> What happens when a mapping is removed from a target — can this cause
+> clusters to split because a transitive link disappears?
 
-This note documents what can happen when a source system (mapping) is removed
-from a target and clusters were previously connected through that source via
-transitive identity edges.
+## The Problem
 
-Goal: keep behavior explicit, avoid accidental duplicate inserts, and preserve
-the engine's stateless architecture.
+Consider three systems connected transitively through identity fields:
 
-## Core Risk
-
-If a removed source was the bridge between two remaining sources, connected
-components can split.
-
-Example:
-
-```text
-Before: CRM -- Billing -- ERP   (one cluster)
-After removing Billing: CRM      ERP   (two clusters)
+```
+CRM ←(email)→ Billing ←(phone)→ ERP
 ```
 
-Result:
-- A single previously-resolved entity can become multiple entities.
-- Delta behavior can shift from update to insert in one or more mappings.
-- ETL may create duplicate rows if no preservation strategy is applied.
+CRM and ERP are in the same cluster only because Billing bridges them. If
+Billing is removed from the mapping:
 
-## How Splits Happen by Edge Type
+```
+CRM          ERP       ← no connection, cluster splits
+```
 
-1. Identity-field edges
-- Most vulnerable to silent transitive loss.
-- If CRM linked to Billing by one field, and Billing linked to ERP by another,
-	removing Billing removes the path.
+One entity has become two. The delta view may now produce **inserts** where
+before there were **updates**. The ETL could create duplicate records in target
+systems.
 
-2. Link edges (`links` without `link_key`)
-- Same graph behavior: removing a mapping removes edges incident to that
-	mapping's rows.
-- Remaining direct links still apply.
+## How Each Edge Type Is Affected
 
-3. Cluster-ID edges (`links` with `link_key`, `cluster_members`, `cluster_field`)
-- More resilient if remaining rows already share a persisted `_cluster_id`
-	value.
-- If cluster propagation had occurred previously, components may remain joined
-	even after bridge removal.
+### Identity-field edges — highest risk
+
+The connection was implicit and structural. Nobody explicitly declared "CRM and
+ERP are the same entity" — they were linked only through Billing's shared
+values. Removing Billing removes all its rows from the forward view, which
+removes every edge that passed through it.
+
+### Link edges (`links` with or without `link_key`)
+
+A linking table `xref(entity_id, crm_id, billing_id, erp_id)` generates edges
+CRM↔Billing and Billing↔ERP. Remove the Billing mapping and those edges
+vanish. BUT — if the xref still has `crm_id` and `erp_id` on the same row,
+the engine can still produce a CRM↔ERP edge from that row directly. So link
+tables are **more resilient** than identity-field edges because the xref table
+itself carries the transitivity.
+
+### Cluster-ID edges (`cluster_members`, `cluster_field`)
+
+If the ETL had previously written `_cluster_id` feedback for rows in this
+cluster, the feedback values create cluster-ID edges that survive independently
+of the removed source. Two Forward-view rows sharing the same `_cluster_id`
+form an edge even if the bridge source is gone.
+
+This is because feedback creates **edges**, not assignments — the `_cluster_id`
+value just needs to match at least one other forward-view row's value to
+maintain connectivity.
+
+**Feedback-driven clusters are the most resilient to source removal.**
 
 ## Architectural Constraint
 
-The engine is stateless by design. It should not introduce hidden persisted
-cluster memory as part of core identity computation.
+The engine is stateless. It must not implicitly persist cluster memory across
+configuration changes. Any continuity across source-removal events must come
+from explicit data inputs (`links`, `cluster_members`, `cluster_field`), not
+hidden engine snapshots.
 
-Implication:
-- Any continuity across source-removal events must come from explicit data
-	inputs (links, membership rows, cluster fields), not implicit engine state.
+## Options
 
-## Option Set
+### 1. The split is semantically correct — do nothing
 
-### Option 1: Accept split as canonical behavior
+If you remove a source, you're saying "this source doesn't participate anymore."
+The engine has no evidence CRM and ERP are the same entity. The split is correct
+given the remaining data.
 
-Definition:
-- Source removal changes the identity graph.
-- Connected components are recomputed from remaining evidence only.
+**Downside**: the user may not realize the transitive impact. They thought they
+were removing Billing, not splitting CRM↔ERP.
 
-Pros:
-- Simple and principled.
-- Fully aligned with stateless model.
+### 2. Validation warning at mapping parse time
 
-Cons:
-- High surprise potential for users.
-- Higher duplicate-insert risk during decommissioning.
+The engine detects when removing a source would break transitive chains and
+warns:
 
-Best fit:
-- Teams that prefer strict semantics over continuity.
+```
+WARNING: Removing mapping 'billing' from target 'customer' may split
+clusters that are currently connected only through 'billing'.
+Consider adding direct links between 'crm' and 'erp' if they should
+remain connected.
+```
 
-### Option 2: Validation warning for transitive dependency risk
+This requires comparing graph connectivity with vs. without the source, which
+the engine can already do (connected components). Purely informational — the
+engine still does what the mapping says.
 
-Definition:
-- Add validator diagnostics warning that removing mapping `X` may split
-	clusters for target `T`.
+### 3. Decommission mode (`active: false`)
 
-Pros:
-- Low implementation complexity.
-- Good safety signal with no runtime behavior change.
+Add a flag on a mapping:
 
-Cons:
-- Informational only.
-- Does not preserve clusters by itself.
+```yaml
+mappings:
+  billing:
+    source: billing
+    target: customer
+    active: false      # keeps identity edges, drops field contributions
+    fields: [...]
+```
 
-Best fit:
-- Baseline safeguard to ship regardless of chosen migration strategy.
+The source still contributes to identity resolution (its rows appear in the
+identity view, creating edges), but it doesn't contribute fields to resolution
+and doesn't appear in delta output. It's a "ghost" mapping — preserving cluster
+structure while being operationally inert.
 
-### Option 3: Decommission mode (`active: false` style)
+**Pro**: clean gradual decommissioning. **Con**: the source table must still
+exist and be queryable. You're not really "removing" it.
 
-Definition:
-- Keep mapping in identity graph, but disable business-field participation and
-	delta output for that mapping.
+### 4. Bridge-link generation (one-time migration)
 
-Pros:
-- Smooth migration path.
-- Preserves transitive cluster structure while phasing out operational writes.
+Before removing a source, run a tool that:
+1. Identifies all clusters that depend on transitivity through the source.
+2. Generates explicit pairwise links between the remaining sources.
+3. Outputs a migration artifact the user adds to their mapping.
 
-Cons:
-- Source must still be queryable.
-- Not true removal.
-- Adds model complexity (new lifecycle mode).
+```sql
+-- Generated: bridge links for removing 'billing'
+CREATE TABLE bridge_crm_erp AS
+SELECT crm._src_id AS crm_id, erp._src_id AS erp_id
+FROM _id_customer crm
+JOIN _id_customer erp
+  ON crm._entity_id_resolved = erp._entity_id_resolved
+WHERE crm._mapping = 'crm' AND erp._mapping = 'erp';
+```
 
-Best fit:
-- Planned source retirement where the old table remains temporarily available.
+Then add as a linkage-only mapping:
 
-### Option 4: Pre-removal bridge migration
+```yaml
+mappings:
+  bridge_crm_erp:
+    source: bridge_crm_erp
+    target: customer
+    links:
+      - { field: crm_id, references: crm }
+      - { field: erp_id, references: erp }
+```
 
-Definition:
-- Before removing a source, generate explicit links between remaining sources
-	that were only transitively connected through the removed source.
+**Pro**: explicit, auditable, truly stateless. **Con**: requires a manual step.
 
-Example output artifact:
-- A bridge table or view, then a linkage-only mapping with `links`.
+### 5. Existing feedback as natural safety net
 
-Pros:
-- True source removal while preserving intended connectivity.
-- Explicit and auditable.
-- Still stateless at runtime.
+If `cluster_members` or `cluster_field` feedback was already active, the
+persisted `_cluster_id` values already bridge surviving mappings. No explicit
+migration needed — the feedback tables contain the transitive closure.
 
-Cons:
-- Requires migration step and operational discipline.
-- Quality depends on bridge-generation logic.
+This only works if feedback was in place. It's a benefit to document, not a
+guarantee to rely on.
 
-Best fit:
-- Production decommissioning where continuity is required.
+### 6. Engine-managed cluster snapshots
 
-### Option 5: Rely on existing feedback persistence
+The engine could persist a `_cluster_snapshot` table and reuse it to preserve
+continuity when sources are removed.
 
-Definition:
-- If `_cluster_id` feedback already exists (`cluster_members` or
-	`cluster_field`), allow those persisted cluster-ID edges to preserve
-	continuity after source removal.
-
-Pros:
-- Uses existing mechanism.
-- No extra engine behavior needed.
-
-Cons:
-- Works only when feedback coverage is sufficient.
-- Can be partial and non-obvious.
-
-Best fit:
-- Environments with mature ETL feedback loops already in place.
-
-### Option 6: Engine-managed cluster snapshots
-
-Definition:
-- Engine stores persistent cluster membership snapshots and reuses them to
-	preserve continuity when sources are removed.
-
-Pros:
-- Most automatic continuity.
-
-Cons:
-- Breaks stateless architecture.
-- Adds substantial lifecycle and consistency complexity.
-
-Best fit:
-- Not recommended under current design principles.
+**Rejected**: breaks stateless architecture. Introduces hidden lifecycle
+complexity and governance burden.
 
 ## Recommendation
 
-Recommended baseline:
-- Option 2 (validator warnings) as default safety mechanism.
+1. **Validation warning** (Option 2) as the default safety mechanism — always
+   emit diagnostics about transitive dependency risk.
+2. **Bridge-link generation** (Option 4) as the explicit decommission workflow
+   for production systems requiring continuity.
+3. **Document the feedback safety net** (Option 5) as a resilience benefit of
+   running with `cluster_members` / `cluster_field`.
+4. **Do not implement engine snapshots** (Option 6) unless the product
+   direction intentionally moves from stateless to stateful.
 
-Recommended continuity path:
-- Option 4 (pre-removal bridge migration) as the explicit decommission workflow.
+The key principle: **the engine shouldn't silently preserve state from removed
+sources** (that violates statelessness), but it should **make it easy for the
+user to preserve it explicitly** when they choose to.
 
-Pragmatic support path:
-- Option 5 (existing feedback persistence) where already available, documented
-	as a resilience benefit but not guaranteed.
+## Decommission Workflow
 
-Avoid:
-- Option 6, unless product direction intentionally changes from stateless to
-	stateful engine operation.
+1. **Detect risk**: run validation to identify mappings that act as transitive
+   bridges for a target.
+2. **Preserve (if needed)**: generate bridge links among remaining mappings for
+   clusters that would split. Or rely on existing feedback coverage.
+3. **Stage**: run one cycle with both old source and new bridge links. Confirm
+   cluster count and insert behavior stay within expected bounds.
+4. **Remove**: apply config change only after bridge evidence is in place.
+5. **Monitor**: track insert spikes and duplicate candidates for at least one
+   cycle window post-removal.
 
-## Suggested Decommission Workflow
+## Relationship to `_cluster_id` Stability
 
-1. Detect risk
-- Run validation and identity graph diagnostics to identify mappings that act
-	as transitive bridges.
+The ORIGIN-PLAN already documents that derived `_cluster_id` (feedback values)
+creates edges, not assignments. This means:
 
-2. Choose preservation strategy
-- If continuity required, generate bridge links among remaining sources.
-- If strict semantics desired, accept split and prepare ETL for inserts.
-
-3. Stage and verify
-- Run with both old source and new bridge links in a staging cycle.
-- Confirm cluster count and delta inserts stay within expected bounds.
-
-4. Remove source mapping
-- Apply config change only after bridge evidence exists.
-
-5. Post-change monitoring
-- Track insert spikes and duplicate candidate rates for one or more cycles.
-
-## Guardrails to Add to Validator (Proposed)
-
-- Warn when removing mapping `M` increases connected-component count for target
-	`T` in a representative snapshot.
-- Warn when mappings for target `T` have insert-producing behavior but no
-	continuity mechanism (`cluster_members`, `cluster_field`, or explicit links)
-	after planned removal.
-- Info note: existing `_cluster_id` feedback can preserve continuity if shared
-	values remain present in surviving mappings.
-
-## Product Positioning Statement
-
-Removing a source can legitimately split clusters when that source carried the
-only transitive path. This is expected in a stateless graph model. If continuity
-is required, preserve it explicitly with persisted cluster evidence or bridge
-links before removal.
+- Feedback-driven clusters survive source removal naturally.
+- Feedback-driven clusters survive cluster merges and splits.
+- The only scenario where removal causes a problem is when the **only** path
+  between two sources was through identity-field edges on the removed source,
+  AND no feedback had been propagated.

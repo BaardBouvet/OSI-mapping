@@ -3,6 +3,12 @@ description: >
   Composite merge keys. Records merge if (first_name AND last_name) match OR
   email matches. Uses link_group for AND logic within the name tuple.
 
+sources:
+  crm_contacts:
+    primary_key: contact_id
+  erp_employees:
+    primary_key: employee_id
+
 targets:
   person:
     fields:

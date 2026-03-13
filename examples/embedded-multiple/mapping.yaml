@@ -3,6 +3,12 @@ description: >
   Customer with billing + shipping addresses. CRM has inline address fields,
   billing system has separate account table. Both embedded mappings merge.
 
+sources:
+  billing:
+    primary_key: account_id
+  crm:
+    primary_key: customer_id
+
 targets:
   customer:
     fields:

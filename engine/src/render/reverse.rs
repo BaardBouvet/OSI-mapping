@@ -1,7 +1,7 @@
 use anyhow::Result;
 use indexmap::IndexMap;
 
-use crate::model::{Mapping, Strategy, Target};
+use crate::model::{Mapping, Source, Strategy, Target};
 
 /// Render a reverse mapping view that projects a resolved target back to source shape.
 ///
@@ -14,18 +14,33 @@ use crate::model::{Mapping, Strategy, Target};
 /// For identity-strategy fields: uses `id.{target_field}` (source's own forward value).
 /// For other fields: uses `r.{target_field}` (resolved/merged value).
 /// For fields with `reverse_expression`: uses the expression as-is.
+///
+/// When `source_meta` is provided the original PK columns are restored from
+/// `_src_id` (e.g. `id._src_id AS contact_id`).  Otherwise `_src_id` is
+/// emitted verbatim for backward compatibility.
 pub fn render_reverse_view(
     mapping: &Mapping,
     target_name: &str,
     target: Option<&Target>,
     _all_targets: &IndexMap<String, Target>,
+    source_meta: Option<&Source>,
 ) -> Result<String> {
     let view_name = format!("_rev_{}", mapping.name);
     let id_view = format!("_id_{target_name}");
     let resolved_view = format!("_resolved_{target_name}");
 
     let mut select_exprs: Vec<String> = Vec::new();
+    // Always emit _src_id (delta view joins on it).
     select_exprs.push("id._src_id".to_string());
+    // Collect PK column names so we can skip duplicate aliases below.
+    let pk_columns: std::collections::HashSet<&str> = match source_meta {
+        Some(src) => {
+            // Also restore human-friendly PK column names alongside _src_id.
+            select_exprs.extend(src.primary_key.reverse_select_exprs("id"));
+            src.primary_key.columns().into_iter().collect()
+        }
+        None => std::collections::HashSet::new(),
+    };
 
     for fm in &mapping.fields {
         if !fm.is_reverse() {
@@ -33,7 +48,13 @@ pub fn render_reverse_view(
         }
 
         let source_name = match &fm.source {
-            Some(s) => s.clone(),
+            Some(s) => {
+                // Skip fields whose source column is already emitted as a PK column.
+                if pk_columns.contains(s.as_str()) {
+                    continue;
+                }
+                s.clone()
+            }
             None => {
                 // reverse_only with reverse_expression but no source name
                 if let Some(ref rev_expr) = fm.reverse_expression {

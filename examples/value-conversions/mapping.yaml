@@ -3,6 +3,12 @@ description: >
   Bidirectional value transformations between two systems with different data
   formats. Date format conversion, name splitting/joining, phone normalization.
 
+sources:
+  system_a:
+    primary_key: person_id
+  system_b:
+    primary_key: user_id
+
 targets:
   person:
     fields:

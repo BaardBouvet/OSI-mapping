@@ -3,6 +3,10 @@ description: >
   Embedded billing and shipping addresses without IDs routing to the same address
   target. Identity comes from the parent customer.
 
+sources:
+  customers:
+    primary_key: customer_id
+
 targets:
   customer:
     fields:

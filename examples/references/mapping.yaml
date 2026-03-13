@@ -3,6 +3,16 @@ description: >
   Cross-entity references between company and person across ERP and CRM systems.
   Each system uses its own ID namespace for reference resolution.
 
+sources:
+  crm_company:
+    primary_key: db_id
+  crm_contact:
+    primary_key: contact_id
+  erp_contact:
+    primary_key: contact_id
+  erp_customer:
+    primary_key: _id
+
 targets:
   company:
     fields:

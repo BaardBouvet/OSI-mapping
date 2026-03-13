@@ -3,6 +3,16 @@ description: >
   CRM has embedded contacts, ERP has normalized junction table. Both map to
   the same customer + contact + customer_contact targets.
 
+sources:
+  crm_customers:
+    primary_key: id
+  erp_contacts:
+    primary_key: contact_id
+  erp_customer_contacts:
+    primary_key: id
+  erp_customers:
+    primary_key: customer_id
+
 targets:
   customer:
     fields:

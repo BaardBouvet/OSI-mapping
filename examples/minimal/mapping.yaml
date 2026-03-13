@@ -4,6 +4,12 @@ description: >
   sources. Records with the same email merge. Each field uses a different resolution
   strategy to illustrate the core concepts.
 
+sources:
+  companies:
+    primary_key: id
+  customers:
+    primary_key: id
+
 targets:
   company:
     fields:

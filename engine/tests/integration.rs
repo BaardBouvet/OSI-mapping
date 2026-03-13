@@ -164,59 +164,8 @@ async fn execute_hello_world() {
     let sql = osi_engine::render::render_sql(&doc, &dag).expect("render hello-world");
 
     for test in &doc.tests {
-        // Create source tables from test input (with _row_id SERIAL PRIMARY KEY)
-        for (dataset, rows) in &test.input {
-            let mut columns: Vec<String> = Vec::new();
-            for row in rows {
-                if let Some(obj) = row.as_object() {
-                    for key in obj.keys() {
-                        if !columns.contains(key) {
-                            columns.push(key.clone());
-                        }
-                    }
-                }
-            }
-
-            let col_defs: Vec<String> = std::iter::once("_row_id SERIAL PRIMARY KEY".to_string())
-                .chain(columns.iter().map(|c| format!("{c} TEXT")))
-                .collect();
-            let create_sql = format!(
-                "CREATE TABLE {dataset} ({cols})",
-                cols = col_defs.join(", ")
-            );
-            client
-                .execute(&create_sql, &[])
-                .await
-                .unwrap_or_else(|e| panic!("Failed to create table {dataset}: {e}\nSQL: {create_sql}"));
-
-            for row in rows {
-                if let Some(obj) = row.as_object() {
-                    let vals: Vec<String> = columns
-                        .iter()
-                        .map(|c| match obj.get(c) {
-                            Some(serde_json::Value::String(s)) => {
-                                format!("'{}'", s.replace('\'', "''"))
-                            }
-                            Some(serde_json::Value::Number(n)) => format!("'{n}'"),
-                            Some(serde_json::Value::Bool(b)) => format!("'{b}'"),
-                            Some(serde_json::Value::Null) | None => "NULL".to_string(),
-                            _ => "NULL".to_string(),
-                        })
-                        .collect();
-                    let insert_sql = format!(
-                        "INSERT INTO {dataset} ({cols}) VALUES ({vals})",
-                        cols = columns.join(", "),
-                        vals = vals.join(", ")
-                    );
-                    client
-                        .execute(&insert_sql, &[])
-                        .await
-                        .unwrap_or_else(|e| {
-                            panic!("Failed to insert into {dataset}: {e}\nSQL: {insert_sql}")
-                        });
-                }
-            }
-        }
+        // Create source tables from test input
+        load_test_data(&client, &test.input).await;
 
         // Execute the rendered SQL views
         for stmt in sql.split(';') {
@@ -280,12 +229,26 @@ async fn execute_hello_world() {
             let mut actual_updates: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
 
             for rev_row in &rev_rows {
-                let src_id: i32 = rev_row.get("_src_id");
+                let src_id: String = rev_row.get("_src_id");
+
+                // Build PK-based WHERE clause for source row lookup
+                let pk_where = if let Some(src_meta) = doc.sources.get(dataset.as_str()) {
+                    let cols = src_meta.primary_key.columns();
+                    if cols.len() == 1 {
+                        format!("{} = $1", cols[0])
+                    } else {
+                        // Composite: _src_id is a JSONB text, parse it.
+                        // For test purposes, fall back to scanning.
+                        format!("_row_id::text = $1")
+                    }
+                } else {
+                    "_row_id::text = $1".to_string()
+                };
 
                 // Fetch the source row
                 let source_rows = client
                     .query(
-                        &format!("SELECT * FROM {dataset} WHERE _row_id = $1"),
+                        &format!("SELECT * FROM {dataset} WHERE {pk_where}"),
                         &[&src_id],
                     )
                     .await
@@ -391,6 +354,78 @@ fn list_testable_examples() {
 
 // ── Shared helpers ──────────────────────────────────────────────────────
 
+/// Infer Postgres column types from JSON test data values.
+///
+/// Scans all rows for each column and picks the narrowest compatible type:
+/// - All String (or null) → TEXT
+/// - All Number (or null) → NUMERIC
+/// - All Bool (or null) → BOOLEAN
+/// - Array or Object → JSONB
+/// - Mixed non-null types → TEXT (safe fallback)
+/// - All null → TEXT
+fn infer_column_types(
+    columns: &[String],
+    rows: &[serde_json::Value],
+) -> std::collections::HashMap<String, &'static str> {
+    let mut types: std::collections::HashMap<String, &'static str> = std::collections::HashMap::new();
+
+    for col in columns {
+        let mut seen: Option<&str> = None;
+        let mut mixed = false;
+
+        for row in rows {
+            let val = row.as_object().and_then(|obj| obj.get(col.as_str()));
+            let kind = match val {
+                None | Some(serde_json::Value::Null) => continue,
+                Some(serde_json::Value::String(_)) => "TEXT",
+                Some(serde_json::Value::Number(_)) => "NUMERIC",
+                Some(serde_json::Value::Bool(_)) => "BOOLEAN",
+                Some(serde_json::Value::Array(_)) | Some(serde_json::Value::Object(_)) => "JSONB",
+            };
+            match seen {
+                None => seen = Some(kind),
+                Some(prev) if prev == kind => {}
+                Some(_) => {
+                    mixed = true;
+                    break;
+                }
+            }
+        }
+
+        types.insert(col.clone(), if mixed { "TEXT" } else { seen.unwrap_or("TEXT") });
+    }
+
+    types
+}
+
+/// Format a JSON value as a SQL literal appropriate for its column type.
+fn format_sql_literal(val: Option<&serde_json::Value>, pg_type: &str) -> String {
+    match val {
+        None | Some(serde_json::Value::Null) => "NULL".to_string(),
+        Some(serde_json::Value::String(s)) => {
+            format!("'{}'", s.replace('\'', "''"))
+        }
+        Some(serde_json::Value::Number(n)) => {
+            if pg_type == "TEXT" {
+                format!("'{n}'")
+            } else {
+                n.to_string()
+            }
+        }
+        Some(serde_json::Value::Bool(b)) => {
+            if pg_type == "TEXT" {
+                format!("'{b}'")
+            } else {
+                b.to_string()
+            }
+        }
+        Some(v @ serde_json::Value::Array(_)) | Some(v @ serde_json::Value::Object(_)) => {
+            let json_str = serde_json::to_string(v).unwrap();
+            format!("'{}'::jsonb", json_str.replace('\'', "''"))
+        }
+    }
+}
+
 async fn setup_pg() -> (
     tokio_postgres::Client,
     testcontainers::ContainerAsync<Postgres>,
@@ -434,8 +469,13 @@ async fn load_test_data(
             }
         }
 
+        let col_types = infer_column_types(&columns, rows);
+
         let col_defs: Vec<String> = std::iter::once("_row_id SERIAL PRIMARY KEY".to_string())
-            .chain(columns.iter().map(|c| format!("{c} TEXT")))
+            .chain(columns.iter().map(|c| {
+                let pg_type = col_types.get(c).copied().unwrap_or("TEXT");
+                format!("{c} {pg_type}")
+            }))
             .collect();
         let create_sql = format!(
             "CREATE TABLE IF NOT EXISTS {dataset} ({cols})",
@@ -450,14 +490,9 @@ async fn load_test_data(
             if let Some(obj) = row.as_object() {
                 let vals: Vec<String> = columns
                     .iter()
-                    .map(|c| match obj.get(c) {
-                        Some(serde_json::Value::String(s)) => {
-                            format!("'{}'", s.replace('\'', "''"))
-                        }
-                        Some(serde_json::Value::Number(n)) => format!("'{n}'"),
-                        Some(serde_json::Value::Bool(b)) => format!("'{b}'"),
-                        Some(serde_json::Value::Null) | None => "NULL".to_string(),
-                        _ => "NULL".to_string(),
+                    .map(|c| {
+                        let pg_type = col_types.get(c).copied().unwrap_or("TEXT");
+                        format_sql_literal(obj.get(c), pg_type)
                     })
                     .collect();
                 let insert_sql = format!(

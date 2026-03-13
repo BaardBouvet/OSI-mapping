@@ -4,6 +4,14 @@ description: >
   the same target entities. Shows source.path for nested array extraction with
   parent_fields to import ancestor data.
 
+sources:
+  shop:
+    primary_key: order_id
+  warehouse_lines:
+    primary_key: line_id
+  warehouse_orders:
+    primary_key: id
+
 targets:
   purchase_order:
     fields:

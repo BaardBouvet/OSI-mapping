@@ -8,11 +8,127 @@ pub struct MappingDocument {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    pub sources: IndexMap<String, Source>,
+    #[serde(default)]
     pub targets: IndexMap<String, Target>,
     #[serde(default)]
     pub mappings: Vec<Mapping>,
     #[serde(default)]
     pub tests: Vec<TestCase>,
+}
+
+/// Source dataset metadata.
+#[derive(Debug, Deserialize)]
+pub struct Source {
+    #[serde(default)]
+    pub table: Option<String>,
+    pub primary_key: PrimaryKey,
+}
+
+/// Primary key representation: single column or composite key.
+///
+/// Deserialization: a bare string yields `Single`; a list yields `Composite`.
+/// A single-element list `["id"]` is normalized to `Single("id")` so that
+/// `primary_key: id` and `primary_key: [id]` produce identical SQL.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(from = "PrimaryKeyRaw")]
+pub enum PrimaryKey {
+    Single(String),
+    Composite(Vec<String>),
+}
+
+/// Raw deserialization target — normalized into `PrimaryKey` via `From`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PrimaryKeyRaw {
+    Single(String),
+    List(Vec<String>),
+}
+
+impl From<PrimaryKeyRaw> for PrimaryKey {
+    fn from(raw: PrimaryKeyRaw) -> Self {
+        match raw {
+            PrimaryKeyRaw::Single(s) => PrimaryKey::Single(s),
+            PrimaryKeyRaw::List(v) if v.len() == 1 => PrimaryKey::Single(v.into_iter().next().unwrap()),
+            PrimaryKeyRaw::List(v) => PrimaryKey::Composite(v),
+        }
+    }
+}
+
+impl PrimaryKey {
+    pub fn columns(&self) -> Vec<&str> {
+        match self {
+            PrimaryKey::Single(col) => vec![col.as_str()],
+            PrimaryKey::Composite(cols) => cols.iter().map(|c| c.as_str()).collect(),
+        }
+    }
+
+    pub fn src_id_expr(&self, row_alias: Option<&str>) -> String {
+        let col_ref = |col: &str| match row_alias {
+            Some(alias) => format!("{alias}.{col}"),
+            None => col.to_string(),
+        };
+
+        match self {
+            PrimaryKey::Single(col) => format!("{}::text", col_ref(col)),
+            PrimaryKey::Composite(cols) => {
+                // Sort alphabetically for deterministic JSONB key order
+                let mut sorted: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
+                sorted.sort();
+                let mut parts = Vec::new();
+                for col in sorted {
+                    parts.push(format!("'{}'", col.replace('\'', "''")));
+                    parts.push(col_ref(col));
+                }
+                format!("jsonb_build_object({})::text", parts.join(", "))
+            }
+        }
+    }
+
+    /// Generate SELECT expressions that restore original PK columns from `_src_id`.
+    ///
+    /// For a single PK `contact_id`:  `id._src_id AS contact_id`
+    /// For composite PK `[order_id, line_no]`:
+    ///   `(id._src_id::jsonb->>'line_no') AS line_no`,
+    ///   `(id._src_id::jsonb->>'order_id') AS order_id`
+    pub fn reverse_select_exprs(&self, src_alias: &str) -> Vec<String> {
+        match self {
+            PrimaryKey::Single(col) => {
+                vec![format!("{src_alias}._src_id AS {col}")]
+            }
+            PrimaryKey::Composite(cols) => {
+                let mut sorted: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
+                sorted.sort();
+                sorted
+                    .iter()
+                    .map(|col| format!("({src_alias}._src_id::jsonb->>'{col}') AS {col}"))
+                    .collect()
+            }
+        }
+    }
+
+    pub fn src_missing_predicate(&self, row_alias: Option<&str>) -> String {
+        let col_ref = |col: &str| match row_alias {
+            Some(alias) => format!("{alias}.{col}"),
+            None => col.to_string(),
+        };
+
+        let cols = self.columns();
+        if cols.len() == 1 {
+            format!("{} IS NULL", col_ref(cols[0]))
+        } else {
+            cols.iter()
+                .map(|c| format!("{} IS NULL", col_ref(c)))
+                .collect::<Vec<_>>()
+                .join(" AND ")
+        }
+    }
+}
+
+impl Source {
+    pub fn table_name<'a>(&'a self, key: &'a str) -> &'a str {
+        self.table.as_deref().unwrap_or(key)
+    }
 }
 
 /// A target entity definition.

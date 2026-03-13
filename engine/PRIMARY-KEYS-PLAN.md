@@ -2,8 +2,8 @@
 
 > **Abstract**: Replaces the synthetic `_row_id` with real source primary keys
 > throughout the view pipeline. Introduces a `sources:` section in the mapping
-> spec (with `primary_key`), a deterministic `_src_id` representation (TEXT for
-> single PKs, JSONB-as-text for composite), and the engine changes needed to
+> spec (with `primary_key`), typed PK handling with deterministic
+> canonicalization only where needed, and the engine changes needed to
 > thread real PKs through forward, identity, resolution, reverse, and delta views.
 
 ## Problem
@@ -27,16 +27,18 @@ source table (in the test harness) and threads it through the entire pipeline as
    delta can join on business-meaningful keys, enabling true insert/delete detection
    across systems.
 
-## Composite PK Representation
+## PK Representation
 
-`_src_id` is always `TEXT` (decided in ORIGIN-PLAN.md):
+`_src_id` is TEXT internally throughout the view pipeline. This is necessary
+because identity views, resolution GROUP BY, and recursive CTEs require a
+consistent scalar type. Primary keys retain their native types only at external
+boundaries (link tables, cluster_members tables).
 
-- **Single PK**: plain text cast — `person_id::text` → `'P4'`
-- **Composite PK**: JSONB object cast to text — `jsonb_build_object('crm_id',
-  crm_id, 'region', region)::text` → `'{"crm_id": "CRM1", "region": "EU"}'`
-
-JSONB key ordering is alphabetical in PostgreSQL — deterministic across runs.
-Since the engine generates all SQL, key order is controlled (always alphabetical).
+- **Single PK**: `column::text` in forward view → e.g. `'P4'`
+- **Composite PK**: `jsonb_build_object(...)::text` with keys sorted
+  alphabetically for determinism → e.g. `'{"crm_id":"CRM1","region":"EU"}'`
+- **Single-element list normalization**: `primary_key: [id]` and
+  `primary_key: id` produce identical SQL (both → `id::text`).
 
 ## Spec Extension
 
@@ -211,3 +213,129 @@ Approximately 3–4 datasets have composite PKs. The rest are single-column.
 - **Deterministic hashing**: `md5(_mapping || ':' || _src_id)` requires `_src_id`
   to be the real PK (not a synthetic row number) for the hash to be stable
   across table reloads.
+
+## Analysis: Source Column Types
+
+### Current State
+
+There are three separate "type" concerns:
+
+1. **Render pipeline** — completely type-agnostic. Forward/reverse/delta views
+   reference column names as bare SQL identifiers. The only cast is
+   `pk::text AS _src_id`. The engine emits column names; Postgres infers types
+   from the underlying tables and expressions. This is correct and robust.
+
+2. **Test harness** — now infers Postgres types from JSON values in `tests.input`
+   via `infer_column_types()`. This determines `CREATE TABLE` column types when
+   standing up test data against a real Postgres instance.
+
+3. **Mapping expressions** — user-written SQL snippets like
+   `TO_DATE(dob, 'DD/MM/YY')` or `REGEXP_REPLACE(phone, ...)` implicitly depend
+   on the source column having a compatible type (usually TEXT for string
+   functions, but DATE/NUMERIC for comparisons and arithmetic).
+
+### Is Test-Based Inference Fragile?
+
+The inference only affects test execution, not production rendering. Risks:
+
+| Scenario | What happens | Severity |
+|----------|-------------|----------|
+| Column is all strings → `TEXT` | Correct and harmless | None |
+| Column has `42` (JSON number) → `NUMERIC` | Correct — enables numeric ops | None |
+| Column has `true` → `BOOLEAN` | Correct — enables bool logic | None |
+| Row 1 has `"42"`, row 2 has `42` → `TEXT` fallback | Safe but loses type intent | Low |
+| All rows have `null` → `TEXT` | Fine — NULL is untyped | None |
+| Test author means DATE but writes `"2024-01-15"` → `TEXT` | Postgres string, so `TO_DATE()` still works on it | Low |
+
+The main fragility: **JSON's type system is much coarser than SQL's.** JSON has no
+date, timestamp, uuid, or decimal type — they're all strings. So the inference can
+only distinguish TEXT/NUMERIC/BOOLEAN/JSONB, not the full Postgres type zoo.
+
+### Would Explicit Source Column Types Help?
+
+Three options:
+
+#### Option A: Status quo (infer from test data)
+
+```yaml
+sources:
+  crm:
+    primary_key: contact_id
+# No column types — inferred from tests, or "whatever Postgres gets"
+```
+
+**Pros**: Simple, zero config, works for current examples.
+**Cons**: Can't express DATE, TIMESTAMP, UUID, INTEGER vs NUMERIC, etc.
+JSON numbers become NUMERIC (arbitrary precision), not INTEGER.
+
+#### Option B: Optional `columns` map on sources
+
+```yaml
+sources:
+  system_a:
+    primary_key: person_id
+    columns:
+      dob: TEXT           # input is "15/06/85", expression does TO_DATE()
+      person_id: TEXT
+      first_name: TEXT
+      phone_number: TEXT
+```
+
+**Pros**: Explicit, self-documenting, enables precise types for production DDL,
+can serve as a contract between source owner and mapping author.
+**Cons**: Verbose — every column must be declared for it to be complete. Most
+columns are TEXT anyway. The test harness can still override or supplement from
+test data.
+
+#### Option C: Optional `columns` map, only for non-TEXT columns
+
+```yaml
+sources:
+  orders:
+    primary_key: order_id
+    columns:
+      quantity: INTEGER
+      unit_price: NUMERIC(10,2)
+      is_active: BOOLEAN
+      created_at: TIMESTAMPTZ
+# Unlisted columns default to TEXT
+```
+
+**Pros**: Minimal config — you only declare deviations from TEXT. Self-documenting
+for the columns that matter. Test harness uses these declarations, falling back to
+inference for unlisted columns.
+**Cons**: Adds spec complexity. Production deployments might have their own DDL
+anyway, making this redundant outside tests.
+
+### Recommendation
+
+**Option C is the right direction** — but it solves a future problem, not a current
+one. Right now:
+
+- The render pipeline is already type-agnostic (correct).
+- Test data is overwhelmingly string-typed (all YAML values are quoted).
+- The few type-sensitive expressions (`TO_DATE`, `SPLIT_PART`, etc.) operate on
+  TEXT inputs by design.
+- The inference correctly falls back to TEXT for ambiguous cases.
+
+**Suggested sequencing:**
+
+1. **Now**: Keep inference as-is. It's safe for the existing test suite.
+2. **When needed**: Add optional `columns:` to `Source` (Option C) when a concrete
+   example requires non-TEXT source columns for correct SQL execution — e.g., if
+   someone adds a test with `quantity: 5` (JSON number) and the mapping does
+   arithmetic on it, the inference will produce NUMERIC, which is correct enough.
+3. **For production DDL generation** (if ever): `columns:` becomes essential because
+   real tables need precise types. But that's a different feature (DDL rendering),
+   not a mapping concern.
+
+### What If Tests Have Inconsistent Types?
+
+The current `infer_column_types()` handles this: if a column has mixed non-null JSON
+types across rows (e.g., `"42"` in one row, `42` in another), it falls back to TEXT.
+This is safe — Postgres will accept any literal as TEXT.
+
+The real guard rail is the validator (`validate.rs`), which could add a warning:
+"column `quantity` in dataset `orders` has mixed JSON types across test rows". This
+would catch accidental inconsistencies in test data authoring, without blocking
+execution.

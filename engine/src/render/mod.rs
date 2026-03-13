@@ -28,8 +28,9 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag) -> Result<String> {
                     .iter()
                     .find(|m| &m.name == mapping_name)
                     .expect("mapping exists in dag");
+                let source_meta = doc.sources.get(&mapping.source.dataset);
                 let target = doc.targets.get(mapping.target.name());
-                sql.push_str(&forward::render_forward_view(mapping, target)?);
+                sql.push_str(&forward::render_forward_view(mapping, source_meta, target)?);
                 sql.push('\n');
             }
             ViewNode::Identity(target_name) => {
@@ -72,11 +73,13 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag) -> Result<String> {
                     .expect("mapping exists in dag");
                 let target_name = mapping.target.name();
                 let target = doc.targets.get(target_name);
+                let source_meta = doc.sources.get(&mapping.source.dataset);
                 sql.push_str(&reverse::render_reverse_view(
                     mapping,
                     target_name,
                     target,
                     &doc.targets,
+                    source_meta,
                 )?);
                 sql.push('\n');
             }
@@ -86,7 +89,8 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag) -> Result<String> {
                     .iter()
                     .find(|m| &m.name == mapping_name)
                     .expect("mapping exists in dag");
-                sql.push_str(&delta::render_delta_view(mapping)?);
+                let source_meta = doc.sources.get(&mapping.source.dataset);
+                sql.push_str(&delta::render_delta_view(mapping, source_meta)?);
                 sql.push('\n');
             }
         }

@@ -3,6 +3,14 @@ description: >
   Country vocabulary: ERP uses full names ("Norway"), CRM uses ISO codes ("NO").
   Both resolve through a shared country vocabulary target.
 
+sources:
+  country_vocabulary:
+    primary_key: name
+  crm_system:
+    primary_key: account_id
+  erp_system:
+    primary_key: customer_id
+
 targets:
   country:
     fields:

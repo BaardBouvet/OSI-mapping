@@ -3,6 +3,10 @@ description: >
   Two levels of nested arrays: parent → children → grandchildren.
   Uses source.path and parent_fields to flatten deep nesting into three targets.
 
+sources:
+  source:
+    primary_key: id
+
 targets:
   parent:
     fields:

@@ -3,6 +3,20 @@ description: >
   Three-system merge using generated ID linkage tables. Each system contributes
   its own IDs; linkage tables connect them for transitive merge.
 
+sources:
+  system_a:
+    primary_key: id
+  system_a_linkage:
+    primary_key: system_a_id
+  system_b:
+    primary_key: id
+  system_b_linkage:
+    primary_key: system_b_id
+  system_c:
+    primary_key: id
+  system_c_linkage:
+    primary_key: system_c_id
+
 targets:
   user:
     fields:

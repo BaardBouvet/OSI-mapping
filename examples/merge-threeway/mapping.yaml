@@ -3,6 +3,14 @@ description: >
   Merging across three data sources via shared identity properties (email, phone).
   Transitive closure connects records that share any identity value.
 
+sources:
+  source_a:
+    primary_key: id
+  source_b:
+    primary_key: id
+  source_c:
+    primary_key: id
+
 targets:
   company:
     fields:

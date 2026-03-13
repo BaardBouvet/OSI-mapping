@@ -94,6 +94,9 @@ pub fn validate(doc: &MappingDocument) -> ValidationResult {
     // Pass 6: Test dataset consistency
     pass_test_datasets(doc, &mut result);
 
+    // Pass 6b: Source primary-key consistency
+    pass_source_primary_keys(doc, &mut result);
+
     // Pass 7: SQL expression syntax
     pass_sql_syntax(doc, &mut result);
 
@@ -477,6 +480,125 @@ fn pass_test_datasets(doc: &MappingDocument, result: &mut ValidationResult) {
                         sorted_sources.join(", ")
                     ),
                 );
+            }
+        }
+    }
+}
+
+fn pass_source_primary_keys(doc: &MappingDocument, result: &mut ValidationResult) {
+    if doc.sources.is_empty() {
+        return;
+    }
+
+    let mapping_sources: HashSet<&str> = doc
+        .mappings
+        .iter()
+        .map(|m| m.source.dataset.as_str())
+        .collect();
+
+    for (source_name, source_def) in &doc.sources {
+        if !mapping_sources.contains(source_name.as_str()) {
+            result.warning(
+                "PrimaryKey",
+                format!(
+                    "source '{source_name}' is declared in sources but not used by any mapping"
+                ),
+            );
+        }
+
+        let pk_cols = source_def.primary_key.columns();
+        if pk_cols.is_empty() {
+            result.error(
+                "PrimaryKey",
+                format!("source '{source_name}': primary_key must include at least one column"),
+            );
+            continue;
+        }
+
+        // Warning: mapping PK columns as non-identity target fields is unusual.
+        // Skip this warning if the target field has identity strategy — PKs
+        // mapped to identity fields is the normal single-natural-key pattern.
+        for m in doc
+            .mappings
+            .iter()
+            .filter(|m| m.source.dataset == *source_name)
+        {
+            let target_def = doc.targets.get(m.target.name());
+            for fm in &m.fields {
+                if let Some(src_col) = fm.source.as_deref() {
+                    if pk_cols.contains(&src_col) {
+                        let is_identity = fm.target.as_deref().and_then(|tgt| {
+                            target_def.and_then(|t| t.fields.get(tgt))
+                        }).map(|f| f.strategy() == Strategy::Identity).unwrap_or(false);
+                        if !is_identity {
+                            result.warning(
+                                "PrimaryKey",
+                                format!(
+                                    "mapping '{}': source PK column '{}' is mapped to a non-identity target field",
+                                    m.name, src_col
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (i, tc) in doc.tests.iter().enumerate() {
+        let default_desc = format!("test[{i}]");
+        let desc = tc.description.as_deref().unwrap_or(&default_desc);
+
+        for (dataset, rows) in &tc.input {
+            let Some(source_def) = doc.sources.get(dataset) else {
+                continue;
+            };
+
+            let pk_cols = source_def.primary_key.columns();
+            let mut seen: HashSet<String> = HashSet::new();
+
+            for (row_idx, row) in rows.iter().enumerate() {
+                let Some(obj) = row.as_object() else {
+                    result.error(
+                        "PrimaryKey",
+                        format!(
+                            "'{desc}' dataset '{dataset}' row[{row_idx}] must be an object"
+                        ),
+                    );
+                    continue;
+                };
+
+                let mut pk_parts = Vec::new();
+                let mut missing_cols = Vec::new();
+
+                for col in &pk_cols {
+                    match obj.get(*col) {
+                        Some(val) if !val.is_null() => pk_parts.push(val.to_string()),
+                        _ => missing_cols.push((*col).to_string()),
+                    }
+                }
+
+                if !missing_cols.is_empty() {
+                    result.error(
+                        "PrimaryKey",
+                        format!(
+                            "'{desc}' dataset '{dataset}' row[{row_idx}] missing PK column(s): {}",
+                            missing_cols.join(", ")
+                        ),
+                    );
+                    continue;
+                }
+
+                let key = pk_parts.join("|");
+                if !seen.insert(key.clone()) {
+                    result.error(
+                        "PrimaryKey",
+                        format!(
+                            "'{desc}' dataset '{dataset}' has duplicate primary key value '{}'",
+                            key
+                        ),
+                    );
+                }
             }
         }
     }

@@ -3,6 +3,12 @@ description: >
   Multi-valued type tracking. People exist in HR (employees) and CRM (customers).
   Type field aggregates all roles. Reverse filters restrict output per system.
 
+sources:
+  crm:
+    primary_key: contact_id
+  hr:
+    primary_key: employee_id
+
 targets:
   person:
     fields:

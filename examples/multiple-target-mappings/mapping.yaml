@@ -3,6 +3,10 @@ description: >
   Single source with billing and shipping address fields, each mapping to a
   separate embedded address target. Shows multiple embedded mappings from one dataset.
 
+sources:
+  customers:
+    primary_key: customer_id
+
 targets:
   customer:
     fields:

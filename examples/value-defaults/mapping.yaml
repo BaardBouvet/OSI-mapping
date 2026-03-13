@@ -3,6 +3,10 @@ description: >
   Default values for missing fields and constant injection via expressions.
   Shows default (literal), default_expression, and reverse_expression constants.
 
+sources:
+  crm_account:
+    primary_key: id
+
 targets:
   customer:
     fields:

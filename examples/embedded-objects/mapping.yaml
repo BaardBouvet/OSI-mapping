@@ -3,6 +3,14 @@ description: >
   CRM has inline address fields. ERP has separate company and address tables.
   Both map to same company + address targets.
 
+sources:
+  crm_customers:
+    primary_key: customer_id
+  erp_addresses:
+    primary_key: address_id
+  erp_companies:
+    primary_key: company_id
+
 targets:
   company:
     fields:

@@ -3,6 +3,10 @@ description: >
   Single source with two mappings to the same target using different filters and
   priorities. Primary contacts get priority 1, secondary get priority 2.
 
+sources:
+  contacts:
+    primary_key: id
+
 targets:
   person:
     fields:

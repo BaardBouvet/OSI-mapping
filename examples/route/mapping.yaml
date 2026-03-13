@@ -3,6 +3,10 @@ description: >
   Routes records from a single contacts table into separate person and company
   target entities based on the contact_type discriminator field.
 
+sources:
+  contacts:
+    primary_key: id
+
 targets:
   person:
     fields:

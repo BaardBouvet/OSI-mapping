@@ -473,26 +473,27 @@ cluster IDs themselves (e.g., a materialised view that pivots pairs into
 columnar xref) and use `link_key`. But this is no longer required — the
 engine handles the common case directly.
 
-### Composite PK representation (Option A: text, JSONB-as-text for composite)
+### Primary key representation
 
-`_src_id` is always `TEXT`:
+With one table per link mapping, source PKs no longer need a universal string
+representation for cross-mapping compatibility.
 
-- **Single PK**: plain text cast — `person_id::text` → `'P4'`
-- **Composite PK**: JSONB object cast to text — `jsonb_build_object('crm_id',
-  crm_id, 'region', region)::text` → `'{"crm_id": "CRM1", "region": "EU"}'`
+**Internal pipeline (`_src_id`)**: the engine still canonicalizes PKs to TEXT
+for `_src_id` — the internal scalar that flows through forward → identity →
+resolution → reverse → delta. This is necessary because `GROUP BY`, recursive
+CTEs, and joins across views need a single consistent type.
 
-JSONB key ordering is alphabetical in PostgreSQL — deterministic across runs.
-Since the engine generates all SQL, key order is controlled (always alphabetical).
+- **Single PK**: `column::text` → `'P4'`
+- **Composite PK**: `jsonb_build_object('col_a', col_a, 'col_b', col_b)::text`
+  with keys sorted alphabetically for determinism.
 
-Entity ID hashing: `md5(_mapping || ':' || _src_id)` works for both.
+**External joins (links, cluster_members)**: with per-mapping tables the join
+columns can keep native PK types. The `links` mechanism joins a link field
+directly against the source's declared PK columns — no text coercion required
+at that boundary.
 
-Link join for composite PKs:
-```sql
-ON crm._src_id = jsonb_build_object('crm_id', md.crm_identifier, 'region', md.crm_region)::text
-```
-
-Why not always JSONB? 80%+ of examples are single-PK. `_src_id = '1'` is clean;
-`_src_id = '{"person_id": "P4"}'` is not.
+**Summary**: `_src_id` is TEXT internally. PK types are preserved at mapping-
+specific table boundaries.
 
 ## Two Insert Scenarios
 

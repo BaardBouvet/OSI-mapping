@@ -3,6 +3,14 @@ description: >
   Routing source (contacts split by contact_type) merged with dedicated sources
   (crm_persons, erp_companies). Shows filters + cross-source merging.
 
+sources:
+  contacts:
+    primary_key: id
+  crm_persons:
+    primary_key: id
+  erp_companies:
+    primary_key: id
+
 targets:
   person:
     fields:

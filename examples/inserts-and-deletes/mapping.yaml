@@ -3,6 +3,12 @@ description: >
   Insert/delete propagation. crm_b only accepts people with a customer_id.
   reverse_required filters out rows where customer_id is null.
 
+sources:
+  crm_a:
+    primary_key: person_id
+  crm_b:
+    primary_key: person_id
+
 targets:
   person:
     fields:

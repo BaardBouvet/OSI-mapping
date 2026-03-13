@@ -3,6 +3,18 @@ description: >
   Maps many-to-many (CRM associations) to one-to-many (ERP foreign keys) through
   shared target entities. Uses embedded mappings and link_groups for association merging.
 
+sources:
+  crm_associations:
+    primary_key: [company_id, contact_id, relation_type]
+  crm_companies:
+    primary_key: company_id
+  crm_contacts:
+    primary_key: contact_id
+  erp_companies:
+    primary_key: id
+  erp_contacts:
+    primary_key: id
+
 targets:
   company:
     fields:

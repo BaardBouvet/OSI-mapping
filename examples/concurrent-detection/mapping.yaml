@@ -3,6 +3,12 @@ description: >
   Concurrent modification detection using include_base. Base columns in reverse
   output allow target systems to detect when data changed since last sync.
 
+sources:
+  companies:
+    primary_key: id
+  customers:
+    primary_key: id
+
 targets:
   company:
     fields:

@@ -3,6 +3,14 @@ description: >
   Partial contributions. Invoices contribute is_customer=true flag via embedded
   mapping. ERP only receives organizations flagged as customers.
 
+sources:
+  crm_contacts:
+    primary_key: contact_id
+  crm_invoices:
+    primary_key: invoice_id
+  erp_customers:
+    primary_key: customer_id
+
 targets:
   organization:
     fields:

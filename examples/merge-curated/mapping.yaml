@@ -3,6 +3,14 @@ description: >
   Human-curated merge decisions via a linking table. The merges source connects
   CRM and billing records by providing both IDs in the same row.
 
+sources:
+  billing:
+    primary_key: billing_id
+  crm:
+    primary_key: crm_id
+  merges:
+    primary_key: merge_id
+
 targets:
   customer:
     fields:

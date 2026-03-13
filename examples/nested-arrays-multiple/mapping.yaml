@@ -3,6 +3,10 @@ description: >
   Multiple independent nested branches from one root. Organization has departments
   (with employees) and projects (with tasks) — five targets total.
 
+sources:
+  source:
+    primary_key: id
+
 targets:
   organization:
     fields:

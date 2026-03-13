@@ -4,6 +4,14 @@ description: >
   customer target with embedded address fields. Shows embedded is about source
   structure, not target structure.
 
+sources:
+  crm_customers:
+    primary_key: customer_id
+  erp_addresses:
+    primary_key: address_id
+  erp_companies:
+    primary_key: company_id
+
 targets:
   customer:
     fields:

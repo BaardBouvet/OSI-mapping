@@ -3,6 +3,12 @@ description: >
   Basic embedded pattern. CRM has inline address fields, billing system has
   separate account/address mapping. Both map to same target entities.
 
+sources:
+  billing:
+    primary_key: account_id
+  crm:
+    primary_key: customer_id
+
 targets:
   customer:
     fields:

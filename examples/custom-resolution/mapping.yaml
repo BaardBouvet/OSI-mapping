@@ -3,6 +3,10 @@ description: >
   Custom SQL aggregation for conflict resolution. Products with the same SKU
   merge: max price, average rating, concatenated categories.
 
+sources:
+  catalog:
+    primary_key: id
+
 targets:
   product:
     fields:

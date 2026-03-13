@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::model::{Mapping, Target};
+use crate::model::{Mapping, Source, Target};
 
 /// Render a forward mapping view.
 ///
@@ -9,15 +9,25 @@ use crate::model::{Mapping, Target};
 ///   `_src_id, _mapping, _priority, _last_modified,
 ///    {field}, _priority_{field}, _ts_{field}, ...`
 ///
-/// Source tables are expected to have a `_row_id SERIAL PRIMARY KEY`.
-pub fn render_forward_view(mapping: &Mapping, target: Option<&Target>) -> Result<String> {
+/// When `source_meta` is provided, uses declared primary key for `_src_id`.
+/// Falls back to `_row_id` when no source metadata is present.
+pub fn render_forward_view(
+    mapping: &Mapping,
+    source_meta: Option<&Source>,
+    target: Option<&Target>,
+) -> Result<String> {
     let view_name = format!("_fwd_{}", mapping.name);
-    let source = &mapping.source.dataset;
+    let source = source_meta
+        .map(|s| s.table_name(&mapping.source.dataset).to_string())
+        .unwrap_or_else(|| mapping.source.dataset.clone());
 
     let mut cols: Vec<String> = Vec::new();
 
-    // Source row identifier — source tables must have _row_id SERIAL
-    cols.push("_row_id AS _src_id".into());
+    // Source row identifier — declared PK when present, _row_id fallback otherwise.
+    let src_id_expr = source_meta
+        .map(|s| s.primary_key.src_id_expr(None))
+        .unwrap_or_else(|| "_row_id::text".to_string());
+    cols.push(format!("{src_id_expr} AS _src_id"));
     cols.push(format!("'{}'::text AS _mapping", mapping.name));
 
     // Mapping-level priority (always present, NULL when unset)
@@ -159,12 +169,16 @@ mod tests {
         let sqls: Vec<String> = doc
             .mappings
             .iter()
-            .map(|m| render_forward_view(m, Some(target)).unwrap())
+            .map(|m| render_forward_view(m, None, Some(target)).unwrap())
             .collect();
 
         // Both views must have identical column sets
         for sql in &sqls {
-            assert!(sql.contains("_row_id AS _src_id"), "missing _src_id");
+            assert!(
+                sql.contains("_row_id::text AS _src_id")
+                    || sql.contains("_row_id AS _src_id"),
+                "missing _src_id"
+            );
             assert!(sql.contains("AS _mapping"), "missing _mapping");
             assert!(sql.contains("AS _priority\n") || sql.contains("AS _priority,"), "missing _priority");
             assert!(sql.contains("AS _last_modified"), "missing _last_modified");
