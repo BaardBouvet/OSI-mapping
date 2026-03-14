@@ -37,6 +37,7 @@ mappings:
   - name: erp_orders
     source: { dataset: erp_orders }
     target: purchase_order
+    sync: true
     fields:
       - source: external_ref
         target: external_order_ref
@@ -51,6 +52,7 @@ mappings:
   - name: erp_order_lines
     source: { dataset: erp_order_lines }
     target: order_line
+    sync: true
     fields:
       - source: order_id
         target: order_ref
@@ -66,6 +68,7 @@ mappings:
   - name: crm_orders
     source: { dataset: crm_orders }
     target: purchase_order
+    sync: true
     fields:
       - source: external_ref
         target: external_order_ref
@@ -80,6 +83,7 @@ mappings:
   - name: crm_line_items
     source: { dataset: crm_line_items }
     target: order_line
+    sync: true
     last_modified: modified_at
     fields:
       - source: order_ref
@@ -96,14 +100,14 @@ tests:
   - description: "Composite key — orders merge via external ref, lines preserved independently"
     input:
       erp_orders:
-        - { order_id: "ORD-100", external_ref: "PO-2024-001", order_date: "2024-01-15", customer_name: "Acme Corp", status: "pending" }
+        - { order_id: "ORD-100", external_ref: "PO-2024-001", order_date: "2024-01-15", customer_name: "Acme Corp", status: "pending", updated_at: "2024-01-15T10:00:00Z" }
       erp_order_lines:
         - { order_id: "ORD-100", line_no: 1, product_name: "Widget A", quantity: 5, unit_price: 10.50 }
         - { order_id: "ORD-100", line_no: 2, product_name: "Widget B", quantity: 3, unit_price: 15.75 }
       crm_orders:
-        - { order_number: "CRM-500", external_ref: "PO-2024-001", order_date: "2024-01-20", customer_name: "Acme Corp", status: "shipped" }
+        - { order_number: "CRM-500", external_ref: "PO-2024-001", order_date: "2024-01-20", customer_name: "Acme Corp", status: "shipped", last_updated: "2024-01-20T10:00:00Z" }
       crm_line_items:
-        - { line_item_id: "LI-1001", order_ref: "CRM-500", product_name: "Gadget X", quantity: 10, price: 25.00 }
+        - { line_item_id: "LI-1001", order_ref: "CRM-500", product_name: "Gadget X", quantity: 10, price: 25.00, modified_at: "2024-01-18T10:00:00Z" }
     expected:
       erp_orders:
         updates:

@@ -32,6 +32,7 @@ mappings:
   - name: crm_company
     source: { dataset: crm_company }
     target: company
+    sync: true
     fields:
       - source: homepage
         target: domain
@@ -42,6 +43,7 @@ mappings:
   - name: crm_contact
     source: { dataset: crm_contact }
     target: person
+    sync: true
     fields:
       - source: primary_email
         target: email
@@ -52,6 +54,7 @@ mappings:
   - name: erp_customer
     source: { dataset: erp_customer }
     target: company
+    sync: true
     fields:
       - source: website
         target: domain
@@ -62,6 +65,7 @@ mappings:
   - name: erp_contact
     source: { dataset: erp_contact }
     target: person
+    sync: true
     fields:
       - source: email
         target: email
@@ -101,13 +105,9 @@ tests:
         - { db_id: 200, homepage: "anotherwrong.com", assigned_account_manager: null, manager_last_updated: null }
       crm_contact:
         - { contact_id: "CC1", company_id: 100, primary_email: "john@wrongcompany.com" }
-    expected:
-      erp_contact:
-        updates:
-          - { contact_id: "EC1", customer_ref: "100", email: "jane@acme.com" }
-      crm_contact:
-        updates:
-          - { contact_id: "CC1", company_id: 100, primary_email: "john@wrongcompany.com" }
+    # No expected changes — namespace isolation means ID '100' in each system
+    # stays in its own namespace. All rows are classified as noop.
+    expected: {}
 
   - description: "account_manager reference with last_modified — newer CRM wins"
     input:
@@ -124,7 +124,6 @@ tests:
     expected:
       erp_customer:
         updates:
-          - { _id: "CUST-100", website: "acme.com", assigned_account_manager: "EC2" }
-      crm_company:
-        updates:
-          - { db_id: 300, homepage: "acme.com", assigned_account_manager: "CC2" }
+          - { _id: "CUST-100", website: "acme.com", assigned_account_manager: "EC2", manager_last_updated: "2024-06-05T10:00:00Z" }
+      # crm_company is noop — it already had assigned_account_manager=CC2 and
+      # the resolved value is CC2 in CRM namespace (same person: bob@acme.com).

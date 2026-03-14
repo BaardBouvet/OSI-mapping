@@ -121,6 +121,7 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
                     target,
                     &doc.targets,
                     source_meta,
+                    &doc.mappings,
                 )?);
                 sql.push('\n');
             }

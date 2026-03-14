@@ -95,7 +95,8 @@ pub fn render_forward_body(
                 } else {
                     "NULL".into()
                 };
-                cols.push(format!("{expr} AS {fname}"));
+                // Cast to text for UNION ALL compatibility across mappings.
+                cols.push(format!("{expr}::text AS {fname}"));
 
                 // Per-field priority (always present, NULL when unset)
                 cols.push(match fm.priority {
@@ -137,7 +138,7 @@ pub fn render_forward_body(
                 } else {
                     continue;
                 };
-                cols.push(format!("{expr} AS {tgt}"));
+                cols.push(format!("{expr}::text AS {tgt}"));
             }
         }
     }

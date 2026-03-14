@@ -136,32 +136,25 @@ fn render_all_examples() {
 /// Requires Docker for testcontainers.
 #[tokio::test]
 async fn execute_hello_world() {
-    // Start a Postgres container
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("Failed to start Postgres container");
+    let (client, _container) = setup_pg().await;
+    execute_example(&client, "hello-world").await;
+}
 
-    let host_port = container.get_host_port_ipv4(5432).await.unwrap();
-    let conn_str = format!(
-        "host=127.0.0.1 port={host_port} user=postgres password=postgres dbname=postgres"
-    );
+/// End-to-end test for cross-entity reference resolution.
+#[tokio::test]
+async fn execute_references() {
+    let (client, _container) = setup_pg().await;
+    execute_example(&client, "references").await;
+}
 
-    let (client, connection) = tokio_postgres::connect(&conn_str, NoTls)
-        .await
-        .expect("Failed to connect to Postgres");
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {e}");
-        }
-    });
-
-    // Parse and render hello-world example
-    let mapping_path = examples_dir().join("hello-world/mapping.yaml");
-    let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse hello-world");
+async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
+    // Parse and render example
+    let mapping_path = examples_dir().join(format!("{example_name}/mapping.yaml"));
+    let doc = osi_engine::parser::parse_file(&mapping_path)
+        .unwrap_or_else(|e| panic!("parse {example_name}: {e}"));
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render hello-world");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false)
+        .unwrap_or_else(|e| panic!("render {example_name}: {e}"));
 
     for (test_idx, test) in doc.tests.iter().enumerate() {
         let desc = test
@@ -926,6 +919,72 @@ async fn dump_inserts_and_deletes_intermediates() {
         "_resolved_person",
         "person",
         "_rev_crm_a", "_delta_crm_a", "_rev_crm_b", "_delta_crm_b",
+    ];
+
+    for view in &views {
+        eprintln!("\n=== {view} ===");
+        dump_view(&client, view).await;
+    }
+}
+
+/// Dump all intermediate views for composite-keys.
+#[tokio::test]
+async fn dump_composite_keys_intermediates() {
+    let (client, _container) = setup_pg().await;
+
+    let mapping_path = examples_dir().join("composite-keys/mapping.yaml");
+    let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
+    let dag = osi_engine::dag::build_dag(&doc);
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
+
+    eprintln!("\n=== Generated SQL ===\n{sql}");
+
+    load_test_data(&client, &doc.tests[0].input).await;
+    ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
+    execute_views(&client, &sql).await;
+
+    let views = [
+        "_fwd_erp_orders", "_fwd_erp_order_lines", "_fwd_crm_orders", "_fwd_crm_line_items",
+        "_id_purchase_order", "_id_order_line",
+        "_resolved_purchase_order", "_resolved_order_line",
+        "purchase_order", "order_line",
+        "_rev_erp_orders", "_delta_erp_orders",
+        "_rev_erp_order_lines", "_delta_erp_order_lines",
+        "_rev_crm_orders", "_delta_crm_orders",
+        "_rev_crm_line_items", "_delta_crm_line_items",
+    ];
+
+    for view in &views {
+        eprintln!("\n=== {view} ===");
+        dump_view(&client, view).await;
+    }
+}
+
+/// Dump all intermediate views for references.
+#[tokio::test]
+async fn dump_references_intermediates() {
+    let (client, _container) = setup_pg().await;
+
+    let mapping_path = examples_dir().join("references/mapping.yaml");
+    let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
+    let dag = osi_engine::dag::build_dag(&doc);
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
+
+    eprintln!("\n=== Generated SQL ===\n{sql}");
+
+    load_test_data(&client, &doc.tests[0].input).await;
+    ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
+    execute_views(&client, &sql).await;
+
+    let views = [
+        "_fwd_crm_company", "_fwd_crm_contact", "_fwd_erp_customer", "_fwd_erp_contact",
+        "_id_company", "_id_person",
+        "_resolved_company", "_resolved_person",
+        "company", "person",
+        "_rev_crm_company", "_delta_crm_company",
+        "_rev_crm_contact", "_delta_crm_contact",
+        "_rev_erp_customer", "_delta_erp_customer",
+        "_rev_erp_contact", "_delta_erp_contact",
     ];
 
     for view in &views {

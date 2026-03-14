@@ -22,6 +22,7 @@ pub fn render_reverse_view(
     target: Option<&Target>,
     _all_targets: &IndexMap<String, Target>,
     source_meta: Option<&Source>,
+    all_mappings: &[Mapping],
 ) -> Result<String> {
     let view_name = format!("_rev_{}", mapping.name);
     let id_view = format!("_id_{target_name}");
@@ -64,12 +65,41 @@ pub fn render_reverse_view(
         let expr = if let Some(ref rev_expr) = fm.reverse_expression {
             rev_expr.clone()
         } else if let Some(tgt) = target_field {
-            let strategy = target.and_then(|t| t.fields.get(tgt)).map(|f| f.strategy());
-            match strategy {
-                Some(Strategy::Identity) | Some(Strategy::Collect) => {
-                    format!("COALESCE(id.{tgt}, r.{tgt})")
+            let field_def = target.and_then(|t| t.fields.get(tgt));
+            let strategy = field_def.map(|f| f.strategy());
+            let ref_target = field_def.and_then(|f| f.references());
+
+            if let Some(ref_target_name) = ref_target {
+                // Reference field: translate entity reference back to source namespace.
+                // Find the "same-system" mapping to the referenced target using
+                // longest common prefix on source dataset names.
+                let same_sys = find_same_system_mapping(
+                    &mapping.source.dataset,
+                    ref_target_name,
+                    all_mappings,
+                );
+                if let Some(ref_mapping_name) = same_sys {
+                    let id_ref = format!("_id_{ref_target_name}");
+                    format!(
+                        "(SELECT ref_local._src_id \
+                         FROM {id_ref} ref_match \
+                         JOIN {id_ref} ref_local \
+                           ON ref_local._entity_id_resolved = ref_match._entity_id_resolved \
+                         WHERE ref_match._src_id = r.{tgt}::text \
+                         AND ref_local._mapping = '{ref_mapping_name}' \
+                         LIMIT 1)"
+                    )
+                } else {
+                    // No same-system mapping found — pass through raw value.
+                    format!("r.{tgt}")
                 }
-                _ => format!("r.{tgt}"),
+            } else {
+                match strategy {
+                    Some(Strategy::Identity) | Some(Strategy::Collect) => {
+                        format!("COALESCE(id.{tgt}, r.{tgt})")
+                    }
+                    _ => format!("r.{tgt}"),
+                }
             }
         } else {
             continue;
@@ -96,4 +126,37 @@ pub fn render_reverse_view(
     );
 
     Ok(sql)
+}
+
+/// Find the mapping to `ref_target` whose source dataset name shares the
+/// longest common prefix with `current_dataset`.  Returns the mapping name
+/// or None if no mappings to the referenced target exist.
+fn find_same_system_mapping(
+    current_dataset: &str,
+    ref_target: &str,
+    all_mappings: &[Mapping],
+) -> Option<String> {
+    let candidates: Vec<&Mapping> = all_mappings
+        .iter()
+        .filter(|m| m.target.name() == ref_target && !m.is_linkage_only())
+        .collect();
+
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 {
+        return Some(candidates[0].name.clone());
+    }
+
+    // Pick the candidate with the longest common prefix on source.dataset.
+    candidates
+        .iter()
+        .max_by_key(|m| {
+            common_prefix_len(current_dataset, &m.source.dataset)
+        })
+        .map(|m| m.name.clone())
+}
+
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    a.chars().zip(b.chars()).take_while(|(ca, cb)| ca == cb).count()
 }

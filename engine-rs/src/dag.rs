@@ -40,7 +40,7 @@ impl ViewNode {
             ViewNode::Forward(name) => format!("FWD: {name}"),
             ViewNode::Identity(name) => format!("ID: {name}"),
             ViewNode::Resolved(name) => format!("RES: {name}"),
-            ViewNode::Analytics(name) => name.clone(),
+            ViewNode::Analytics(name) => format!("ANA: {name}"),
             ViewNode::Reverse(name) => format!("REV: {name}"),
             ViewNode::Delta(name) => format!("DELTA: {name}"),
         }
