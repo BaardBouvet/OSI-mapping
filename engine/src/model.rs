@@ -263,6 +263,11 @@ pub struct Mapping {
     /// Column in the source table holding a pre-populated cluster ID.
     #[serde(default)]
     pub cluster_field: Option<String>,
+    /// When true, generate a sync view that projects the resolved golden
+    /// record back to source shape and classifies rows as
+    /// insert/update/delete/noop.  Default: false.
+    #[serde(default)]
+    pub sync: bool,
 }
 
 impl Mapping {

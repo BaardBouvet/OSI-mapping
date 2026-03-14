@@ -7,18 +7,16 @@ use crate::model::MappingDocument;
 pub enum ViewNode {
     /// External source table (not created by engine).
     Source(String),
-    /// Forward mapping view.
+    /// Forward mapping view. Named `_fwd_{mapping}`.
     Forward(String),
     /// Identity/transitive closure view for a target.
     Identity(String),
     /// Resolved golden record view for a target.
     Resolved(String),
-    /// Reverse mapping view.
-    Reverse(String),
-    /// Delta/changeset view.
-    Delta(String),
-    /// Analytics view — clean golden record for BI consumers.
+    /// Analytics view — clean golden record for BI consumers. Named `{target}`.
     Analytics(String),
+    /// Sync view — reverse + delta combined. Named `sync_{mapping}`. Opt-in.
+    Sync(String),
 }
 
 impl ViewNode {
@@ -28,9 +26,8 @@ impl ViewNode {
             ViewNode::Forward(name) => format!("_fwd_{name}"),
             ViewNode::Identity(name) => format!("_id_{name}"),
             ViewNode::Resolved(name) => format!("_resolved_{name}"),
-            ViewNode::Reverse(name) => format!("_rev_{name}"),
-            ViewNode::Delta(name) => format!("_delta_{name}"),
-            ViewNode::Analytics(name) => format!("_analytics_{name}"),
+            ViewNode::Analytics(name) => name.clone(),
+            ViewNode::Sync(name) => format!("sync_{name}"),
         }
     }
 
@@ -40,9 +37,8 @@ impl ViewNode {
             ViewNode::Forward(name) => format!("FWD: {name}"),
             ViewNode::Identity(name) => format!("ID: {name}"),
             ViewNode::Resolved(name) => format!("RES: {name}"),
-            ViewNode::Reverse(name) => format!("REV: {name}"),
-            ViewNode::Delta(name) => format!("DELTA: {name}"),
-            ViewNode::Analytics(name) => format!("ANALYTICS: {name}"),
+            ViewNode::Analytics(name) => name.clone(),
+            ViewNode::Sync(name) => format!("SYNC: {name}"),
         }
     }
 }
@@ -81,8 +77,7 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
         edges.entry(ViewNode::Source(src.clone())).or_default();
 
         if mapping.is_linkage_only() {
-            // Linkage-only mapping: only contributes identity edges, no forward/reverse/delta.
-            // Identity view depends on the linking source table directly.
+            // Linkage-only mapping: only contributes identity edges.
             let id = ViewNode::Identity(tname.to_string());
             edges
                 .entry(id)
@@ -91,26 +86,28 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             continue;
         }
 
-        // Forward view depends on source
+        // Forward view depends on source table.
         let fwd = ViewNode::Forward(mname.clone());
-        edges
-            .entry(fwd.clone())
-            .or_default()
-            .push(ViewNode::Source(src.clone()));
+        edges.entry(fwd.clone()).or_default();
+        if !edges[&fwd].contains(&ViewNode::Source(src.clone())) {
+            edges.get_mut(&fwd).unwrap().push(ViewNode::Source(src.clone()));
+        }
 
-        // Forward view also depends on cluster_members table when declared.
+        // Identity view depends on forward views.
+        let id = ViewNode::Identity(tname.to_string());
+        edges.entry(id.clone()).or_default();
+        if !edges[&id].contains(&fwd) {
+            edges.get_mut(&id).unwrap().push(fwd.clone());
+        }
+
+        // cluster_members source tables feed the forward view
         if let Some(ref cm) = mapping.cluster_members {
             let cm_table = cm.table_name(mname);
             edges.entry(ViewNode::Source(cm_table.clone())).or_default();
-            edges
-                .get_mut(&fwd)
-                .unwrap()
-                .push(ViewNode::Source(cm_table));
+            if !edges[&fwd].contains(&ViewNode::Source(cm_table.clone())) {
+                edges.get_mut(&fwd).unwrap().push(ViewNode::Source(cm_table));
+            }
         }
-
-        // Identity view depends on all forward views for this target
-        let id = ViewNode::Identity(tname.to_string());
-        edges.entry(id.clone()).or_default().push(fwd.clone());
 
         // Resolved view depends on identity view
         let res = ViewNode::Resolved(tname.to_string());
@@ -122,31 +119,26 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
         }
 
         // Analytics view depends on resolved view (one per target).
+        // Consumer-facing: named just `{target}`.
         let analytics = ViewNode::Analytics(tname.to_string());
         edges.entry(analytics.clone()).or_default();
         if !edges[&analytics].contains(&res) {
             edges.get_mut(&analytics).unwrap().push(res.clone());
         }
 
-        // Reverse view depends on resolved view
-        let rev = ViewNode::Reverse(mname.clone());
-        edges
-            .entry(rev.clone())
-            .or_default()
-            .push(ViewNode::Resolved(tname.to_string()));
-
-        // Delta view depends only on reverse view (no diamond dependency).
-        // Delete detection uses reverse_required / reverse_filter conditions
-        // evaluated directly on the reverse view output.
-        let delta = ViewNode::Delta(mname.clone());
-        edges.entry(delta.clone()).or_default().push(rev.clone());
+        // Sync view (opt-in): depends on resolved view.
+        // The sync view also LEFT JOINs identity (tracked as join_edge).
+        if mapping.sync {
+            let sync = ViewNode::Sync(mname.clone());
+            edges.entry(sync.clone()).or_default()
+                .push(ViewNode::Resolved(tname.to_string()));
+        }
     }
 
     // Add cross-target dependencies via references.
     for (tname, target) in &doc.targets {
         for (_fname, field) in &target.fields {
             if let Some(ref_target) = field.references() {
-                // Resolution of this target depends on the referenced target's identity view
                 let res = ViewNode::Resolved(tname.clone());
                 let ref_id = ViewNode::Identity(ref_target.to_string());
                 if let Some(deps) = edges.get_mut(&res) {
@@ -159,17 +151,16 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
     }
 
     // Collect SQL JOIN edges that are not primary dependencies.
-    // The reverse view LEFT JOINs the identity view to get per-source-row
-    // values, but this is transitively satisfied (id → resolved → reverse).
+    // Sync views LEFT JOIN identity (diamond for IVM, safe for ordered refresh).
     let mut join_edges: Vec<(ViewNode, ViewNode)> = Vec::new();
     for mapping in &doc.mappings {
-        if mapping.is_linkage_only() {
+        if mapping.is_linkage_only() || !mapping.sync {
             continue;
         }
         let tname = mapping.target.name();
         join_edges.push((
             ViewNode::Identity(tname.to_string()),
-            ViewNode::Reverse(mapping.name.clone()),
+            ViewNode::Sync(mapping.name.clone()),
         ));
     }
 
@@ -243,7 +234,9 @@ pub fn to_dot(dag: &ViewDag) -> String {
         let label = node.label();
         let shape = match node {
             ViewNode::Source(_) => "cylinder",
+            ViewNode::Forward(_) => "box",
             ViewNode::Analytics(_) => "note",
+            ViewNode::Sync(_) => "component",
             _ => "box",
         };
         out.push_str(&format!("  \"{name}\" [label=\"{label}\" shape={shape}];\n"));
@@ -285,7 +278,7 @@ mod tests {
         let doc = parser::parse_str(&yaml).unwrap();
         let dag = build_dag(&doc);
 
-        // Should have forward, identity, resolved, reverse, delta for each mapping
+        // Should have source, forward, identity, resolved, analytics, sync nodes
         assert!(dag.order.len() > 0);
 
         // Source tables
@@ -299,5 +292,12 @@ mod tests {
         // Identity and resolved for contact
         assert!(dag.edges.contains_key(&ViewNode::Identity("contact".into())));
         assert!(dag.edges.contains_key(&ViewNode::Resolved("contact".into())));
+
+        // Analytics view for contact
+        assert!(dag.edges.contains_key(&ViewNode::Analytics("contact".into())));
+
+        // Sync views (hello-world has sync: true)
+        assert!(dag.edges.contains_key(&ViewNode::Sync("crm".into())));
+        assert!(dag.edges.contains_key(&ViewNode::Sync("erp".into())));
     }
 }

@@ -209,6 +209,11 @@
         "cluster_field": {
           "type": "string",
           "description": "Column in the source table holding a pre-populated cluster ID from ETL feedback."
+        },
+        "sync": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, produces a reverse mapping that projects the resolved golden record back to source shape and classifies rows as insert/update/delete/noop."
         }
       },
       "anyOf": [

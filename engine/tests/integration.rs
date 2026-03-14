@@ -226,12 +226,12 @@ async fn execute_hello_world() {
                 cols
             };
 
-            // Query delta view for update rows
-            let delta_view = format!("_delta_{}", mapping.name);
+            // Query sync view for update rows
+            let sync_view = format!("sync_{}", mapping.name);
             let rev_rows = client
-                .query(&format!("SELECT * FROM {delta_view} WHERE _action = 'update'"), &[])
+                .query(&format!("SELECT * FROM {sync_view} WHERE _action = 'update'"), &[])
                 .await
-                .unwrap_or_else(|e| panic!("Failed to query {delta_view}: {e:?}"));
+                .unwrap_or_else(|e| panic!("Failed to query {sync_view}: {e:?}"));
 
             // Build actual output by joining reverse view with source table
             let mut actual_updates: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
@@ -372,11 +372,11 @@ async fn execute_hello_world() {
             if !expected_inserts.is_empty() {
                 let insert_rows = client
                     .query(
-                        &format!("SELECT * FROM {delta_view} WHERE _action = 'insert'"),
+                        &format!("SELECT * FROM {sync_view} WHERE _action = 'insert'"),
                         &[],
                     )
                     .await
-                    .unwrap_or_else(|e| panic!("query {delta_view} inserts: {e}"));
+                    .unwrap_or_else(|e| panic!("query {sync_view} inserts: {e}"));
 
                 // Build actual insert maps: _cluster_id + business fields
                 let target_name = mapping.target.name();
@@ -488,11 +488,11 @@ async fn execute_hello_world() {
             if !expected_deletes.is_empty() {
                 let delete_rows = client
                     .query(
-                        &format!("SELECT * FROM {delta_view} WHERE _action = 'delete'"),
+                        &format!("SELECT * FROM {sync_view} WHERE _action = 'delete'"),
                         &[],
                     )
                     .await
-                    .unwrap_or_else(|e| panic!("query {delta_view} deletes: {e}"));
+                    .unwrap_or_else(|e| panic!("query {sync_view} deletes: {e}"));
 
                 // Use PK column names from source metadata
                 let pk_cols: Vec<String> = doc
@@ -895,8 +895,8 @@ async fn dump_hello_world_intermediates() {
         "_fwd_crm", "_fwd_erp",
         "_id_contact",
         "_resolved_contact",
-        "_rev_crm", "_rev_erp",
-        "_delta_crm", "_delta_erp",
+        "contact",
+        "sync_crm", "sync_erp",
     ];
 
     for view in &views {
@@ -924,8 +924,8 @@ async fn dump_inserts_and_deletes_intermediates() {
         "_fwd_crm_a", "_fwd_crm_b",
         "_id_person",
         "_resolved_person",
-        "_rev_crm_a", "_rev_crm_b",
-        "_delta_crm_a", "_delta_crm_b",
+        "person",
+        "sync_crm_a", "sync_crm_b",
     ];
 
     for view in &views {

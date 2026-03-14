@@ -2,21 +2,30 @@ use anyhow::Result;
 
 use crate::model::{Mapping, Source, Target};
 
-/// Render a forward mapping view.
+/// Render a CREATE VIEW statement for a forward mapping.
 ///
-/// Emits a normalized column set so all forward views for the same target
-/// are UNION ALL compatible:
-///   `_src_id, _mapping, _priority, _last_modified,
-///    {field}, _priority_{field}, _ts_{field}, ...`
-///
-/// When `source_meta` is provided, uses declared primary key for `_src_id`.
-/// Falls back to `_row_id` when no source metadata is present.
+/// Produces: `CREATE OR REPLACE VIEW _fwd_{mapping_name} AS SELECT ...`
 pub fn render_forward_view(
     mapping: &Mapping,
     source_meta: Option<&Source>,
     target: Option<&Target>,
 ) -> Result<String> {
     let view_name = format!("_fwd_{}", mapping.name);
+    let body = render_forward_body(mapping, source_meta, target)?;
+    Ok(format!(
+        "-- Forward: {name}\nCREATE OR REPLACE VIEW {view_name} AS\n{body};\n",
+        name = mapping.name,
+    ))
+}
+
+/// Render the forward SELECT body for a mapping (no CREATE VIEW wrapper).
+///
+/// Returns the SQL fragment: `SELECT ... FROM source [LEFT JOIN ...] [WHERE ...]`
+pub fn render_forward_body(
+    mapping: &Mapping,
+    source_meta: Option<&Source>,
+    target: Option<&Target>,
+) -> Result<String> {
     let source = source_meta
         .map(|s| s.table_name(&mapping.source.dataset).to_string())
         .unwrap_or_else(|| mapping.source.dataset.clone());
@@ -156,10 +165,7 @@ pub fn render_forward_view(
     }
 
     let mut sql = format!(
-        "-- Forward: {name} ({source} → {target})\n\
-         CREATE OR REPLACE VIEW {view_name} AS\nSELECT\n  {columns}\nFROM {source}",
-        name = mapping.name,
-        target = mapping.target.name(),
+        "SELECT\n  {columns}\nFROM {source}",
         columns = cols.join(",\n  "),
     );
 
@@ -196,7 +202,6 @@ pub fn render_forward_view(
         sql.push_str(&format!("\nWHERE {filter}"));
     }
 
-    sql.push_str(";\n");
     Ok(sql)
 }
 
@@ -220,7 +225,7 @@ mod tests {
         let sqls: Vec<String> = doc
             .mappings
             .iter()
-            .map(|m| render_forward_view(m, None, Some(target)).unwrap())
+            .map(|m| render_forward_body(m, None, Some(target)).unwrap())
             .collect();
 
         // Both views must have identical column sets

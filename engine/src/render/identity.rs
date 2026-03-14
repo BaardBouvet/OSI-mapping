@@ -8,11 +8,12 @@ use crate::model::{Mapping, Source, Strategy, Target};
 ///
 /// Produces: `CREATE OR REPLACE VIEW _id_{target_name} AS ...`
 ///
+/// `forward_names` lists the mapping names that have forward views (`_fwd_{name}`).
+/// The identity view references these views via `SELECT * FROM _fwd_{name}`.
+///
 /// The identity view:
-/// 1. UNIONs ALL forward views for a target (`SELECT *` — all columns are
-///    normalized by the forward renderer).
-/// 2. Assigns deterministic `_entity_id` via `md5(_mapping || ':' || _src_id)`
-///    (or the raw concatenation when `opts.hash_entity_id` is false).
+/// 1. UNIONs ALL forward views into `_id_base`.
+/// 2. Assigns deterministic `_entity_id` via `md5(_mapping || ':' || _src_id)`.
 /// 3. Finds connected components via recursive CTE using identity field matching
 ///    and (optionally) pairwise link edges from `links` declarations.
 /// 4. Outputs all forward columns plus `_entity_id` and `_entity_id_resolved`.
@@ -22,6 +23,7 @@ pub fn render_identity_view(
     mappings: &[&Mapping],
     all_mappings: &[Mapping],
     sources: &IndexMap<String, Source>,
+    forward_names: &[String],  // mapping names with forward views
 ) -> Result<String> {
     let view_name = format!("_id_{target_name}");
 
@@ -57,10 +59,8 @@ pub fn render_identity_view(
 
     if ungrouped_identity.is_empty() && link_groups.is_empty() && !has_link_mappings && !has_cluster_id {
         // No identity fields, no links, no cluster_id — pass-through with a row-level entity_id
-        let union_parts: Vec<String> = mappings
-            .iter()
-            .filter(|m| m.has_fields())
-            .map(|m| format!("SELECT * FROM _fwd_{}", m.name))
+        let union_parts: Vec<String> = forward_names.iter()
+            .map(|name| format!("SELECT * FROM _fwd_{name}"))
             .collect();
         let base = union_parts.join("\n  UNION ALL\n  ");
         let eid = "md5(_mapping || ':' || _src_id)";
@@ -70,24 +70,21 @@ pub fn render_identity_view(
              WITH _id_base AS (\n  {base}\n)\n\
              SELECT *, {eid} AS _entity_id,\n       \
              {eid} AS _entity_id_resolved\n\
-             FROM _id_base;\n"
+             FROM _id_base;\n",
         ));
     }
 
     let mut sql = format!("-- Identity: {target_name}\n");
 
-    // UNION ALL of all forward views (SELECT * — columns are normalized).
-    // Linkage-only mappings don't produce forward views.
-    let union_parts: Vec<String> = mappings
-        .iter()
-        .filter(|m| m.has_fields())
-        .map(|m| format!("SELECT * FROM _fwd_{}", m.name))
+    // Reference forward views and UNION ALL into _id_base.
+    let union_parts: Vec<String> = forward_names.iter()
+        .map(|name| format!("SELECT * FROM _fwd_{name}"))
         .collect();
     let base_query = union_parts.join("\n  UNION ALL\n  ");
 
     sql.push_str(&format!(
         "CREATE OR REPLACE VIEW {view_name} AS\n\
-         WITH RECURSIVE _id_base AS (\n  {base_query}\n),\n"
+         WITH RECURSIVE _id_base AS (\n  {base_query}\n),\n",
     ));
 
     // Deterministic row identity — md5 of (mapping, src_id)

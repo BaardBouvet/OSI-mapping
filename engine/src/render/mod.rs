@@ -1,8 +1,7 @@
 pub mod forward;
 pub mod identity;
 pub mod resolution;
-pub mod reverse;
-pub mod delta;
+pub mod sync;
 pub mod analytics;
 
 use anyhow::Result;
@@ -39,11 +38,12 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
                     .iter()
                     .find(|m| &m.name == mapping_name)
                     .expect("mapping exists in dag");
-                if annotate {
-                    sql.push_str(&annotate_forward(mapping));
-                }
+                let target_name = mapping.target.name();
+                let target = doc.targets.get(target_name);
                 let source_meta = doc.sources.get(&mapping.source.dataset);
-                let target = doc.targets.get(mapping.target.name());
+                if annotate {
+                    sql.push_str(&annotate_forward(mapping, target));
+                }
                 sql.push_str(&forward::render_forward_view(mapping, source_meta, target)?);
                 sql.push('\n');
             }
@@ -57,12 +57,19 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
                 if annotate {
                     sql.push_str(&annotate_identity(&mappings, target));
                 }
+                // Collect forward view names (mapping names that have fields).
+                let fwd_names: Vec<String> = mappings
+                    .iter()
+                    .filter(|m| m.has_fields())
+                    .map(|m| m.name.clone())
+                    .collect();
                 sql.push_str(&identity::render_identity_view(
                     target_name,
                     target,
                     &mappings,
                     &doc.mappings,
                     &doc.sources,
+                    &fwd_names,
                 )?);
                 sql.push('\n');
             }
@@ -87,46 +94,33 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
                 )?);
                 sql.push('\n');
             }
-            ViewNode::Reverse(mapping_name) => {
-                let mapping = doc
-                    .mappings
-                    .iter()
-                    .find(|m| &m.name == mapping_name)
-                    .expect("mapping exists in dag");
-                if annotate {
-                    sql.push_str(&annotate_reverse(mapping));
-                }
-                let target_name = mapping.target.name();
-                let target = doc.targets.get(target_name);
-                let source_meta = doc.sources.get(&mapping.source.dataset);
-                sql.push_str(&reverse::render_reverse_view(
-                    mapping,
-                    target_name,
-                    target,
-                    &doc.targets,
-                    source_meta,
-                )?);
-                sql.push('\n');
-            }
-            ViewNode::Delta(mapping_name) => {
-                let mapping = doc
-                    .mappings
-                    .iter()
-                    .find(|m| &m.name == mapping_name)
-                    .expect("mapping exists in dag");
-                if annotate {
-                    sql.push_str(&annotate_delta(mapping));
-                }
-                let source_meta = doc.sources.get(&mapping.source.dataset);
-                sql.push_str(&delta::render_delta_view(mapping, source_meta)?);
-                sql.push('\n');
-            }
             ViewNode::Analytics(target_name) => {
                 let target = doc
                     .targets
                     .get(target_name)
                     .expect("target exists in dag");
                 sql.push_str(&analytics::render_analytics_view(target_name, target)?);
+                sql.push('\n');
+            }
+            ViewNode::Sync(mapping_name) => {
+                let mapping = doc
+                    .mappings
+                    .iter()
+                    .find(|m| &m.name == mapping_name)
+                    .expect("mapping exists in dag");
+                if annotate {
+                    sql.push_str(&annotate_sync(mapping));
+                }
+                let target_name = mapping.target.name();
+                let target = doc.targets.get(target_name);
+                let source_meta = doc.sources.get(&mapping.source.dataset);
+                sql.push_str(&sync::render_sync_view(
+                    mapping,
+                    target_name,
+                    target,
+                    &doc.targets,
+                    source_meta,
+                )?);
                 sql.push('\n');
             }
         }
@@ -262,45 +256,21 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
 
 use crate::model::{Mapping, Target, Strategy};
 
-fn annotate_forward(m: &Mapping) -> String {
+fn annotate_forward(m: &Mapping, _target: Option<&Target>) -> String {
     let mut lines = Vec::new();
-    lines.push(format!("-- [annotate] _fwd_{}: source={}, target={}", m.name, m.source.dataset, m.target.name()));
-    if let Some(p) = m.priority {
-        lines.push(format!("--   priority: {p}"));
-    }
-    if let Some(ref ts) = m.last_modified {
-        if let Some(f) = ts.field_name() {
-            lines.push(format!("--   last_modified: {f}"));
-        } else if let Some(e) = ts.expression() {
-            lines.push(format!("--   last_modified: ({e})"));
-        }
-    }
-    if let Some(ref f) = m.filter {
-        lines.push(format!("--   filter: {f}"));
-    }
-    if let Some(ref cf) = m.cluster_field {
-        lines.push(format!("--   cluster_field: {cf}"));
-    }
-    if let Some(ref cm) = m.cluster_members {
-        lines.push(format!("--   cluster_members: table={}", cm.table_name(&m.name)));
-    }
+    lines.push(format!("-- [annotate] _fwd_{}: {} -> {}", m.name, m.source.dataset, m.target.name()));
     for fm in &m.fields {
         if !fm.is_forward() { continue; }
         let tgt = fm.target.as_deref().unwrap_or("?");
         let src = fm.source.as_deref().unwrap_or("-");
-        let mut parts = vec![format!("{src} -> {tgt}")];
         if let Some(ref e) = fm.expression {
-            parts.push(format!("expression: {e}"));
+            lines.push(format!("--   {src} -> {tgt} (expression: {e})"));
+        } else {
+            lines.push(format!("--   {src} -> {tgt}"));
         }
-        if let Some(p) = fm.priority {
-            parts.push(format!("priority: {p}"));
-        }
-        if let Some(ref ts) = fm.last_modified {
-            if let Some(f) = ts.field_name() {
-                parts.push(format!("last_modified: {f}"));
-            }
-        }
-        lines.push(format!("--   field: {}", parts.join(", ")));
+    }
+    if let Some(ref f) = m.filter {
+        lines.push(format!("--   filter: {f}"));
     }
     lines.push(String::new());
     lines.join("\n")
@@ -320,6 +290,22 @@ fn annotate_identity(mappings: &[&Mapping], target: Option<&Target>) -> String {
     let names: Vec<&str> = mappings.iter().map(|m| m.name.as_str()).collect();
     lines.push(format!("--   sources: {}", names.join(", ")));
     for m in mappings {
+        for fm in &m.fields {
+            if !fm.is_forward() { continue; }
+            let tgt = fm.target.as_deref().unwrap_or("?");
+            let src = fm.source.as_deref().unwrap_or("-");
+            let mut parts = vec![format!("{}: {} -> {}", m.name, src, tgt)];
+            if let Some(ref e) = fm.expression {
+                parts.push(format!("expression: {e}"));
+            }
+            if let Some(p) = fm.priority {
+                parts.push(format!("priority: {p}"));
+            }
+            lines.push(format!("--   field: {}", parts.join(", ")));
+        }
+        if let Some(ref f) = m.filter {
+            lines.push(format!("--   filter ({}): {f}", m.name));
+        }
         if !m.links.is_empty() {
             for link in &m.links {
                 lines.push(format!("--   link: {:?} -> references {}", link.field, link.references));
@@ -353,9 +339,9 @@ fn annotate_resolution(target: &Target) -> String {
     lines.join("\n")
 }
 
-fn annotate_reverse(m: &Mapping) -> String {
+fn annotate_sync(m: &Mapping) -> String {
     let mut lines = Vec::new();
-    lines.push(format!("-- [annotate] _rev_{}: reverse projection", m.name));
+    lines.push(format!("-- [annotate] sync_{}: reverse + change detection", m.name));
     for fm in &m.fields {
         if fm.is_reverse() {
             let tgt = fm.target.as_deref().unwrap_or("?");
@@ -373,29 +359,12 @@ fn annotate_reverse(m: &Mapping) -> String {
     if let Some(ref rf) = m.reverse_filter {
         lines.push(format!("--   reverse_filter: {rf}"));
     }
-    lines.push(String::new());
-    lines.join("\n")
-}
-
-fn annotate_delta(m: &Mapping) -> String {
-    let mut lines = Vec::new();
-    lines.push(format!("-- [annotate] _delta_{}: change detection", m.name));
     let noop_fields: Vec<&str> = m.fields.iter()
         .filter(|fm| fm.is_forward() && fm.source.is_some())
         .filter_map(|fm| fm.source.as_deref())
         .collect();
     if !noop_fields.is_empty() {
         lines.push(format!("--   noop compares: {}", noop_fields.join(", ")));
-    }
-    let req: Vec<&str> = m.fields.iter()
-        .filter(|fm| fm.reverse_required)
-        .filter_map(|fm| fm.target.as_deref())
-        .collect();
-    if !req.is_empty() {
-        lines.push(format!("--   reverse_required: {}", req.join(", ")));
-    }
-    if let Some(ref rf) = m.reverse_filter {
-        lines.push(format!("--   reverse_filter: {rf}"));
     }
     lines.push(String::new());
     lines.join("\n")

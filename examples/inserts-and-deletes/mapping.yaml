@@ -19,6 +19,7 @@ mappings:
   - name: crm_a
     source: { dataset: crm_a }
     target: person
+    sync: true
     fields:
       - source: email
         target: email
@@ -28,6 +29,7 @@ mappings:
   - name: crm_b
     source: { dataset: crm_b }
     target: person
+    sync: true
     fields:
       - source: email
         target: email

@@ -19,6 +19,7 @@ mappings:
     source: { dataset: crm }
     target: contact
     cluster_members: true
+    sync: true
     reverse_filter: "name NOT LIKE 'X%'"
     fields:
       - source: email
@@ -31,6 +32,7 @@ mappings:
     source: { dataset: erp }
     target: contact
     cluster_members: true
+    sync: true
     fields:
       - source: email
         target: email
