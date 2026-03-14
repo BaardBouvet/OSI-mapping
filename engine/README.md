@@ -81,6 +81,7 @@ src/
 
 ## See Also
 
+- [docs/](docs/) — Design decisions, view pipeline documentation
 - [PLAN.md](PLAN.md) — Detailed implementation plan and design decisions
 - [Mapping schema](../spec/mapping-schema.json) — The spec this engine implements
 - [Examples](../examples/) — Test cases driving the implementation

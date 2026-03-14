@@ -28,7 +28,7 @@ Projects source columns into target field names. One view per mapping.
 - Applies field expressions (e.g., `UPPER(name)`)
 - Applies forward filters (`WHERE type = 'customer'`)
 - Emits metadata: `_src_id`, `_mapping`, `_cluster_id`, per-field `_priority_*` and `_ts_*`
-- Builds `_base` JSONB from raw source columns (when `include_base` is enabled on any mapping for this target)
+- Builds `_base` JSONB from raw source columns (always present)
 - Handles nested arrays via `LATERAL jsonb_array_elements`
 - Joins `_cluster_members` table when declared
 
@@ -81,7 +81,15 @@ Single SELECT from the reverse view with a CASE expression:
 - `_src_id IS NULL` → **insert** (entity exists but not in this source)
 - `reverse_required` field is NULL → **delete** (resolved value can't satisfy this source)
 - `reverse_filter` fails → **delete**
-- All fields match `_base` → **noop** (when `detect_noop` is enabled; no write needed)
+- All fields match `_base` → **noop** (no write needed; compares using `IS NOT DISTINCT FROM`)
 - Otherwise → **update**
 
-Includes: `_action`, `_src_id`, `_cluster_id`, PK columns, business fields, `_base` (when enabled).
+Includes: `_action`, `_src_id`, `_cluster_id`, PK columns, business fields, `_base`.
+
+## Analytics (`_analytics_{target}`)
+
+Exposes the resolved golden record in a clean, consumer-friendly shape. One view per target.
+
+- `SELECT _entity_id AS _cluster_id, {business fields} FROM _resolved_{target}`
+- No metadata columns — purely business data for BI and analytics
+- Single upstream dependency (resolved) — no diamonds, trivially cheap

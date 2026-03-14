@@ -17,6 +17,8 @@ pub enum ViewNode {
     Reverse(String),
     /// Delta/changeset view.
     Delta(String),
+    /// Analytics view — clean golden record for BI consumers.
+    Analytics(String),
 }
 
 impl ViewNode {
@@ -28,6 +30,7 @@ impl ViewNode {
             ViewNode::Resolved(name) => format!("_resolved_{name}"),
             ViewNode::Reverse(name) => format!("_rev_{name}"),
             ViewNode::Delta(name) => format!("_delta_{name}"),
+            ViewNode::Analytics(name) => format!("_analytics_{name}"),
         }
     }
 
@@ -39,6 +42,7 @@ impl ViewNode {
             ViewNode::Resolved(name) => format!("RES: {name}"),
             ViewNode::Reverse(name) => format!("REV: {name}"),
             ViewNode::Delta(name) => format!("DELTA: {name}"),
+            ViewNode::Analytics(name) => format!("ANALYTICS: {name}"),
         }
     }
 }
@@ -50,6 +54,9 @@ pub struct ViewDag {
     pub edges: BTreeMap<ViewNode, Vec<ViewNode>>,
     /// Topologically sorted creation order (dependencies first).
     pub order: Vec<ViewNode>,
+    /// SQL JOIN edges that are not in the primary dependency chain.
+    /// These are transitively satisfied but represent real SQL JOINs.
+    pub join_edges: Vec<(ViewNode, ViewNode)>,
 }
 
 /// Build the view dependency graph from a mapping document.
@@ -114,6 +121,13 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             edges.get_mut(&res).unwrap().push(id.clone());
         }
 
+        // Analytics view depends on resolved view (one per target).
+        let analytics = ViewNode::Analytics(tname.to_string());
+        edges.entry(analytics.clone()).or_default();
+        if !edges[&analytics].contains(&res) {
+            edges.get_mut(&analytics).unwrap().push(res.clone());
+        }
+
         // Reverse view depends on resolved view
         let rev = ViewNode::Reverse(mname.clone());
         edges
@@ -144,10 +158,25 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
         }
     }
 
+    // Collect SQL JOIN edges that are not primary dependencies.
+    // The reverse view LEFT JOINs the identity view to get per-source-row
+    // values, but this is transitively satisfied (id → resolved → reverse).
+    let mut join_edges: Vec<(ViewNode, ViewNode)> = Vec::new();
+    for mapping in &doc.mappings {
+        if mapping.is_linkage_only() {
+            continue;
+        }
+        let tname = mapping.target.name();
+        join_edges.push((
+            ViewNode::Identity(tname.to_string()),
+            ViewNode::Reverse(mapping.name.clone()),
+        ));
+    }
+
     // Topological sort (Kahn's algorithm).
     let order = topological_sort(&edges);
 
-    ViewDag { edges, order }
+    ViewDag { edges, order, join_edges }
 }
 
 fn topological_sort(edges: &BTreeMap<ViewNode, Vec<ViewNode>>) -> Vec<ViewNode> {
@@ -214,6 +243,7 @@ pub fn to_dot(dag: &ViewDag) -> String {
         let label = node.label();
         let shape = match node {
             ViewNode::Source(_) => "cylinder",
+            ViewNode::Analytics(_) => "note",
             _ => "box",
         };
         out.push_str(&format!("  \"{name}\" [label=\"{label}\" shape={shape}];\n"));
@@ -223,6 +253,15 @@ pub fn to_dot(dag: &ViewDag) -> String {
                 dep.view_name()
             ));
         }
+    }
+
+    // Render SQL JOIN edges as dotted lines.
+    for (from, to) in &dag.join_edges {
+        out.push_str(&format!(
+            "  \"{}\" -> \"{}\" [style=dotted label=\"JOIN\"];\n",
+            from.view_name(),
+            to.view_name()
+        ));
     }
 
     out.push_str("}\n");

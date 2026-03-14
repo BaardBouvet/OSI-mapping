@@ -101,7 +101,7 @@ fn render_all_examples() {
         match osi_engine::parser::parse_file(&mapping_path) {
             Ok(doc) => {
                 let dag = osi_engine::dag::build_dag(&doc);
-                match osi_engine::render::render_sql(&doc, &dag, false) {
+                match osi_engine::render::render_sql(&doc, &dag, false, false) {
                     Ok(sql) => {
                         assert!(!sql.is_empty(), "{name}: empty SQL output");
                         assert!(
@@ -161,7 +161,7 @@ async fn execute_hello_world() {
     let mapping_path = examples_dir().join("hello-world/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse hello-world");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false).expect("render hello-world");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render hello-world");
 
     for (test_idx, test) in doc.tests.iter().enumerate() {
         let desc = test
@@ -885,7 +885,7 @@ async fn dump_hello_world_intermediates() {
     let mapping_path = examples_dir().join("hello-world/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
 
     load_test_data(&client, &doc.tests[0].input).await;
     ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
@@ -913,7 +913,7 @@ async fn dump_inserts_and_deletes_intermediates() {
     let mapping_path = examples_dir().join("inserts-and-deletes/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
 
     eprintln!("\n=== Generated SQL ===\n{sql}");
 

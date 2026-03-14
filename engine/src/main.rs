@@ -21,6 +21,9 @@ enum Command {
         /// Emit CREATE TABLE statements for input tables
         #[arg(long)]
         create_tables: bool,
+        /// Add comments showing where user-defined expressions, filters, and strategies appear
+        #[arg(long)]
+        annotate: bool,
     },
     /// Validate mapping file(s)
     Validate {
@@ -47,10 +50,10 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Render { mapping, output, create_tables } => {
+        Command::Render { mapping, output, create_tables, annotate } => {
             let doc = osi_engine::parser::parse_file(&mapping)?;
             let dag = osi_engine::dag::build_dag(&doc);
-            let sql = osi_engine::render::render_sql(&doc, &dag, create_tables)?;
+            let sql = osi_engine::render::render_sql(&doc, &dag, create_tables, annotate)?;
 
             match output {
                 Some(path) => std::fs::write(&path, &sql)?,
