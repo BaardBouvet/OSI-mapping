@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::model::Mapping;
+use crate::model::{Mapping, Source};
 
 /// Render a delta view that classifies rows as updated, inserted, or deleted.
 ///
@@ -13,16 +13,23 @@ use crate::model::Mapping;
 /// - `_src_id IS NOT NULL` and reverse filters fail → `delete`
 ///
 /// This avoids a diamond dependency: delta depends only on reverse.
-pub fn render_delta_view(mapping: &Mapping) -> Result<String> {
+pub fn render_delta_view(mapping: &Mapping, source_meta: Option<&Source>) -> Result<String> {
     let view_name = format!("_delta_{}", mapping.name);
     let rev_view = format!("_rev_{}", mapping.name);
 
-    // Collect reverse-mapped source field names
+    // Collect PK column names for dedup
+    let pk_columns: std::collections::HashSet<&str> = source_meta
+        .map(|src| src.primary_key.columns().into_iter().collect())
+        .unwrap_or_default();
+
+    // Collect reverse-mapped source field names (excluding PK columns,
+    // which are emitted separately via reverse_select_exprs)
     let reverse_fields: Vec<String> = mapping
         .fields
         .iter()
         .filter(|fm| fm.is_reverse() && fm.source.is_some())
         .filter_map(|fm| fm.source.clone())
+        .filter(|src| !pk_columns.contains(src.as_str()))
         .collect();
 
     // Build the delete predicate from reverse_required + reverse_filter.
@@ -41,26 +48,56 @@ pub fn render_delta_view(mapping: &Mapping) -> Result<String> {
         delete_conditions.push(format!("NOT ({rf})"));
     }
 
-    // Build the CASE expression for _action
-    let action_expr = if delete_conditions.is_empty() {
-        "CASE WHEN _src_id IS NULL THEN 'insert' ELSE 'update' END".to_string()
-    } else {
+    // Build the CASE expression for _action.
+    // Noop detection compares each reverse-mapped field against _base.
+    let noop_parts: Vec<String> = mapping
+        .fields
+        .iter()
+        .filter(|fm| fm.is_reverse() && fm.source.is_some())
+        .filter_map(|fm| {
+            let src = fm.source.as_ref()?;
+            if pk_columns.contains(src.as_str()) {
+                return None;
+            }
+            Some(format!("_base->>'{src}' IS NOT DISTINCT FROM {src}::text"))
+        })
+        .collect();
+
+    let mut branches = vec!["WHEN _src_id IS NULL THEN 'insert'".to_string()];
+
+    if !delete_conditions.is_empty() {
         let delete_pred = delete_conditions.join(" OR ");
-        format!(
-            "CASE\n    \
-             WHEN _src_id IS NULL THEN 'insert'\n    \
-             WHEN {delete_pred} THEN 'delete'\n    \
-             ELSE 'update'\n  \
-           END"
-        )
-    };
+        branches.push(format!("WHEN {delete_pred} THEN 'delete'"));
+    }
+
+    if !noop_parts.is_empty() {
+        branches.push(format!("WHEN {} THEN 'noop'", noop_parts.join(" AND ")));
+    }
+
+    branches.push("ELSE 'update'".to_string());
+
+    let action_expr = format!(
+        "CASE\n    {}\n  END",
+        branches.join("\n    ")
+    );
 
     let mut cols: Vec<String> = vec![
         format!("{action_expr} AS _action"),
         "_src_id".to_string(),
         "_cluster_id".to_string(),
     ];
+
+    // Include PK columns (human-readable aliases from reverse view)
+    if let Some(src) = source_meta {
+        for col in src.primary_key.columns() {
+            cols.push(col.to_string());
+        }
+    }
+
     cols.extend(reverse_fields.iter().cloned());
+
+    // _base: always pass through the JSONB column from reverse view
+    cols.push("_base".to_string());
 
     let sql = format!(
         "-- Delta: {name} (updates/inserts/deletes)\n\

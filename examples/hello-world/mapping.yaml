@@ -19,6 +19,7 @@ mappings:
     source: { dataset: crm }
     target: contact
     cluster_members: true
+    reverse_filter: "name NOT LIKE 'X%'"
     fields:
       - source: email
         target: email
@@ -38,21 +39,18 @@ mappings:
         priority: 2
 
 tests:
-  - description: "Shared contact merges by email; CRM name wins (priority 1)"
+  - description: "Shared contact merges by email; CRM is noop (base matches resolved)"
     input:
       crm:
         - { id: "1", email: "alice@example.com", name: "Alice" }
       erp:
         - { id: "100", email: "alice@example.com", name: "A. Smith" }
     expected:
-      crm:
-        updates:
-          - { id: "1", email: "alice@example.com", name: "Alice" }
       erp:
         updates:
           - { id: "100", email: "alice@example.com", name: "Alice" }
 
-  - description: "CRM-only contact triggers insert into ERP"
+  - description: "CRM-only contact triggers insert into ERP; CRM rows are noops"
     input:
       crm:
         - { id: "1", email: "alice@example.com", name: "Alice" }
@@ -60,17 +58,13 @@ tests:
       erp:
         - { id: "100", email: "alice@example.com", name: "A. Smith" }
     expected:
-      crm:
-        updates:
-          - { id: "1", email: "alice@example.com", name: "Alice" }
-          - { id: "2", email: "bob@example.com", name: "Bob" }
       erp:
         updates:
           - { id: "100", email: "alice@example.com", name: "Alice" }
         inserts:
           - { _cluster_id: "crm:2", email: "bob@example.com", name: "Bob" }
 
-  - description: "ERP-only contact triggers insert into CRM"
+  - description: "ERP-only contact triggers insert into CRM; existing CRM is noop"
     input:
       crm:
         - { id: "1", email: "alice@example.com", name: "Alice" }
@@ -79,16 +73,28 @@ tests:
         - { id: "200", email: "carol@example.com", name: "Carol" }
     expected:
       crm:
-        updates:
-          - { id: "1", email: "alice@example.com", name: "Alice" }
         inserts:
-          - { _cluster_id: "erp:200", email: "carol@example.com", name: "Carol" }
+          - { _cluster_id: "erp:200", email: "carol@example.com", name: "Carol", _base: null }
       erp:
         updates:
           - { id: "100", email: "alice@example.com", name: "Alice" }
-          - { id: "200", email: "carol@example.com", name: "Carol" }
 
-  - description: "Pre-linked via cluster_members: contacts with no shared email merge"
+  - description: "Self-merge: two CRM rows merge; only the changed row is an update"
+    input:
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+        - { id: "2", email: "alice@example.com", name: "Alice B" }
+      erp:
+        - { id: "100", email: "bob@example.com", name: "Bob" }
+    expected:
+      crm:
+        updates:
+          - { id: "1", email: "alice@example.com", name: "Alice B", _base: { email: "alice@example.com", name: "Alice" } }
+      erp:
+        inserts:
+          - { _cluster_id: "crm:2", email: "alice@example.com", name: "Alice B" }
+
+  - description: "Pre-linked via cluster_members: CRM is noop after merge"
     input:
       crm:
         - { id: "1", email: "alice@example.com", name: "Alice" }
@@ -99,9 +105,17 @@ tests:
       _cluster_members_erp:
         - { _src_id: "100", _cluster_id: "guid-abc-123" }
     expected:
-      crm:
-        updates:
-          - { id: "1", email: "alice@example.com", name: "Alice" }
       erp:
         updates:
           - { id: "100", email: "alice@example.com", name: "Alice" }
+
+  - description: "Name starting with 'X' triggers delete for CRM with _base (reverse_filter)"
+    input:
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Xander" }
+      erp:
+        - { id: "100", email: "alice@example.com", name: "Xander" }
+    expected:
+      crm:
+        deletes:
+          - { id: "1", _base: { email: "alice@example.com", name: "Xander" } }

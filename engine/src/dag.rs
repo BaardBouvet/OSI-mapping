@@ -17,8 +17,6 @@ pub enum ViewNode {
     Reverse(String),
     /// Delta/changeset view.
     Delta(String),
-    /// Provenance view (cluster membership listing).
-    Provenance(String),
 }
 
 impl ViewNode {
@@ -30,7 +28,6 @@ impl ViewNode {
             ViewNode::Resolved(name) => format!("_resolved_{name}"),
             ViewNode::Reverse(name) => format!("_rev_{name}"),
             ViewNode::Delta(name) => format!("_delta_{name}"),
-            ViewNode::Provenance(name) => format!("_provenance_{name}"),
         }
     }
 
@@ -42,7 +39,6 @@ impl ViewNode {
             ViewNode::Resolved(name) => format!("RES: {name}"),
             ViewNode::Reverse(name) => format!("REV: {name}"),
             ViewNode::Delta(name) => format!("DELTA: {name}"),
-            ViewNode::Provenance(name) => format!("PROV: {name}"),
         }
     }
 }
@@ -95,6 +91,16 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             .or_default()
             .push(ViewNode::Source(src.clone()));
 
+        // Forward view also depends on cluster_members table when declared.
+        if let Some(ref cm) = mapping.cluster_members {
+            let cm_table = cm.table_name(mname);
+            edges.entry(ViewNode::Source(cm_table.clone())).or_default();
+            edges
+                .get_mut(&fwd)
+                .unwrap()
+                .push(ViewNode::Source(cm_table));
+        }
+
         // Identity view depends on all forward views for this target
         let id = ViewNode::Identity(tname.to_string());
         edges.entry(id.clone()).or_default().push(fwd.clone());
@@ -106,13 +112,6 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             .or_default();
         if !edges[&res].contains(&id) {
             edges.get_mut(&res).unwrap().push(id.clone());
-        }
-
-        // Provenance view depends on identity view
-        let prov = ViewNode::Provenance(tname.to_string());
-        edges.entry(prov.clone()).or_default();
-        if !edges[&prov].contains(&id) {
-            edges.get_mut(&prov).unwrap().push(id.clone());
         }
 
         // Reverse view depends on resolved view

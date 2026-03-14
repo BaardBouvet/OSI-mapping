@@ -185,11 +185,6 @@
           "$ref": "#/$defs/Expression",
           "description": "Reverse filter: SQL WHERE condition. Only target rows matching this are mapped back to this source."
         },
-        "include_base": {
-          "type": "boolean",
-          "default": false,
-          "description": "When true, reverse output includes _base_ columns with original source values. Enables optimistic locking and concurrent modification detection in target systems."
-        },
         "fields": {
           "type": "array",
           "description": "Field-level mappings from source to target. Can be empty for linkage-only mappings.",

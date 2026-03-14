@@ -97,6 +97,10 @@ pub fn render_reverse_view(
         select_exprs.push(format!("{expr} AS {source_name}"));
     }
 
+    // _base: pass through _base JSONB built by the forward view.
+    // Available via id.* (identity view passes through all forward columns).
+    select_exprs.push("id._base".to_string());
+
     // FROM _resolved LEFT JOIN _id: every entity gets a row.
     // Entities with a member from this mapping: id.* is populated.
     // Entities without: id.* is NULL → delta classifies as insert.

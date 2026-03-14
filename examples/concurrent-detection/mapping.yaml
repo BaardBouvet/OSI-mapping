@@ -21,7 +21,6 @@ mappings:
   - name: companies
     source: { dataset: companies }
     target: company
-    include_base: true
     fields:
       - source: company_email
         target: email
@@ -35,7 +34,6 @@ mappings:
   - name: customers
     source: { dataset: customers }
     target: company
-    include_base: true
     reverse_filter: "account IS NOT NULL"
     fields:
       - source: customer_name

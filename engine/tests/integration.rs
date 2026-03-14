@@ -101,7 +101,7 @@ fn render_all_examples() {
         match osi_engine::parser::parse_file(&mapping_path) {
             Ok(doc) => {
                 let dag = osi_engine::dag::build_dag(&doc);
-                match osi_engine::render::render_sql(&doc, &dag) {
+                match osi_engine::render::render_sql(&doc, &dag, false) {
                     Ok(sql) => {
                         assert!(!sql.is_empty(), "{name}: empty SQL output");
                         assert!(
@@ -161,7 +161,7 @@ async fn execute_hello_world() {
     let mapping_path = examples_dir().join("hello-world/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse hello-world");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag).expect("render hello-world");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false).expect("render hello-world");
 
     for (test_idx, test) in doc.tests.iter().enumerate() {
         let desc = test
@@ -201,8 +201,6 @@ async fn execute_hello_world() {
                 .find(|m| m.source.dataset == *dataset)
                 .unwrap_or_else(|| panic!("No mapping for dataset {dataset}"));
 
-            let rev_view = format!("_rev_{}", mapping.name);
-
             // Build the list of reverse-mapped source field names
             let reverse_fields: Vec<(String, String)> = mapping
                 .fields
@@ -228,22 +226,21 @@ async fn execute_hello_world() {
                 cols
             };
 
-            // Query reverse view
+            // Query delta view for update rows
+            let delta_view = format!("_delta_{}", mapping.name);
             let rev_rows = client
-                .query(&format!("SELECT * FROM {rev_view}"), &[])
+                .query(&format!("SELECT * FROM {delta_view} WHERE _action = 'update'"), &[])
                 .await
-                .unwrap_or_else(|e| panic!("Failed to query {rev_view}: {e:?}"));
+                .unwrap_or_else(|e| panic!("Failed to query {delta_view}: {e:?}"));
 
             // Build actual output by joining reverse view with source table
             let mut actual_updates: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
 
             for rev_row in &rev_rows {
-                // Skip insert rows (_src_id is NULL); they're verified separately.
-                let src_id: Option<String> = rev_row.try_get("_src_id").ok().flatten();
-                let src_id = match src_id {
-                    Some(id) => id,
-                    None => continue,
-                };
+                let src_id: String = rev_row.try_get::<_, Option<String>>("_src_id")
+                    .ok()
+                    .flatten()
+                    .expect("update row must have _src_id");
 
                 // Build PK-based WHERE clause for source row lookup
                 let pk_where = if let Some(src_meta) = doc.sources.get(dataset.as_str()) {
@@ -292,6 +289,19 @@ async fn execute_hello_world() {
                         src_field.clone(),
                         val.map(serde_json::Value::String)
                             .unwrap_or(serde_json::Value::Null),
+                    );
+                }
+
+                // Include _base in actual output when expected data mentions it
+                let expects_base = expected.updates.iter().any(|v| {
+                    v.as_object().map_or(false, |obj| obj.contains_key("_base"))
+                });
+                if expects_base {
+                    let base_val: Option<serde_json::Value> =
+                        rev_row.try_get("_base").ok().flatten();
+                    output.insert(
+                        "_base".to_string(),
+                        base_val.unwrap_or(serde_json::Value::Null),
                     );
                 }
 
@@ -360,7 +370,6 @@ async fn execute_hello_world() {
                 .collect();
 
             if !expected_inserts.is_empty() {
-                let delta_view = format!("_delta_{}", mapping.name);
                 let insert_rows = client
                     .query(
                         &format!("SELECT * FROM {delta_view} WHERE _action = 'insert'"),
@@ -389,6 +398,18 @@ async fn execute_hello_world() {
                             src_field.clone(),
                             val.map(serde_json::Value::String)
                                 .unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    // Include _base in actual output when expected data mentions it
+                    let expects_base = expected_inserts.iter().any(|obj| {
+                        obj.contains_key("_base")
+                    });
+                    if expects_base {
+                        let base_val: Option<serde_json::Value> =
+                            row.try_get("_base").ok().flatten();
+                        map.insert(
+                            "_base".to_string(),
+                            base_val.unwrap_or(serde_json::Value::Null),
                         );
                     }
                     actual_inserts.push(map);
@@ -454,6 +475,102 @@ async fn execute_hello_world() {
                 eprintln!(
                     "{dataset}: {count} inserts match ✓",
                     count = actual_inserts.len()
+                );
+            }
+
+            // ── Delete verification ────────────────────────────────
+            let expected_deletes: Vec<serde_json::Map<String, serde_json::Value>> = expected
+                .deletes
+                .iter()
+                .filter_map(|v| v.as_object().cloned())
+                .collect();
+
+            if !expected_deletes.is_empty() {
+                let delete_rows = client
+                    .query(
+                        &format!("SELECT * FROM {delta_view} WHERE _action = 'delete'"),
+                        &[],
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("query {delta_view} deletes: {e}"));
+
+                // Use PK column names from source metadata
+                let pk_cols: Vec<String> = doc
+                    .sources
+                    .get(dataset.as_str())
+                    .map(|src| src.primary_key.columns().into_iter().map(|s| s.to_string()).collect())
+                    .unwrap_or_else(|| vec!["_src_id".to_string()]);
+
+                let mut actual_deletes: Vec<serde_json::Map<String, serde_json::Value>> =
+                    Vec::new();
+                for row in &delete_rows {
+                    let mut map = serde_json::Map::new();
+                    for col in &pk_cols {
+                        let val: Option<String> = row.try_get(col.as_str()).ok().flatten();
+                        map.insert(
+                            col.clone(),
+                            val.map(serde_json::Value::String)
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    // Include _base in actual output when expected data mentions it
+                    let expects_base = expected_deletes.iter().any(|obj| {
+                        obj.contains_key("_base")
+                    });
+                    if expects_base {
+                        let base_val: Option<serde_json::Value> =
+                            row.try_get("_base").ok().flatten();
+                        map.insert(
+                            "_base".to_string(),
+                            base_val.unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    actual_deletes.push(map);
+                }
+
+                let mut actual_sorted: Vec<String> = actual_deletes
+                    .iter()
+                    .map(|m| serde_json::to_string(m).unwrap())
+                    .collect();
+                actual_sorted.sort();
+
+                let mut expected_sorted: Vec<String> = expected_deletes
+                    .iter()
+                    .map(|m| {
+                        let normalized: serde_json::Map<String, serde_json::Value> = m
+                            .iter()
+                            .map(|(k, v)| {
+                                let str_val = match v {
+                                    serde_json::Value::String(s) => {
+                                        serde_json::Value::String(s.clone())
+                                    }
+                                    serde_json::Value::Number(n) => {
+                                        serde_json::Value::String(n.to_string())
+                                    }
+                                    other => other.clone(),
+                                };
+                                (k.clone(), str_val)
+                            })
+                            .collect();
+                        serde_json::to_string(&normalized).unwrap()
+                    })
+                    .collect();
+                expected_sorted.sort();
+
+                assert_eq!(
+                    actual_sorted.len(),
+                    expected_sorted.len(),
+                    "{dataset}: delete count mismatch.\n  actual: {actual_sorted:?}\n  expected: {expected_sorted:?}"
+                );
+                for (actual, expected) in actual_sorted.iter().zip(expected_sorted.iter()) {
+                    assert_eq!(
+                        actual, expected,
+                        "{dataset}: delete mismatch.\n  actual:   {actual}\n  expected: {expected}"
+                    );
+                }
+                eprintln!(
+                    "{dataset}: {count} deletes match ✓",
+                    count = actual_deletes.len()
                 );
             }
         }
@@ -743,6 +860,8 @@ async fn dump_view(client: &tokio_postgres::Client, view: &str) {
                 // Try text first, fall back to i32/i64 for _row_id/_entity_id
                 if let Ok(Some(s)) = row.try_get::<_, Option<String>>(i) {
                     s
+                } else if let Ok(Some(v)) = row.try_get::<_, Option<serde_json::Value>>(i) {
+                    serde_json::to_string(&v).unwrap()
                 } else if let Ok(v) = row.try_get::<_, i64>(i) {
                     v.to_string()
                 } else if let Ok(v) = row.try_get::<_, i32>(i) {
@@ -766,7 +885,7 @@ async fn dump_hello_world_intermediates() {
     let mapping_path = examples_dir().join("hello-world/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false).expect("render");
 
     load_test_data(&client, &doc.tests[0].input).await;
     ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
@@ -794,7 +913,7 @@ async fn dump_inserts_and_deletes_intermediates() {
     let mapping_path = examples_dir().join("inserts-and-deletes/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false).expect("render");
 
     eprintln!("\n=== Generated SQL ===\n{sql}");
 

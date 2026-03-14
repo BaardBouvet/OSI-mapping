@@ -248,8 +248,6 @@ pub struct Mapping {
     #[serde(default)]
     pub reverse_filter: Option<String>,
     #[serde(default)]
-    pub include_base: bool,
-    #[serde(default)]
     pub fields: Vec<FieldMapping>,
     /// Column in the linking table whose value serves as cluster identity.
     /// Enables the IVM-safe path (forward-view LEFT JOIN on cluster members).

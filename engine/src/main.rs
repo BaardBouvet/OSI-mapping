@@ -18,6 +18,9 @@ enum Command {
         /// Output file (default: stdout)
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Emit CREATE TABLE statements for input tables
+        #[arg(long)]
+        create_tables: bool,
     },
     /// Validate mapping file(s)
     Validate {
@@ -44,10 +47,10 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Render { mapping, output } => {
+        Command::Render { mapping, output, create_tables } => {
             let doc = osi_engine::parser::parse_file(&mapping)?;
             let dag = osi_engine::dag::build_dag(&doc);
-            let sql = osi_engine::render::render_sql(&doc, &dag)?;
+            let sql = osi_engine::render::render_sql(&doc, &dag, create_tables)?;
 
             match output {
                 Some(path) => std::fs::write(&path, &sql)?,

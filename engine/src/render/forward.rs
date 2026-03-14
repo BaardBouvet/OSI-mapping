@@ -133,6 +133,28 @@ pub fn render_forward_view(
         }
     }
 
+    // _base: JSONB snapshot of raw source columns involved in field mappings.
+    // Built here (pre-expression) so it flows through identity via SELECT *.
+    {
+        let mut base_parts: Vec<String> = Vec::new();
+        for fm in &mapping.fields {
+            if !fm.is_forward() {
+                continue;
+            }
+            if let Some(ref src) = fm.source {
+                base_parts.push(format!("'{src}', {src}"));
+            }
+        }
+        if base_parts.is_empty() {
+            cols.push("NULL::jsonb AS _base".to_string());
+        } else {
+            cols.push(format!(
+                "jsonb_build_object({}) AS _base",
+                base_parts.join(", ")
+            ));
+        }
+    }
+
     let mut sql = format!(
         "-- Forward: {name} ({source} → {target})\n\
          CREATE OR REPLACE VIEW {view_name} AS\nSELECT\n  {columns}\nFROM {source}",
