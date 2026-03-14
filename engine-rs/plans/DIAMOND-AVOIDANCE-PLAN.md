@@ -151,6 +151,8 @@ prophylactic architecture.
 
 ## Action Items
 
-- [ ] Fix docs: remove "no diamonds" claim for the sync view path
-- [ ] Add a "Refresh Order" section explaining the materialization strategy
-- [ ] Clearly distinguish: analytics path = IVM-safe, sync path = ordered refresh
+- [x] Fix docs: remove "no diamonds" claim for the reverse view path
+- [x] Add a "Refresh Order" section explaining the materialization strategy
+- [x] Clearly distinguish: analytics path = IVM-safe, reverse/delta path = ordered refresh
+
+All three addressed in `engine-rs/docs/design-decisions.md` (Diamond Avoidance section).

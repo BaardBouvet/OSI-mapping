@@ -15,8 +15,10 @@ pub enum ViewNode {
     Resolved(String),
     /// Analytics view — clean golden record for BI consumers. Named `{target}`.
     Analytics(String),
-    /// Sync view — reverse + delta combined. Named `sync_{mapping}`. Opt-in.
-    Sync(String),
+    /// Reverse mapping view. Named `_rev_{mapping}`. Opt-in via `sync: true`.
+    Reverse(String),
+    /// Delta/changeset view. Named `_delta_{mapping}`. Opt-in via `sync: true`.
+    Delta(String),
 }
 
 impl ViewNode {
@@ -27,7 +29,8 @@ impl ViewNode {
             ViewNode::Identity(name) => format!("_id_{name}"),
             ViewNode::Resolved(name) => format!("_resolved_{name}"),
             ViewNode::Analytics(name) => name.clone(),
-            ViewNode::Sync(name) => format!("sync_{name}"),
+            ViewNode::Reverse(name) => format!("_rev_{name}"),
+            ViewNode::Delta(name) => format!("_delta_{name}"),
         }
     }
 
@@ -38,7 +41,8 @@ impl ViewNode {
             ViewNode::Identity(name) => format!("ID: {name}"),
             ViewNode::Resolved(name) => format!("RES: {name}"),
             ViewNode::Analytics(name) => name.clone(),
-            ViewNode::Sync(name) => format!("SYNC: {name}"),
+            ViewNode::Reverse(name) => format!("REV: {name}"),
+            ViewNode::Delta(name) => format!("DELTA: {name}"),
         }
     }
 }
@@ -126,12 +130,15 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             edges.get_mut(&analytics).unwrap().push(res.clone());
         }
 
-        // Sync view (opt-in): depends on resolved view.
-        // The sync view also LEFT JOINs identity (tracked as join_edge).
+        // Reverse + delta views (opt-in via sync: true).
         if mapping.sync {
-            let sync = ViewNode::Sync(mname.clone());
-            edges.entry(sync.clone()).or_default()
+            let rev = ViewNode::Reverse(mname.clone());
+            edges.entry(rev.clone()).or_default()
                 .push(ViewNode::Resolved(tname.to_string()));
+
+            let delta = ViewNode::Delta(mname.clone());
+            edges.entry(delta.clone()).or_default()
+                .push(rev.clone());
         }
     }
 
@@ -151,7 +158,7 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
     }
 
     // Collect SQL JOIN edges that are not primary dependencies.
-    // Sync views LEFT JOIN identity (diamond for IVM, safe for ordered refresh).
+    // Reverse views LEFT JOIN identity (diamond for IVM, safe for ordered refresh).
     let mut join_edges: Vec<(ViewNode, ViewNode)> = Vec::new();
     for mapping in &doc.mappings {
         if mapping.is_linkage_only() || !mapping.sync {
@@ -160,7 +167,7 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
         let tname = mapping.target.name();
         join_edges.push((
             ViewNode::Identity(tname.to_string()),
-            ViewNode::Sync(mapping.name.clone()),
+            ViewNode::Reverse(mapping.name.clone()),
         ));
     }
 
@@ -236,7 +243,7 @@ pub fn to_dot(dag: &ViewDag) -> String {
             ViewNode::Source(_) => "cylinder",
             ViewNode::Forward(_) => "box",
             ViewNode::Analytics(_) => "note",
-            ViewNode::Sync(_) => "component",
+            ViewNode::Reverse(_) | ViewNode::Delta(_) => "box",
             _ => "box",
         };
         out.push_str(&format!("  \"{name}\" [label=\"{label}\" shape={shape}];\n"));
@@ -296,8 +303,10 @@ mod tests {
         // Analytics view for contact
         assert!(dag.edges.contains_key(&ViewNode::Analytics("contact".into())));
 
-        // Sync views (hello-world has sync: true)
-        assert!(dag.edges.contains_key(&ViewNode::Sync("crm".into())));
-        assert!(dag.edges.contains_key(&ViewNode::Sync("erp".into())));
+        // Reverse + delta views (hello-world has sync: true)
+        assert!(dag.edges.contains_key(&ViewNode::Reverse("crm".into())));
+        assert!(dag.edges.contains_key(&ViewNode::Reverse("erp".into())));
+        assert!(dag.edges.contains_key(&ViewNode::Delta("crm".into())));
+        assert!(dag.edges.contains_key(&ViewNode::Delta("erp".into())));
     }
 }

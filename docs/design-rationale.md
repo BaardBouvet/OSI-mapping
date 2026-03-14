@@ -114,7 +114,7 @@ These are often asymmetric. A CRM mapping might accept all rows coming in (`filt
 
 **Why:** Reporting errors at the most meaningful level requires knowing what has already been validated. A missing target reference shouldn't produce cascading type errors — it should produce one clear message.
 
-For the specific validation passes implemented by the reference engine, see [engine/docs/design-decisions.md](../engine/docs/design-decisions.md).
+For the specific validation passes implemented by the reference engine, see [engine-rs/docs/design-decisions.md](../engine-rs/docs/design-decisions.md).
 
 ## Sources as Shared Metadata
 

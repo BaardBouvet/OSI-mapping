@@ -7,20 +7,23 @@ This document captures design decisions specific to the OSI reference engine —
 The engine generates a strict funnel of PostgreSQL views:
 
 ```
-source table → _fwd_{mapping} → _id_{target} → _resolved_{target} → _rev_{mapping} → _delta_{mapping}
+source table → _fwd_{mapping} → _id_{target} → _resolved_{target} ─┬─ {target}              (analytics, always)
+                                                                   └─ _rev_{mapping} → _delta_{mapping}  (opt-in via sync: true)
 ```
 
-Each view depends only on the view directly upstream. There are no cross-layer references, no diamonds, and no joins back to earlier stages. This is the single most important architectural constraint — every other decision follows from it.
+The analytics path is a strict linear chain — no diamonds, trivially IVM-safe. The reverse/delta path introduces one controlled diamond (reverse LEFT JOINs identity, see below) and is opt-in per mapping.
 
-## No Diamond Dependencies
+## Diamond Avoidance
 
-**Constraint:** Every view has exactly one path from any upstream view.
+**Constraint:** Every view on the analytics path has exactly one path from any upstream view.
 
 **Why:** Diamond dependencies (two paths from a common ancestor to a downstream view) break Incremental View Maintenance (IVM). When a source row changes, the database must propagate through both paths and reconcile intermediate states. They also complicate manual `REFRESH MATERIALIZED VIEW` ordering.
 
-**How it's enforced:** The reverse view emits ALL rows with no filtering. Classification logic (`reverse_required`, `reverse_filter`) is evaluated in the delta view via a CASE expression. This means the delta depends only on the reverse view, not on both reverse and identity.
+**The analytics path** (`_fwd` → `_id` → `_resolved` → `{target}`) is diamond-free. No cross-layer joins, no shared ancestors.
 
-**Previous approach:** The delta view used `UNION ALL` — updates from reverse, deletes from identity via `NOT EXISTS`. This created a diamond (delta depended on reverse and identity, which share identity as a common ancestor). Eliminated by moving all classification into the delta's CASE.
+**The reverse path** has one controlled diamond: `_rev_{mapping}` LEFT JOINs `_id_{target}` (which also feeds `_resolved` upstream). This means the reverse view depends on both `_resolved` and `_id`, forming a diamond through `_id`. This is an accepted trade-off — the reverse/delta views are not candidates for IVM (they serve ETL batch sync, not real-time materialization). The engine emits them in topological order so a simple sequential refresh works.
+
+**How it's enforced in delta:** The delta view depends only on the reverse view. Classification logic (`reverse_required`, `reverse_filter`) is evaluated in the delta via a CASE expression, not by joining back to identity or source.
 
 ## Delta: Single View per Mapping
 

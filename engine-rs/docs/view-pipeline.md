@@ -14,12 +14,15 @@ _id_{target}            Identity: transitive closure, entity linking
      ▼
 _resolved_{target}      Resolution: merge contributions, pick winners
      │
-     ▼
-_rev_{mapping}          Reverse: project resolved target → source shape
-     │
-     ▼
-_delta_{mapping}        Delta: classify changes (insert/update/delete)
+     ├──────────────────────────────────────┐
+     ▼                                      ▼
+{target}               Analytics        _rev_{mapping}     Reverse (opt-in)
+                                             │
+                                             ▼
+                                        _delta_{mapping}   Delta
 ```
+
+Analytics views are always generated. Reverse and delta views are opt-in per mapping via `sync: true`.
 
 ## Forward (`_fwd_{mapping}`)
 
@@ -61,9 +64,9 @@ Merges all contributions for each entity into one golden record. One view per ta
 
 Output: one row per entity with resolved field values.
 
-## Reverse (`_rev_{mapping}`)
+## Reverse (`_rev_{mapping}`) — opt-in
 
-Projects the resolved golden record back into source shape. One view per mapping.
+Projects the resolved golden record back into source shape. One view per mapping. Only generated when `sync: true`.
 
 - `FROM _resolved LEFT JOIN _id` — every entity gets a row, even those without a member from this mapping (`_src_id = NULL`)
 - Identity/collect fields: `COALESCE(id.field, r.field)` — source's own value when it exists, resolved value for inserts
@@ -72,9 +75,9 @@ Projects the resolved golden record back into source shape. One view per mapping
 - Passes through `_base` from the identity view (built in forward)
 - No WHERE clause — all filtering deferred to delta
 
-## Delta (`_delta_{mapping}`)
+## Delta (`_delta_{mapping}`) — opt-in
 
-Classifies each row as an insert, update, delete, or noop. One view per mapping.
+Classifies each row as an insert, update, delete, or noop. One view per mapping. Only generated when `sync: true`.
 
 Single SELECT from the reverse view with a CASE expression:
 
@@ -86,10 +89,10 @@ Single SELECT from the reverse view with a CASE expression:
 
 Includes: `_action`, `_src_id`, `_cluster_id`, PK columns, business fields, `_base`.
 
-## Analytics (`_analytics_{target}`)
+## Analytics (`{target}`)
 
-Exposes the resolved golden record in a clean, consumer-friendly shape. One view per target.
+Exposes the resolved golden record in a clean, consumer-friendly shape. One view per target. Always generated.
 
-- `SELECT _entity_id AS _cluster_id, {business fields} FROM _resolved_{target}`
+- `SELECT _entity_id_resolved AS _cluster_id, {business fields} FROM _resolved_{target}`
 - No metadata columns — purely business data for BI and analytics
-- Single upstream dependency (resolved) — no diamonds, trivially cheap
+- Single upstream dependency (resolved) — no diamonds, trivially IVM-safe

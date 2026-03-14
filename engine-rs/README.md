@@ -21,15 +21,18 @@ cargo run -- dot ../examples/hello-world/mapping.yaml | dot -Tpng -o dag.png
 
 ## Pipeline Stages
 
-The engine generates five layers of views for each mapping:
+The engine generates views in two branches from resolution:
 
 | Stage | View Pattern | Purpose |
 |-------|-------------|---------|
 | Forward | `_fwd_{mapping}` | Project source fields → target fields with expressions/filters |
 | Identity | `_id_{target}` | Transitive closure for record linking |
 | Resolution | `_resolved_{target}` | Merge contributions using conflict resolution strategies |
-| Reverse | `_rev_{mapping}` | Project resolved target back to source shape |
-| Delta | `_delta_{mapping}` | Compute updates/inserts/deletes vs original source |
+| Analytics | `{target}` | Clean golden record for BI consumers (always) |
+| Reverse | `_rev_{mapping}` | Project resolved target back to source shape (opt-in) |
+| Delta | `_delta_{mapping}` | Compute updates/inserts/deletes vs original source (opt-in) |
+
+Analytics views are always generated. Reverse and delta views are opt-in per mapping via `sync: true`.
 
 ## Development
 
@@ -42,7 +45,7 @@ Or use the devcontainer (recommended):
 
 ```bash
 # Open in VS Code with Dev Containers extension
-code engine/
+code engine-rs/
 # Then: Ctrl+Shift+P → "Reopen in Container"
 ```
 

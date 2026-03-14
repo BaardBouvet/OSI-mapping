@@ -28,6 +28,7 @@ examples/
 docs/
   ai-guidelines.md       # Guidelines for AI agents working with mapping files
   design-rationale.md    # Design decisions and rationale
+engine-rs/               # Rust reference engine (YAML → PostgreSQL views)
 validation/
   validate.py            # Multi-pass validator
 ```

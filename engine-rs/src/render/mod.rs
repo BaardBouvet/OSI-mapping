@@ -1,7 +1,8 @@
 pub mod forward;
 pub mod identity;
 pub mod resolution;
-pub mod sync;
+pub mod reverse;
+pub mod delta;
 pub mod analytics;
 
 use anyhow::Result;
@@ -102,25 +103,38 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
                 sql.push_str(&analytics::render_analytics_view(target_name, target)?);
                 sql.push('\n');
             }
-            ViewNode::Sync(mapping_name) => {
+            ViewNode::Reverse(mapping_name) => {
                 let mapping = doc
                     .mappings
                     .iter()
                     .find(|m| &m.name == mapping_name)
                     .expect("mapping exists in dag");
                 if annotate {
-                    sql.push_str(&annotate_sync(mapping));
+                    sql.push_str(&annotate_reverse(mapping));
                 }
                 let target_name = mapping.target.name();
                 let target = doc.targets.get(target_name);
                 let source_meta = doc.sources.get(&mapping.source.dataset);
-                sql.push_str(&sync::render_sync_view(
+                sql.push_str(&reverse::render_reverse_view(
                     mapping,
                     target_name,
                     target,
                     &doc.targets,
                     source_meta,
                 )?);
+                sql.push('\n');
+            }
+            ViewNode::Delta(mapping_name) => {
+                let mapping = doc
+                    .mappings
+                    .iter()
+                    .find(|m| &m.name == mapping_name)
+                    .expect("mapping exists in dag");
+                if annotate {
+                    sql.push_str(&annotate_delta(mapping));
+                }
+                let source_meta = doc.sources.get(&mapping.source.dataset);
+                sql.push_str(&delta::render_delta_view(mapping, source_meta)?);
                 sql.push('\n');
             }
         }
@@ -339,9 +353,9 @@ fn annotate_resolution(target: &Target) -> String {
     lines.join("\n")
 }
 
-fn annotate_sync(m: &Mapping) -> String {
+fn annotate_reverse(m: &Mapping) -> String {
     let mut lines = Vec::new();
-    lines.push(format!("-- [annotate] sync_{}: reverse + change detection", m.name));
+    lines.push(format!("-- [annotate] _rev_{}: reverse projection", m.name));
     for fm in &m.fields {
         if fm.is_reverse() {
             let tgt = fm.target.as_deref().unwrap_or("?");
@@ -359,6 +373,13 @@ fn annotate_sync(m: &Mapping) -> String {
     if let Some(ref rf) = m.reverse_filter {
         lines.push(format!("--   reverse_filter: {rf}"));
     }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn annotate_delta(m: &Mapping) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("-- [annotate] _delta_{}: change detection", m.name));
     let noop_fields: Vec<&str> = m.fields.iter()
         .filter(|fm| fm.is_forward() && fm.source.is_some())
         .filter_map(|fm| fm.source.as_deref())

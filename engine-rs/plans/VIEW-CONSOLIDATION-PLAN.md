@@ -1,13 +1,19 @@
 # View Consolidation Plan
 
+## Status: Partially Superseded
+
+Changes 1-3 were implemented but then reverted in favor of debuggability
+(same argument as FORWARD-VIEWS-PLAN). Change 4 remains in effect.
+
 ## Summary
 
 Refactor the view pipeline to reduce intermediate views and improve naming.
 Four changes bundled together:
 
-1. **Merge reverse+delta into one sync view with CTE**
-2. **Collapse forward views into the leaf sync view as CTEs**
-3. **Rename `_delta_` → `sync_` (consumer-facing, opt-in)**
+1. **Merge reverse+delta into one sync view with CTE** — ~~Done~~ → Reverted (separate `_rev_` + `_delta_` restored)
+2. **Collapse forward views into the leaf sync view as CTEs** — ~~Done~~ → Reverted (see FORWARD-VIEWS-PLAN)
+3. **Rename `_delta_` → `sync_` (consumer-facing, opt-in)** — ~~Done~~ → Reverted (back to `_delta_`)
+4. **Drop `_` prefix on consumer-facing views; keep it on internal ones** — Done (analytics is `{target}`, not `_analytics_{target}`)
 4. **Drop `_` prefix on consumer-facing views; keep it on internal ones**
 
 ## Current state
