@@ -22,7 +22,6 @@ pub fn render_reverse_view(
     target: Option<&Target>,
     _all_targets: &IndexMap<String, Target>,
     source_meta: Option<&Source>,
-    all_mappings: &[Mapping],
 ) -> Result<String> {
     let view_name = format!("_rev_{}", mapping.name);
     let id_view = format!("_id_{target_name}");
@@ -71,14 +70,8 @@ pub fn render_reverse_view(
 
             if let Some(ref_target_name) = ref_target {
                 // Reference field: translate entity reference back to source namespace.
-                // Find the "same-system" mapping to the referenced target using
-                // longest common prefix on source dataset names.
-                let same_sys = find_same_system_mapping(
-                    &mapping.source.dataset,
-                    ref_target_name,
-                    all_mappings,
-                );
-                if let Some(ref_mapping_name) = same_sys {
+                // Requires explicit fm.references to know which mapping to resolve through.
+                if let Some(ref ref_mapping_name) = fm.references {
                     let id_ref = format!("_id_{ref_target_name}");
                     format!(
                         "(SELECT ref_local._src_id \
@@ -90,7 +83,7 @@ pub fn render_reverse_view(
                          LIMIT 1)"
                     )
                 } else {
-                    // No same-system mapping found — pass through raw value.
+                    // No explicit references — pass through raw value.
                     format!("r.{tgt}")
                 }
             } else {
@@ -126,37 +119,4 @@ pub fn render_reverse_view(
     );
 
     Ok(sql)
-}
-
-/// Find the mapping to `ref_target` whose source dataset name shares the
-/// longest common prefix with `current_dataset`.  Returns the mapping name
-/// or None if no mappings to the referenced target exist.
-fn find_same_system_mapping(
-    current_dataset: &str,
-    ref_target: &str,
-    all_mappings: &[Mapping],
-) -> Option<String> {
-    let candidates: Vec<&Mapping> = all_mappings
-        .iter()
-        .filter(|m| m.target.name() == ref_target && !m.is_linkage_only())
-        .collect();
-
-    if candidates.is_empty() {
-        return None;
-    }
-    if candidates.len() == 1 {
-        return Some(candidates[0].name.clone());
-    }
-
-    // Pick the candidate with the longest common prefix on source.dataset.
-    candidates
-        .iter()
-        .max_by_key(|m| {
-            common_prefix_len(current_dataset, &m.source.dataset)
-        })
-        .map(|m| m.name.clone())
-}
-
-fn common_prefix_len(a: &str, b: &str) -> usize {
-    a.chars().zip(b.chars()).take_while(|(ca, cb)| ca == cb).count()
 }

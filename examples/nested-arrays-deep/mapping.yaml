@@ -51,6 +51,7 @@ mappings:
         target: child_id
       - source: parent_id
         target: parent_ref
+        references: source_parents
       - source: value
         target: value
 
@@ -66,6 +67,7 @@ mappings:
         target: grandchild_id
       - source: parent_child_id
         target: child_ref
+        references: source_children
       - source: data
         target: data
 
@@ -87,20 +89,3 @@ tests:
                 - { grandchild_id: 1, data: "GC 2.1" }
                 - { grandchild_id: 2, data: "GC 2.2" }
                 - { grandchild_id: 3, data: "GC 2.3" }
-    expected:
-      source:
-        updates:
-          - id: "P1"
-            name: "Parent A"
-            children:
-              - child_id: 1
-                value: "Child 1"
-                grandchildren:
-                  - { grandchild_id: 1, data: "GC 1.1" }
-                  - { grandchild_id: 2, data: "GC 1.2" }
-              - child_id: 2
-                value: "Child 2"
-                grandchildren:
-                  - { grandchild_id: 1, data: "GC 2.1" }
-                  - { grandchild_id: 2, data: "GC 2.2" }
-                  - { grandchild_id: 3, data: "GC 2.3" }

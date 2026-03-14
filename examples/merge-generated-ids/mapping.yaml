@@ -111,15 +111,9 @@ tests:
         - { system_c_id: 1001, system_a_id: 1, system_b_id: null }
         - { system_c_id: 1002, system_a_id: null, system_b_id: 103 }
     expected:
-      system_a:
-        updates:
-          - { id: 1, name: "Alice Johnson" }
-          - { id: 2, name: "Bob Smith" }
       system_b:
         updates:
           - { id: 101, full_name: "Alice Johnson" }
-          - { id: 103, full_name: "Charlie Brown" }
       system_c:
         updates:
-          - { id: 1001, full_name: "Alice Johnson" }
           - { id: 1002, full_name: "Charlie Brown" }

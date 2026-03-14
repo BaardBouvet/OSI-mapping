@@ -130,8 +130,8 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             edges.get_mut(&analytics).unwrap().push(res.clone());
         }
 
-        // Reverse + delta views (opt-in via sync: true).
-        if mapping.sync {
+        // Reverse + delta views (auto-derived from field directions).
+        if mapping.needs_sync() {
             let rev = ViewNode::Reverse(mname.clone());
             edges.entry(rev.clone()).or_default()
                 .push(ViewNode::Resolved(tname.to_string()));
@@ -161,7 +161,7 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
     // Reverse views LEFT JOIN identity (diamond for IVM, safe for ordered refresh).
     let mut join_edges: Vec<(ViewNode, ViewNode)> = Vec::new();
     for mapping in &doc.mappings {
-        if mapping.is_linkage_only() || !mapping.sync {
+        if mapping.is_linkage_only() || !mapping.needs_sync() {
             continue;
         }
         let tname = mapping.target.name();

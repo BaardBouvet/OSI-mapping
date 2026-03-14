@@ -98,6 +98,3 @@ tests:
       crm:
         updates:
           - { customer_id: "C1", customer_email: "acme@example.com", customer_name: "Acme Corporation", billing_street: "999 Updated St", billing_city: "New York", shipping_street: "456 Oak Ave", shipping_city: "LA" }
-      billing:
-        updates:
-          - { account_id: "B100", account_email: "acme@example.com", account_name: "Acme Corporation", street: "999 Updated St", city: "New York" }

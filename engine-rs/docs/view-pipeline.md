@@ -16,13 +16,13 @@ _resolved_{target}      Resolution: merge contributions, pick winners
      │
      ├──────────────────────────────────────┐
      ▼                                      ▼
-{target}               Analytics        _rev_{mapping}     Reverse (opt-in)
+{target}               Analytics        _rev_{mapping}     Reverse (auto)
                                              │
                                              ▼
                                         _delta_{mapping}   Delta
 ```
 
-Analytics views are always generated. Reverse and delta views are opt-in per mapping via `sync: true`.
+Analytics views are always generated. Reverse and delta views are generated automatically for each mapping that has reverse-mapped fields (bidirectional or reverse_only).
 
 ## Forward (`_fwd_{mapping}`)
 
@@ -64,9 +64,9 @@ Merges all contributions for each entity into one golden record. One view per ta
 
 Output: one row per entity with resolved field values.
 
-## Reverse (`_rev_{mapping}`) — opt-in
+## Reverse (`_rev_{mapping}`) — auto for reverse-mapped fields
 
-Projects the resolved golden record back into source shape. One view per mapping. Only generated when `sync: true`.
+Projects the resolved golden record back into source shape. One view per mapping. Generated when the mapping has at least one bidirectional or reverse_only field.
 
 - `FROM _resolved LEFT JOIN _id` — every entity gets a row, even those without a member from this mapping (`_src_id = NULL`)
 - Identity/collect fields: `COALESCE(id.field, r.field)` — source's own value when it exists, resolved value for inserts
@@ -75,9 +75,9 @@ Projects the resolved golden record back into source shape. One view per mapping
 - Passes through `_base` from the identity view (built in forward)
 - No WHERE clause — all filtering deferred to delta
 
-## Delta (`_delta_{mapping}`) — opt-in
+## Delta (`_delta_{mapping}`) — auto for reverse-mapped fields
 
-Classifies each row as an insert, update, delete, or noop. One view per mapping. Only generated when `sync: true`.
+Classifies each row as an insert, update, delete, or noop. One view per mapping. Generated when the mapping has at least one bidirectional or reverse_only field.
 
 Single SELECT from the reverse view with a CASE expression:
 
@@ -87,7 +87,7 @@ Single SELECT from the reverse view with a CASE expression:
 - All fields match `_base` → **noop** (no write needed; compares using `IS NOT DISTINCT FROM`)
 - Otherwise → **update**
 
-Includes: `_action`, `_src_id`, `_cluster_id`, PK columns, business fields, `_base`.
+Includes: `_action`, `_cluster_id`, PK columns, business fields, `_base`.
 
 ## Analytics (`{target}`)
 

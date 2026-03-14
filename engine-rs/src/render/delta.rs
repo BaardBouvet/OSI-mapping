@@ -71,7 +71,6 @@ pub fn render_delta_view(mapping: &Mapping, source_meta: Option<&Source>) -> Res
 
     let mut cols: Vec<String> = vec![
         format!("{action_expr} AS _action"),
-        "_src_id".to_string(),
         "_cluster_id".to_string(),
     ];
 

@@ -89,8 +89,10 @@ mappings:
     fields:
       - source: customer_id
         target: customer_id
+        references: erp_customers
       - source: contact_id
         target: contact_id
+        references: erp_contacts
       - source: relation_type
         target: relation_type
         last_modified: modified_at
@@ -114,16 +116,3 @@ tests:
       crm_customers:
         updates:
           - { id: "C1", domain: "acme.com", contact_name: "Charlie Johnson", contact_email: "charlie@acme.com" }
-      erp_customers:
-        updates:
-          - { customer_id: "100", domain: "acme.com" }
-      erp_contacts:
-        updates:
-          - { contact_id: "1001", name: "Alice Smith", email: "alice@acme.com" }
-          - { contact_id: "1002", name: "Bob", email: "bob@example.com" }
-          - { contact_id: "1003", name: "Charlie Johnson", email: "charlie@acme.com" }
-      erp_customer_contacts:
-        updates:
-          - { id: "1", customer_id: "100", contact_id: "1001", relation_type: "billing" }
-          - { id: "2", customer_id: "100", contact_id: "1002", relation_type: "support" }
-          - { id: "3", customer_id: "100", contact_id: "1003", relation_type: "primary" }

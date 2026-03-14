@@ -38,8 +38,6 @@ tests:
       crm:
         updates:
           - { id: "A1", email: "contact@acme.com", company_name: "Acme Corporation", phone: "555-1000" }
-          - { id: "A2", email: "contact@acme.com", company_name: "Acme Corporation", phone: "555-1001" }
-
   - description: "Deterministic resolution when timestamps are identical"
     input:
       crm:
@@ -48,5 +46,4 @@ tests:
     expected:
       crm:
         updates:
-          - { id: "A1", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1000" }
           - { id: "A2", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1001" }

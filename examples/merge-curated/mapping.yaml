@@ -61,11 +61,6 @@ tests:
         - { merge_id: "1", crm_id: "CRM1", billing_id: "BILL1" }
         - { merge_id: "2", crm_id: "CRM2", billing_id: "BILL2" }
     expected:
-      crm:
-        updates:
-          - { crm_id: "CRM1", customer_name: "John Doe" }
-          - { crm_id: "CRM2", customer_name: "Jane Smith" }
       billing:
         updates:
           - { billing_id: "BILL1", account_name: "John Doe" }
-          - { billing_id: "BILL2", account_name: "Jane Smith" }

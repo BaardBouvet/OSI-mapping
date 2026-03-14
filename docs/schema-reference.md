@@ -514,6 +514,7 @@ Maps a single source field to a single target field.
 | `priority` | integer | no | Per-field coalesce priority (overrides mapping-level) |
 | `last_modified` | [TimestampRef](#timestampref) | no | Per-field timestamp (overrides mapping-level) |
 | `reverse_required` | boolean | no | Exclude row from reverse if resolved value is null |
+| `references` | string | no | Mapping name for FK reverse resolution (see below) |
 | `description` | string | no | Human-readable description |
 
 \* At least one of `source` or `target` must be present.
@@ -589,6 +590,53 @@ When true, the entire row is excluded from reverse output if this field's resolv
 ```
 
 **Examples:** [inserts-and-deletes](../examples/inserts-and-deletes/)
+
+### `references` (field mapping)
+
+Specifies which mapping's source identities to use when translating a target entity reference back to a source FK value in the reverse view.
+
+**When to use:** When a target field has `references:` (on the [TargetFieldDef](#targetfielddef)) declaring it as an entity FK, and your mapping maps a source FK column to that target field.
+
+**Key distinction:** There are two different `references:` in the system:
+
+| Location | Purpose | Example |
+|---|---|---|
+| **Target field** (`targets.*.fields.*.references`) | Declares that this target field is an entity reference to another target type | `primary_contact: { strategy: coalesce, references: company }` |
+| **Field mapping** (`mappings.*.fields.*.references`) | Tells the reverse view which mapping to use for translating the reference back to a source FK | `references: crm_company` |
+
+The target-level one says *what* the reference points to. The field-mapping one says *how* to reverse-resolve it for this particular source system.
+
+```yaml
+# Target declares the entity reference
+targets:
+  person:
+    fields:
+      primary_contact:
+        strategy: coalesce
+        references: company     # FK to company entity
+
+# Each mapping specifies which mapping to resolve through
+mappings:
+  - name: crm_contact
+    source: { dataset: crm_contacts }
+    target: person
+    fields:
+      - source: company_id
+        target: primary_contact
+        references: crm_company  # resolve via CRM company mapping
+
+  - name: erp_contact
+    source: { dataset: erp_contacts }
+    target: person
+    fields:
+      - source: customer_ref
+        target: primary_contact
+        references: erp_customer # resolve via ERP company mapping
+```
+
+Without `references`, the reverse view passes through the raw target-level entity reference value without translating it back to the source namespace.
+
+**Examples:** [references](../examples/references/), [reference-preservation](../examples/reference-preservation/), [composite-keys](../examples/composite-keys/), [vocabulary-standard](../examples/vocabulary-standard/), [vocabulary-custom](../examples/vocabulary-custom/)
 
 ### Per-field `last_modified`
 
@@ -773,7 +821,7 @@ Expected values are **always objects** with explicit `updates`, `inserts`, `dele
 | `inserts` | New rows to create in this source (from other sources) |
 | `deletes` | Rows to remove (failed reverse_required or filter) |
 
-Omit a key when that category is empty.
+Omit a key when that category is empty. Rows not listed in any category are implicitly **noops** — source rows where the resolved values match the original values, requiring no write.
 
 ```yaml
 tests:

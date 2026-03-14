@@ -50,6 +50,7 @@ mappings:
     fields:
       - source: parent_order_id
         target: order_ref
+        references: shop_orders
       - source: line_num
         target: line_number
       - source: item
@@ -74,6 +75,7 @@ mappings:
     fields:
       - source: order_number
         target: order_ref
+        references: warehouse_orders
       - source: line_number
         target: line_number
       - source: product_name
@@ -101,10 +103,3 @@ tests:
             lines:
               - { line_num: 1, item: "Widget", qty: 2 }
               - { line_num: 2, item: "Gadget", qty: 1 }
-      warehouse_orders:
-        updates:
-          - { id: "W1", order_number: "ORD-001", total_amount: 150.00 }
-      warehouse_lines:
-        updates:
-          - { line_id: "L1", order_number: "W1", line_number: 1, product_name: "Widget", qty: 2 }
-          - { line_id: "L2", order_number: "W1", line_number: 2, product_name: "Gadget", qty: 1 }

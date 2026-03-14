@@ -37,7 +37,6 @@ mappings:
   - name: erp_orders
     source: { dataset: erp_orders }
     target: purchase_order
-    sync: true
     fields:
       - source: external_ref
         target: external_order_ref
@@ -52,10 +51,10 @@ mappings:
   - name: erp_order_lines
     source: { dataset: erp_order_lines }
     target: order_line
-    sync: true
     fields:
       - source: order_id
         target: order_ref
+        references: erp_orders
       - source: line_no
         target: line_number
       - source: product_name
@@ -68,7 +67,6 @@ mappings:
   - name: crm_orders
     source: { dataset: crm_orders }
     target: purchase_order
-    sync: true
     fields:
       - source: external_ref
         target: external_order_ref
@@ -83,11 +81,11 @@ mappings:
   - name: crm_line_items
     source: { dataset: crm_line_items }
     target: order_line
-    sync: true
     last_modified: modified_at
     fields:
       - source: order_ref
         target: order_ref
+        references: crm_orders
       - source: product_name
         target: product_name
         last_modified: modified_at
@@ -113,17 +111,9 @@ tests:
         updates:
           - { order_id: "ORD-100", external_ref: "PO-2024-001", order_date: "2024-01-20", customer_name: "Acme Corp", status: "shipped" }
       erp_order_lines:
-        updates:
-          - { order_id: "ORD-100", line_no: 1, product_name: "Widget A", quantity: 5, unit_price: 10.50 }
-          - { order_id: "ORD-100", line_no: 2, product_name: "Widget B", quantity: 3, unit_price: 15.75 }
         inserts:
           - { _cluster_id: "crm_line_items:LI-1001", order_id: "ORD-100", product_name: "Gadget X", quantity: 10, unit_price: 25.00 }
-      crm_orders:
-        updates:
-          - { order_number: "CRM-500", external_ref: "PO-2024-001", order_date: "2024-01-20", customer_name: "Acme Corp", status: "shipped" }
       crm_line_items:
-        updates:
-          - { line_item_id: "LI-1001", order_ref: "CRM-500", product_name: "Gadget X", quantity: 10, price: 25.00 }
         inserts:
           - _cluster_id: 'erp_order_lines:{"line_no": 1, "order_id": "ORD-100"}'
             order_ref: "CRM-500"

@@ -65,8 +65,10 @@ mappings:
     fields:
       - source: company_id
         target: company_id
+        references: crm_companies
       - source: contact_id
         target: person_id
+        references: crm_contacts
       - source: relation_type
         target: relation_type
 
@@ -125,25 +127,13 @@ tests:
       erp_companies:
         - { id: "100", name: "Acme Corp", email: "info@acme.com", contact_name: "Charlie Brown", contact_email: "charlie@example.com", modified_at: "2024-01-10T10:00:00Z" }
     expected:
-      crm_companies:
-        updates:
-          - { company_id: "C1", company_name: "Acme Corp", company_email: "info@acme.com" }
-          - { company_id: "C2", company_name: "TechStart", company_email: "hello@techstart.com" }
       crm_contacts:
-        updates:
-          - { contact_id: "P1", contact_name: "Alice Johnson", contact_email: "alice@example.com" }
-          - { contact_id: "P2", contact_name: "Bob Smith", contact_email: "bob@example.com" }
         inserts:
           - { _cluster_id: "erp_companies_person:100", contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
       crm_associations:
-        updates:
-          - { company_id: "C1", contact_id: "P1", relation_type: "decision_maker" }
-          - { company_id: "C2", contact_id: "P2", relation_type: "employee" }
         inserts:
           - { _cluster_id: "erp_companies_assoc:100", company_id: "C1", contact_id: null, relation_type: "employee" }
       erp_companies:
-        updates:
-          - { id: "100", name: "Acme Corp", email: "info@acme.com", contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
         inserts:
           - { _cluster_id: "crm_companies:C2", name: "TechStart", email: "hello@techstart.com", contact_name: "Bob Smith", contact_email: "bob@example.com" }
 
@@ -157,15 +147,6 @@ tests:
         - { company_id: "C1", contact_id: "P1", relation_type: "employee" }
       erp_companies: []
     expected:
-      crm_companies:
-        updates:
-          - { company_id: "C1", company_name: "Acme Corp", company_email: "info@acme.com" }
-      crm_contacts:
-        updates:
-          - { contact_id: "P1", contact_name: "Alice Employee", contact_email: "alice@acme.com" }
-      crm_associations:
-        updates:
-          - { company_id: "C1", contact_id: "P1", relation_type: "employee" }
       erp_companies:
         inserts:
           - { _cluster_id: "crm_companies:C1", name: "Acme Corp", email: "info@acme.com", contact_name: "Alice Employee", contact_email: "alice@acme.com" }

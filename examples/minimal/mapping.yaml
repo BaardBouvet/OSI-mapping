@@ -69,12 +69,8 @@ tests:
         - { id: "CU2", customer_account: "A12345", customer_email: "test2-customer@example.com", customer_name: "Test2 Customer", last_updated: "2024-12-01T12:00:00Z" }
     expected:
       companies:
-        updates:
-          - { id: "C2", company_account: "A12345", company_email: "test2@example.com", company_name: "Test2 Company" }
         inserts:
           - { _cluster_id: "customers:CU2", company_email: "test2-customer@example.com", company_account: "A12345", company_name: "Test2 Customer" }
       customers:
-        updates:
-          - { id: "CU2", customer_account: "A12345", customer_email: "test2-customer@example.com", customer_name: "Test2 Customer" }
         inserts:
           - { _cluster_id: "companies:C2", customer_email: "test2@example.com", customer_account: "A12345", customer_name: "Test2 Company" }

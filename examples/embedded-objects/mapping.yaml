@@ -65,6 +65,7 @@ mappings:
         target: name
       - source: address_id
         target: address_ref
+        references: erp_addresses
 
   - name: erp_addresses
     source: { dataset: erp_addresses }
@@ -98,11 +99,6 @@ tests:
       crm_customers:
         updates:
           - { customer_id: "C1", customer_name: "Acme Corporation", street_address: "456 Business Ave", city: "Bergen", postal_code: "5000", country: "Norway" }
-      erp_companies:
-        updates:
-          - { company_id: "E1", company_name: "Acme Corporation", address_id: "A100" }
       erp_addresses:
-        updates:
-          - { address_id: "A100", street: "456 Business Ave", city: "Bergen", zip_code: "5000", country: "Norway" }
         inserts:
           - { _cluster_id: "crm_customers_address:C1", street: "123 Main St", city: "Oslo", zip_code: "0150", country: "Norway" }

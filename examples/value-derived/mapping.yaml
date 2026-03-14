@@ -61,6 +61,3 @@ tests:
       crm:
         updates:
           - { contact_id: "C1", contact_email: "alice@example.com", contact_name: "Alice Smith" }
-      hr:
-        updates:
-          - { employee_id: "C1", employee_email: "alice@example.com", first: "Alice", last: "Smith" }

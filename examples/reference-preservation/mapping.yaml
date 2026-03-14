@@ -44,6 +44,7 @@ mappings:
         target: id
       - source: company_id
         target: company
+        references: crm_companies
 
 tests:
   - description: "Preserve original company_id when duplicate companies merge"
@@ -57,13 +58,6 @@ tests:
         - { contact_id: "C2", company_id: "200" }
         - { contact_id: "C3", company_id: "300" }
     expected:
-      crm_contacts:
-        updates:
-          - { contact_id: "C1", company_id: "100" }
-          - { contact_id: "C2", company_id: "200" }
-          - { contact_id: "C3", company_id: "300" }
       crm_companies:
         updates:
           - { company_id: "100", domain: "acme.com", name: "ACME Corporation" }
-          - { company_id: "200", domain: "acme.com", name: "ACME Corporation" }
-          - { company_id: "300", domain: "techcorp.com", name: "TechCorp" }

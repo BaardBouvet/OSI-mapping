@@ -260,6 +260,25 @@ fn pass_target_refs(doc: &MappingDocument, result: &mut ValidationResult) {
             }
         }
     }
+
+    // 3c: field mapping references must point to an existing mapping name
+    let mapping_names: HashSet<&str> = doc.mappings.iter().map(|m| m.name.as_str()).collect();
+    for m in &doc.mappings {
+        for (i, fm) in m.fields.iter().enumerate() {
+            if let Some(ref ref_mapping) = fm.references {
+                if !mapping_names.contains(ref_mapping.as_str()) {
+                    let src = fm.source.as_deref().unwrap_or("?");
+                    result.error(
+                        "Reference",
+                        format!(
+                            "Mapping '{}' field[{i}] ({src}): references mapping '{ref_mapping}' not found",
+                            m.name
+                        ),
+                    );
+                }
+            }
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────

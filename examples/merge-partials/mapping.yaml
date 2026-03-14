@@ -92,13 +92,7 @@ tests:
       crm_contacts:
         updates:
           - { contact_id: "C1", contact_email: "acme@example.com", contact_name: "Acme Corporation" }
-          - { contact_id: "C2", contact_email: "widgets@example.com", contact_name: "Widget Co" }
-      crm_invoices:
-        updates:
-          - { invoice_id: "INV1", customer_email: "acme@example.com", invoice_amount: 1000.00, invoice_number: "2024-001", invoice_date: "2024-01-15T10:00:00Z" }
       erp_customers:
-        updates:
-          - { customer_id: "E1", customer_email: "acme@example.com", customer_name: "Acme Corporation" }
         inserts:
           - { _cluster_id: "crm_contacts:C2", customer_email: "widgets@example.com", customer_name: "Widget Co" }
 

@@ -8,10 +8,10 @@ The engine generates a strict funnel of PostgreSQL views:
 
 ```
 source table → _fwd_{mapping} → _id_{target} → _resolved_{target} ─┬─ {target}              (analytics, always)
-                                                                   └─ _rev_{mapping} → _delta_{mapping}  (opt-in via sync: true)
+                                                                   └─ _rev_{mapping} → _delta_{mapping}  (auto when mapping has reverse fields)
 ```
 
-The analytics path is a strict linear chain — no diamonds, trivially IVM-safe. The reverse/delta path introduces one controlled diamond (reverse LEFT JOINs identity, see below) and is opt-in per mapping.
+The analytics path is a strict linear chain — no diamonds, trivially IVM-safe. The reverse/delta path introduces one controlled diamond (reverse LEFT JOINs identity, see below) and is generated automatically for any mapping with bidirectional or reverse_only fields.
 
 ## Diamond Avoidance
 
@@ -60,7 +60,7 @@ Entity identifiers are deterministic: `_entity_id = md5('{mapping}' || ':' || {s
 
 ## PK Columns in Delta
 
-The delta view includes human-readable PK columns (e.g., `id`, `order_id`) alongside `_src_id`. The reverse view restores these from `_src_id` via `reverse_select_exprs`, and the delta passes them through. This lets consumers identify rows by their natural key without parsing `_src_id`.
+The delta view includes human-readable PK columns (e.g., `id`, `order_id`) restored by the reverse view. `_src_id` is used internally in the pipeline but is not exposed in the delta output — consumers identify rows by their natural PK columns.
 
 ## _base: Raw Source Values as JSONB
 
@@ -102,6 +102,29 @@ Rows where all fields match are classified as `noop` instead of `update`. The ET
 **Cast to text:** The `::text` cast ensures the comparison works regardless of the column's native type, since `_base->>` always returns text.
 
 **Ordering in CASE:** The noop check comes after insert/delete checks but before the final `ELSE 'update'`. A row must first survive the delete predicates before being eligible for noop classification.
+
+## FK Reference Resolution
+
+When a target field has `references:` (declaring it as an entity FK to another target), the reverse view must translate the resolved entity-level reference back to a source-level foreign key. Each source system uses its own ID namespace, so the engine needs to know *which mapping* to use when looking up the local FK value.
+
+**Decision:** The field mapping declares `references: <mapping_name>` explicitly. No heuristics or naming conventions.
+
+An earlier version used a longest-common-prefix (LCP) heuristic on source dataset names to guess the "same system" mapping. This was fragile and opaque — `crm_contacts` and `crm_companies` happened to share a prefix, but `sales_leads` and `support_tickets` would not group correctly. The LCP code was removed entirely.
+
+**How it works in SQL:**
+
+```sql
+-- In _rev_{mapping}: translate entity reference to source FK
+(SELECT ref_local._src_id
+ FROM _id_{ref_target} ref_match
+ JOIN _id_{ref_target} ref_local
+   ON ref_local._entity_id_resolved = ref_match._entity_id_resolved
+ WHERE ref_match._src_id = r.{target_field}::text
+ AND ref_local._mapping = '{fm.references}'
+ LIMIT 1) AS {source_field}
+```
+
+Without `references`, the reverse view passes through the raw entity-level value without translation.
 
 ## Cluster Identity and Insert Tracking
 

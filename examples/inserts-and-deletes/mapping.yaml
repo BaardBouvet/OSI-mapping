@@ -19,7 +19,6 @@ mappings:
   - name: crm_a
     source: { dataset: crm_a }
     target: person
-    sync: true
     fields:
       - source: email
         target: email
@@ -29,7 +28,6 @@ mappings:
   - name: crm_b
     source: { dataset: crm_b }
     target: person
-    sync: true
     fields:
       - source: email
         target: email
@@ -50,16 +48,9 @@ tests:
         - { person_id: "P5", customer_id: null, email: "orphan@example.com" }
     expected:
       crm_a:
-        updates:
-          - { person_id: "P1", email: "lead1@example.com", customer_id: null }
-          - { person_id: "P2", email: "jane@example.com", customer_id: "CUST-001" }
-          - { person_id: "P3", email: "lead2@example.com", customer_id: null }
-          - { person_id: "P4", email: "john@example.com", customer_id: "CUST-002" }
         inserts:
           - { _cluster_id: "crm_b:P5", person_id: "P5", email: "orphan@example.com", customer_id: null }
       crm_b:
-        updates:
-          - { person_id: "P2", customer_id: "CUST-001", email: "jane@example.com" }
         inserts:
           - { person_id: "P4", _cluster_id: "crm_a:P4", customer_id: "CUST-002", email: "john@example.com" }
         deletes:

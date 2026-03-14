@@ -209,11 +209,6 @@
         "cluster_field": {
           "type": "string",
           "description": "Column in the source table holding a pre-populated cluster ID from ETL feedback."
-        },
-        "sync": {
-          "type": "boolean",
-          "default": false,
-          "description": "When true, produces a reverse mapping that projects the resolved golden record back to source shape and classifies rows as insert/update/delete/noop."
         }
       },
       "anyOf": [
@@ -308,6 +303,10 @@
           "minimum": 0,
           "description": "Per-field COALESCE priority. Overrides the mapping-level priority."
         },
+        "references": {
+          "type": "string",
+          "description": "Name of the mapping whose source identities should be used when translating an entity reference back to a source FK value in the reverse view."
+        },
         "description": { "type": "string" }
       }
     },
@@ -400,13 +399,13 @@
         },
         "expected": {
           "type": "object",
-          "description": "Expected output keyed by source dataset name. Each value is always an object with explicit updates/inserts/deletes arrays. Omit a key if that category is empty.",
+          "description": "Expected output keyed by source dataset name. Each value is an object with updates/inserts/deletes arrays. Omit a key or the entire dataset if that category is empty. Rows not listed are implicitly noops.",
           "additionalProperties": {
             "type": "object",
-            "description": "Expected result for one source dataset. Always explicit — never a bare array.",
+            "description": "Expected result for one source dataset. Only list rows that change — unlisted rows are implicitly noops.",
             "additionalProperties": false,
             "properties": {
-              "updates": { "type": "array", "items": { "type": "object" }, "description": "Rows that exist in input and are returned (potentially modified) after resolution. Includes all surviving rows." },
+              "updates": { "type": "array", "items": { "type": "object" }, "description": "Rows whose resolved values differ from input — the source must be updated." },
               "inserts": { "type": "array", "items": { "type": "object" }, "description": "New rows to create in this source (originated from other sources)." },
               "deletes": { "type": "array", "items": { "type": "object" }, "description": "Rows to remove from this source (failed reverse_required or filter)." }
             }

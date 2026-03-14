@@ -72,9 +72,6 @@ tests:
       source_c:
         - { id: "C1", email_address: "contact@acme.com", business_name: "Acme International", phone_number: "555-3000" }
     expected:
-      source_a:
-        updates:
-          - { id: "A1", email: "contact@acme.com", company_name: "Acme Corp", phone: "555-1000", sector: "Technology" }
       source_b:
         updates:
           - { id: "B1", contact_email: "contact@acme.com", org_name: "Acme Corp", contact_phone: "555-2000", industry_type: "Technology" }

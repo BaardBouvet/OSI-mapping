@@ -79,18 +79,3 @@ tests:
           shipping_state: "MA"
           shipping_zip: "02139"
           shipping_country: "US"
-    expected:
-      customers:
-        updates:
-          - customer_id: "C1"
-            name: "Acme Corp"
-            billing_street: "100 Main St"
-            billing_city: "Boston"
-            billing_state: "MA"
-            billing_zip: "02101"
-            billing_country: "US"
-            shipping_street: "200 Oak Ave"
-            shipping_city: "Cambridge"
-            shipping_state: "MA"
-            shipping_zip: "02139"
-            shipping_country: "US"

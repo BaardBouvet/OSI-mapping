@@ -263,17 +263,24 @@ pub struct Mapping {
     /// Column in the source table holding a pre-populated cluster ID.
     #[serde(default)]
     pub cluster_field: Option<String>,
-    /// When true, generate a sync view that projects the resolved golden
-    /// record back to source shape and classifies rows as
-    /// insert/update/delete/noop.  Default: false.
-    #[serde(default)]
-    pub sync: bool,
 }
 
 impl Mapping {
     /// Whether this mapping contributes forward data (fields) to the target.
     pub fn has_fields(&self) -> bool {
         !self.fields.is_empty()
+    }
+
+    /// Whether this mapping has any field that participates in reverse mapping.
+    /// True when at least one field is Bidirectional or ReverseOnly.
+    pub fn has_reverse_fields(&self) -> bool {
+        self.fields.iter().any(|f| f.is_reverse())
+    }
+
+    /// Whether to generate sync (reverse + delta) views for this mapping.
+    /// True when any field is Bidirectional or ReverseOnly.
+    pub fn needs_sync(&self) -> bool {
+        self.has_reverse_fields()
     }
 
     /// Whether this mapping contributes identity edges via links.
@@ -434,6 +441,10 @@ pub struct FieldMapping {
     pub last_modified: Option<TimestampRef>,
     #[serde(default)]
     pub priority: Option<i64>,
+    /// Name of the mapping whose source identities should be used when
+    /// translating an entity reference back to a source FK in the reverse view.
+    #[serde(default)]
+    pub references: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
 }

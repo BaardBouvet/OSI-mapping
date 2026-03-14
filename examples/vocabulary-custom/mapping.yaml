@@ -55,6 +55,7 @@ mappings:
         target: id
       - source: employment_status
         target: status
+        references: hr_status_codes
 
   - name: crm
     source: { dataset: crm }
@@ -65,6 +66,7 @@ mappings:
         target: id
       - source: status_code
         target: status
+        references: crm_status_codes
 
 tests:
   - description: "CRM status (newer) wins — HR gets translated code"
@@ -85,9 +87,6 @@ tests:
       hr_system:
         updates:
           - { employee_id: "alice", employment_status: "I" }
-          - { employee_id: "bob", employment_status: "I" }
       crm:
-        updates:
-          - { contact_id: "alice", status_code: 0 }
         inserts:
           - { _cluster_id: "hr_system:bob", contact_id: "bob", status_code: 0 }

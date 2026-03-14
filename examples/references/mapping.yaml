@@ -32,46 +32,46 @@ mappings:
   - name: crm_company
     source: { dataset: crm_company }
     target: company
-    sync: true
     fields:
       - source: homepage
         target: domain
       - source: assigned_account_manager
         target: account_manager
         last_modified: manager_last_updated
+        references: crm_contact
 
   - name: crm_contact
     source: { dataset: crm_contact }
     target: person
-    sync: true
     fields:
       - source: primary_email
         target: email
       - source: company_id
         target: primary_contact
         priority: 2
+        references: crm_company
 
   - name: erp_customer
     source: { dataset: erp_customer }
     target: company
-    sync: true
     fields:
       - source: website
         target: domain
       - source: assigned_account_manager
         target: account_manager
         last_modified: manager_last_updated
+        references: erp_contact
 
   - name: erp_contact
     source: { dataset: erp_contact }
     target: person
-    sync: true
     fields:
       - source: email
         target: email
       - source: customer_ref
         target: primary_contact
         priority: 1
+        references: erp_customer
 
 tests:
   - description: "Cross-system reference resolution — CRM contact moves to correct company"

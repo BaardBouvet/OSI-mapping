@@ -106,6 +106,3 @@ tests:
       crm:
         updates:
           - { customer_id: "C1", customer_name: "Acme Corporation", billing_address_id: "B1", shipping_address_id: "S1", billing_street: "123 Main Street", billing_city: "New York", shipping_street: "456 Oak Ave", shipping_city: "LA" }
-      billing:
-        updates:
-          - { account_id: "C1", account_name: "Acme Corporation", billing_address_id: "B1", street: "123 Main Street", city: "New York" }

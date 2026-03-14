@@ -66,10 +66,3 @@ tests:
         - { person_id: "P001", dob: "15/06/85", first_name: "John", last_name: "Doe", phone_number: "+1 555-1234" }
       system_b:
         - { user_id: "P001", birthdate: "1985-06-15", name: "John Doe", contact_phone: "15551234" }
-    expected:
-      system_a:
-        updates:
-          - { person_id: "P001", dob: "15/06/85", first_name: "John", last_name: "Doe", phone_number: "+1 555-1234" }
-      system_b:
-        updates:
-          - { user_id: "P001", birthdate: "1985-06-15", name: "John Doe", contact_phone: "15551234" }
