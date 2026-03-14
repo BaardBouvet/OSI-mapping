@@ -127,8 +127,8 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
                 return format!(
                     "-- Input table: {table_name} (cluster members)\n\
                      CREATE TABLE IF NOT EXISTS {table_name} (\n  \
-                       {} TEXT,\n  \
-                       {} TEXT\n\
+                                             {} TEXT PRIMARY KEY,\n  \
+                                             {} TEXT\n\
                      );\n",
                     cm.source_key, cm.cluster_id
                 );
@@ -136,26 +136,34 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         }
     }
 
-    // Source dataset table — collect all referenced columns
+    // Source dataset table — collect all referenced columns.
     let mut columns: Vec<String> = Vec::new();
 
-    // Find source metadata for PK
-    if let Some(source) = doc.sources.get(table_name) {
-        for col in source.primary_key.columns() {
-            if !columns.contains(&col.to_string()) {
-                columns.push(col.to_string());
-            }
-        }
-    }
-    // Also check via Source.table_name override
-    let source_meta = doc.sources.iter().find(|(key, src)| {
-        src.table_name(key) == table_name
-    });
-    if let Some((_key, source)) = source_meta {
-        for col in source.primary_key.columns() {
-            if !columns.contains(&col.to_string()) {
-                columns.push(col.to_string());
-            }
+    // Resolve source metadata by key or by explicit table override.
+    let source_meta = doc
+        .sources
+        .get(table_name)
+        .or_else(|| {
+            doc.sources
+                .iter()
+                .find(|(key, src)| src.table_name(key) == table_name)
+                .map(|(_key, src)| src)
+        });
+
+    // Add PK columns first so they are always present in generated DDL.
+    let pk_columns: Vec<String> = source_meta
+        .map(|source| {
+            source
+                .primary_key
+                .columns()
+                .into_iter()
+                .map(|c| c.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    for col in &pk_columns {
+        if !columns.contains(col) {
+            columns.push(col.clone());
         }
     }
 
@@ -204,9 +212,15 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         }
     }
 
-    let col_defs: Vec<String> = std::iter::once("_row_id SERIAL PRIMARY KEY".to_string())
-        .chain(columns.iter().map(|c| format!("{c} TEXT")))
-        .collect();
+    let mut col_defs: Vec<String> = Vec::new();
+    if pk_columns.is_empty() {
+        // Fallback for mappings without declared source PK metadata.
+        col_defs.push("_row_id SERIAL PRIMARY KEY".to_string());
+    }
+    col_defs.extend(columns.iter().map(|c| format!("{c} TEXT")));
+    if !pk_columns.is_empty() {
+        col_defs.push(format!("PRIMARY KEY ({})", pk_columns.join(", ")));
+    }
 
     format!(
         "-- Input table: {table_name}\n\
