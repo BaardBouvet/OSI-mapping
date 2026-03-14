@@ -8,10 +8,15 @@ use crate::model::{Mapping, Source, Strategy, Target};
 /// Produces: `CREATE OR REPLACE VIEW _rev_{mapping_name} AS ...`
 ///
 /// The reverse view joins:
-///   `_id_{target}` (for per-source-row identity values + entity assignment)
 ///   `_resolved_{target}` (for resolved non-identity values)
+///   `_id_{target}` (LEFT JOIN for per-source-row identity values + entity assignment)
 ///
-/// For identity-strategy fields: uses `id.{target_field}` (source's own forward value).
+/// A LEFT JOIN from resolved → identity ensures that entities WITHOUT a member
+/// from this mapping still produce a row (with `_src_id = NULL`).  The delta
+/// view then classifies those as inserts.
+///
+/// For identity/collect-strategy fields: uses `COALESCE(id.{field}, r.{field})`
+///   — source's own value when it exists, resolved value for insert rows.
 /// For other fields: uses `r.{target_field}` (resolved/merged value).
 /// For fields with `reverse_expression`: uses the expression as-is.
 ///
@@ -30,8 +35,11 @@ pub fn render_reverse_view(
     let resolved_view = format!("_resolved_{target_name}");
 
     let mut select_exprs: Vec<String> = Vec::new();
-    // Always emit _src_id (delta view joins on it).
+    // Always emit _src_id (delta view joins on it; NULL for insert rows).
     select_exprs.push("id._src_id".to_string());
+    // Emit cluster identity for insert feedback.
+    // For insert rows the identity side is NULL, so fall back to r._entity_id.
+    select_exprs.push("COALESCE(id._entity_id_resolved, r._entity_id) AS _cluster_id".to_string());
     // Collect PK column names so we can skip duplicate aliases below.
     let pk_columns: std::collections::HashSet<&str> = match source_meta {
         Some(src) => {
@@ -74,8 +82,8 @@ pub fn render_reverse_view(
             let strategy = target.and_then(|t| t.fields.get(tgt)).map(|f| f.strategy());
             match strategy {
                 Some(Strategy::Identity) | Some(Strategy::Collect) => {
-                    // Use source's own forward value (from identity view)
-                    format!("id.{tgt}")
+                    // Source's own forward value when it exists, resolved for insert rows.
+                    format!("COALESCE(id.{tgt}, r.{tgt})")
                 }
                 _ => {
                     // Use resolved value
@@ -89,34 +97,26 @@ pub fn render_reverse_view(
         select_exprs.push(format!("{expr} AS {source_name}"));
     }
 
+    // FROM _resolved LEFT JOIN _id: every entity gets a row.
+    // Entities with a member from this mapping: id.* is populated.
+    // Entities without: id.* is NULL → delta classifies as insert.
     let mut sql = format!(
         "-- Reverse: {name} ({target_name} → {source})\n\
          CREATE OR REPLACE VIEW {view_name} AS\nSELECT\n  {columns}\n\
-         FROM {id_view} AS id\n\
-         JOIN {resolved_view} AS r ON r._entity_id = id._entity_id_resolved\n\
-         WHERE id._mapping = '{mapping_name}'",
+         FROM {resolved_view} AS r\n\
+         LEFT JOIN {id_view} AS id\n  \
+           ON id._entity_id_resolved = r._entity_id\n  \
+           AND id._mapping = '{mapping_name}'",
         name = mapping.name,
         source = mapping.source.dataset,
         columns = select_exprs.join(",\n  "),
         mapping_name = mapping.name,
     );
 
-    // reverse_required: exclude rows where required target fields are null
-    let required_fields: Vec<String> = mapping
-        .fields
-        .iter()
-        .filter(|fm| fm.reverse_required)
-        .filter_map(|fm| fm.target.clone())
-        .collect();
-
-    for rf in &required_fields {
-        sql.push_str(&format!("\n  AND r.{rf} IS NOT NULL"));
-    }
-
-    // reverse_filter
-    if let Some(ref rf) = mapping.reverse_filter {
-        sql.push_str(&format!("\n  AND ({rf})"));
-    }
+    // No WHERE clause — the reverse view emits ALL rows.
+    // Filtering (reverse_required / reverse_filter) is handled by the delta
+    // view, which classifies filtered-out rows as deletes.  This avoids a
+    // diamond dependency: delta depends only on reverse, not on identity.
 
     sql.push_str(";\n");
 

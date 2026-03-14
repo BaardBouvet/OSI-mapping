@@ -113,7 +113,7 @@ tests:
           - { order_id: "ORD-100", line_no: 1, product_name: "Widget A", quantity: 5, unit_price: 10.50 }
           - { order_id: "ORD-100", line_no: 2, product_name: "Widget B", quantity: 3, unit_price: 15.75 }
         inserts:
-          - { _origin_crm_line_items_line_item_id: ["LI-1001"], order_id: "ORD-100", product_name: "Gadget X", quantity: 10, unit_price: 25.00 }
+          - { _cluster_id: "crm_line_items:LI-1001", order_id: "ORD-100", product_name: "Gadget X", quantity: 10, unit_price: 25.00 }
       crm_orders:
         updates:
           - { order_number: "CRM-500", external_ref: "PO-2024-001", order_date: "2024-01-20", customer_name: "Acme Corp", status: "shipped" }
@@ -121,5 +121,13 @@ tests:
         updates:
           - { line_item_id: "LI-1001", order_ref: "CRM-500", product_name: "Gadget X", quantity: 10, price: 25.00 }
         inserts:
-          - { _origin_erp_order_lines_id: [{ order_id: "ORD-100", line_no: 1 }], order_ref: "CRM-500", product_name: "Widget A", quantity: 5, price: 10.50 }
-          - { _origin_erp_order_lines_id: [{ order_id: "ORD-100", line_no: 2 }], order_ref: "CRM-500", product_name: "Widget B", quantity: 3, price: 15.75 }
+          - _cluster_id: 'erp_order_lines:{"line_no": 1, "order_id": "ORD-100"}'
+            order_ref: "CRM-500"
+            product_name: "Widget A"
+            quantity: 5
+            price: 10.50
+          - _cluster_id: 'erp_order_lines:{"line_no": 2, "order_id": "ORD-100"}'
+            order_ref: "CRM-500"
+            product_name: "Widget B"
+            quantity: 3
+            price: 15.75

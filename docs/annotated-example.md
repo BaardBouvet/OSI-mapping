@@ -14,6 +14,17 @@ description: >
   CRM is the authority on names. ERP is the authority on job titles.
   Phone directory provides formatted phone numbers.
 
+# ─── Source metadata ───────────────────────────────────────────────
+# Declares physical table names and primary keys.
+# Primary keys are used throughout the pipeline for row identification.
+sources:
+  crm:
+    primary_key: id
+  erp:
+    primary_key: id
+  phonebook:
+    primary_key: id
+
 # ─── Target entities ───────────────────────────────────────────────
 # Defines WHAT the unified record looks like and HOW conflicts resolve.
 # Keys are entity names referenced by mappings below.
@@ -195,28 +206,34 @@ tests:
             phone: "5554000"
             updated_at: "2025-03-01T00:00:00Z"
       # ERP and phonebook get inserts — Bob is new to them.
+      # Inserts carry _cluster_id (a seed like "mapping:src_id"),
+      # plus the resolved business field values.
       erp:
         inserts:
-          - contact_email: "bob@example.com"
+          - _cluster_id: "crm:C2"
+            contact_email: "bob@example.com"
             contact_name: "Bob Brown"
             position: "Manager"
             work_phone: "5554000"
       phonebook:
         inserts:
-          - email: "bob@example.com"
+          - _cluster_id: "crm:C2"
+            email: "bob@example.com"
             formatted_phone: "5554000"
 ```
 
 ## What to notice
 
-1. **Targets define the shape, mappings fill it in.** The `contact` target declares four fields with four different strategies. Each mapping contributes values to those fields independently.
+1. **Sources declare primary keys.** The `sources:` section declares each dataset's PK once. This PK is used for `_src_id` in the forward view, delta join, and reverse-mapped output.
 
-2. **Priority is per-field, not per-source.** CRM has `priority: 1` on `name` but no priority on `phone`. Priority only matters for `coalesce` fields.
+2. **Targets define the shape, mappings fill it in.** The `contact` target declares four fields with four different strategies. Each mapping contributes values to those fields independently.
 
-3. **Timestamp cascades.** `last_modified: updated_at` on the CRM mapping applies to all fields using the `last_modified` strategy. Per-field `last_modified` would override it if needed.
+3. **Priority is per-field, not per-source.** CRM has `priority: 1` on `name` but no priority on `phone`. Priority only matters for `coalesce` fields.
 
-4. **Expressions are SQL.** The `regexp_replace` on phone fields is a forward transform. The `max(phone)` on the target is an aggregation across all contributed values.
+4. **Timestamp cascades.** `last_modified: updated_at` on the CRM mapping applies to all fields using the `last_modified` strategy. Per-field `last_modified` would override it if needed.
 
-5. **Tests are explicit.** Expected output is an object containing one or more of `updates`, `inserts`, and `deletes` (never a bare array). Omit keys when empty.
+5. **Expressions are SQL.** The `regexp_replace` on phone fields is a forward transform. The `max(phone)` on the target is an aggregation across all contributed values.
 
-6. **Forward-only fields.** The phonebook's `name` mapping has no `source` — it's a constant contributed only during forward processing.
+6. **Tests are explicit.** Expected output is an object containing one or more of `updates`, `inserts`, and `deletes` (never a bare array). Omit keys when empty. Insert rows carry `_cluster_id` — a seed like `"mapping:src_id"` that the test harness resolves to the computed entity ID.
+
+7. **Forward-only fields.** The phonebook's `name` mapping has no `source` — it's a constant contributed only during forward processing.

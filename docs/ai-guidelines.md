@@ -49,11 +49,15 @@ See [`examples/references/mapping.yaml`](../examples/references/mapping.yaml) an
 
 ## File Structure
 
-Every mapping file is a YAML document with four top-level keys:
+Every mapping file is a YAML document with five top-level keys:
 
 ```yaml
 version: "1.0"           # Required — always "1.0"
 description: "..."        # Optional — human-readable summary
+
+sources:                  # Source metadata: primary keys, table names
+  <dataset_name>:
+    primary_key: <column>  # or [col1, col2] for composite
 
 targets:                  # Target entity definitions with resolution rules
   <entity_name>:
@@ -74,7 +78,7 @@ tests:                    # Inline test cases
     expected: { ... }
 ```
 
-At least one of `targets` or `mappings` must be present. Both are present in most files.
+At least one of `targets` or `mappings` must be present. Both are present in most files. The `sources:` section declares primary keys used throughout the pipeline.
 
 ## Naming Rules
 
@@ -257,6 +261,37 @@ mappings:
     fields: [...]
 ```
 
+### External identity links
+
+When records are linked by an external system (MDM, record linkage tool):
+
+```yaml
+mappings:
+  - name: match_links
+    source: { dataset: match_results }
+    target: contact
+    links:
+      - field: crm_id
+        references: crm
+      - field: erp_id
+        references: erp
+```
+
+A mapping with `links` and no `fields` is a linkage-only mapping.
+
+### ETL feedback (cluster_members)
+
+For insert tracking — prevents duplicate inserts by feeding back generated IDs:
+
+```yaml
+mappings:
+  - name: erp
+    source: { dataset: erp }
+    target: contact
+    cluster_members: true    # creates _cluster_members_erp table
+    fields: [...]
+```
+
 ## Tests Section
 
 Tests define input data and expected output after the full pipeline (forward → resolution → reverse):
@@ -282,7 +317,7 @@ tests:
 - Never use a bare array for expected — always the `{ updates, inserts, deletes }` form
 - Omit a key (`updates`, `inserts`, or `deletes`) only when that category is empty
 - `updates`: rows that exist in input and survive resolution (potentially with changed values)
-- `inserts`: new rows to create (originated from another source)
+- `inserts`: new rows to create (originated from another source). Must include `_cluster_id` — a seed like `"mapping:src_id"` identifying which entity the insert belongs to
 - `deletes`: rows to remove (failed `reverse_required` or filter)
 
 ## Validation Checklist
@@ -299,6 +334,8 @@ Before submitting a mapping file, verify:
 8. Mapping names are unique within the file
 9. No duplicate `target` field names within a single mapping's fields
 10. Test dataset names match mapping source datasets
+11. Every source dataset used by a mapping has a `sources:` entry with `primary_key`
+12. Insert rows in test expected sections include `_cluster_id`
 
 ## Expressions
 

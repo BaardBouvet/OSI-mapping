@@ -163,9 +163,18 @@ async fn execute_hello_world() {
     let dag = osi_engine::dag::build_dag(&doc);
     let sql = osi_engine::render::render_sql(&doc, &dag).expect("render hello-world");
 
-    for test in &doc.tests {
+    for (test_idx, test) in doc.tests.iter().enumerate() {
+        let desc = test
+            .description
+            .as_deref()
+            .unwrap_or("(unnamed)");
+        eprintln!("\n--- Test {}: {desc} ---", test_idx + 1);
+
         // Create source tables from test input
         load_test_data(&client, &test.input).await;
+
+        // Ensure cluster_members tables exist (may not be in test input)
+        ensure_cluster_members_tables(&client, &doc, &test.input).await;
 
         // Execute the rendered SQL views
         for stmt in sql.split(';') {
@@ -229,7 +238,12 @@ async fn execute_hello_world() {
             let mut actual_updates: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
 
             for rev_row in &rev_rows {
-                let src_id: String = rev_row.get("_src_id");
+                // Skip insert rows (_src_id is NULL); they're verified separately.
+                let src_id: Option<String> = rev_row.try_get("_src_id").ok().flatten();
+                let src_id = match src_id {
+                    Some(id) => id,
+                    None => continue,
+                };
 
                 // Build PK-based WHERE clause for source row lookup
                 let pk_where = if let Some(src_meta) = doc.sources.get(dataset.as_str()) {
@@ -337,6 +351,111 @@ async fn execute_hello_world() {
                 );
             }
             eprintln!("{dataset}: {count} updates match ✓", count = actual_updates.len());
+
+            // ── Insert verification ────────────────────────────────
+            let expected_inserts: Vec<serde_json::Map<String, serde_json::Value>> = expected
+                .inserts
+                .iter()
+                .filter_map(|v| v.as_object().cloned())
+                .collect();
+
+            if !expected_inserts.is_empty() {
+                let delta_view = format!("_delta_{}", mapping.name);
+                let insert_rows = client
+                    .query(
+                        &format!("SELECT * FROM {delta_view} WHERE _action = 'insert'"),
+                        &[],
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("query {delta_view} inserts: {e}"));
+
+                // Build actual insert maps: _cluster_id + business fields
+                let target_name = mapping.target.name();
+                let mut actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> =
+                    Vec::new();
+                for row in &insert_rows {
+                    let mut map = serde_json::Map::new();
+                    let cluster_id: Option<String> = row.try_get("_cluster_id").ok().flatten();
+                    map.insert(
+                        "_cluster_id".into(),
+                        cluster_id
+                            .map(serde_json::Value::String)
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                    // Include reverse-mapped business fields
+                    for (src_field, _) in &reverse_fields {
+                        let val: Option<String> = row.try_get(src_field.as_str()).ok().flatten();
+                        map.insert(
+                            src_field.clone(),
+                            val.map(serde_json::Value::String)
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    actual_inserts.push(map);
+                }
+
+                // Resolve expected _cluster_id seeds: "mapping:src_id" → look up
+                // _entity_id_resolved from the identity view.
+                let mut expected_resolved: Vec<serde_json::Map<String, serde_json::Value>> =
+                    Vec::new();
+                for exp in &expected_inserts {
+                    let mut resolved = serde_json::Map::new();
+                    for (k, v) in exp {
+                        if k == "_cluster_id" {
+                            if let Some(seed) = v.as_str() {
+                                let cluster_id =
+                                    resolve_cluster_id(&client, seed, target_name).await;
+                                resolved.insert(k.clone(), serde_json::Value::String(cluster_id));
+                            } else {
+                                resolved.insert(k.clone(), v.clone());
+                            }
+                        } else {
+                            // Normalize to string
+                            let str_val = match v {
+                                serde_json::Value::String(s) => {
+                                    serde_json::Value::String(s.clone())
+                                }
+                                serde_json::Value::Number(n) => {
+                                    serde_json::Value::String(n.to_string())
+                                }
+                                serde_json::Value::Bool(b) => {
+                                    serde_json::Value::String(b.to_string())
+                                }
+                                other => other.clone(),
+                            };
+                            resolved.insert(k.clone(), str_val);
+                        }
+                    }
+                    expected_resolved.push(resolved);
+                }
+
+                let mut actual_sorted: Vec<String> = actual_inserts
+                    .iter()
+                    .map(|m| serde_json::to_string(m).unwrap())
+                    .collect();
+                actual_sorted.sort();
+                let mut expected_sorted: Vec<String> = expected_resolved
+                    .iter()
+                    .map(|m| serde_json::to_string(m).unwrap())
+                    .collect();
+                expected_sorted.sort();
+
+                assert_eq!(
+                    actual_sorted.len(),
+                    expected_sorted.len(),
+                    "{dataset}: insert count mismatch.\n  actual: {actual_sorted:?}\n  expected: {expected_sorted:?}"
+                );
+                for (actual, expected) in actual_sorted.iter().zip(expected_sorted.iter()) {
+                    assert_eq!(
+                        actual, expected,
+                        "{dataset}: insert mismatch.\n  actual:   {actual}\n  expected: {expected}"
+                    );
+                }
+                eprintln!(
+                    "{dataset}: {count} inserts match ✓",
+                    count = actual_inserts.len()
+                );
+            }
         }
     }
 }
@@ -353,6 +472,39 @@ fn list_testable_examples() {
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────
+
+/// Resolve a `_cluster_id` seed like `"crm:2"` to the actual
+/// `_entity_id_resolved` from the identity view.
+///
+/// Parses the seed as `"{mapping}:{src_id}"` and queries
+/// `_id_{target}` for the resolved entity ID.
+async fn resolve_cluster_id(
+    client: &tokio_postgres::Client,
+    seed: &str,
+    target_name: &str,
+) -> String {
+    let (mapping, src_id) = seed.split_once(':').unwrap_or_else(|| {
+        panic!("_cluster_id seed must be 'mapping:src_id', got '{seed}'")
+    });
+    let id_view = format!("_id_{target_name}");
+    let rows = client
+        .query(
+            &format!(
+                "SELECT _entity_id_resolved FROM {id_view} \
+                 WHERE _mapping = $1 AND _src_id = $2 LIMIT 1"
+            ),
+            &[&mapping, &src_id],
+        )
+        .await
+        .unwrap_or_else(|e| {
+            panic!("resolve _cluster_id for '{seed}' in {id_view}: {e}")
+        });
+    assert!(
+        !rows.is_empty(),
+        "_cluster_id seed '{seed}': no row found in {id_view} for _mapping='{mapping}' _src_id='{src_id}'"
+    );
+    rows[0].get::<_, String>("_entity_id_resolved")
+}
 
 /// Infer Postgres column types from JSON test data values.
 ///
@@ -477,8 +629,13 @@ async fn load_test_data(
                 format!("{c} {pg_type}")
             }))
             .collect();
+        // DROP CASCADE to remove dependent views, then re-create.
+        client
+            .execute(&format!("DROP TABLE IF EXISTS {dataset} CASCADE"), &[])
+            .await
+            .unwrap_or_else(|e| panic!("DROP TABLE {dataset}: {e}"));
         let create_sql = format!(
-            "CREATE TABLE IF NOT EXISTS {dataset} ({cols})",
+            "CREATE TABLE {dataset} ({cols})",
             cols = col_defs.join(", ")
         );
         client
@@ -504,6 +661,38 @@ async fn load_test_data(
                     .execute(&insert_sql, &[])
                     .await
                     .unwrap_or_else(|e| panic!("INSERT {dataset}: {e}\nSQL: {insert_sql}"));
+            }
+        }
+    }
+}
+
+/// Ensure cluster_members tables exist for mappings that declare them.
+/// If the test input already created the table (with data), skip it.
+/// Otherwise create an empty table so the forward view's LEFT JOIN succeeds.
+async fn ensure_cluster_members_tables(
+    client: &tokio_postgres::Client,
+    doc: &osi_engine::model::MappingDocument,
+    input: &indexmap::IndexMap<String, Vec<serde_json::Value>>,
+) {
+    for mapping in &doc.mappings {
+        if let Some(ref cm) = mapping.cluster_members {
+            let table = cm.table_name(&mapping.name);
+            if !input.contains_key(&table) {
+                // Not in test input — drop any stale table and create empty
+                client
+                    .execute(&format!("DROP TABLE IF EXISTS {table} CASCADE"), &[])
+                    .await
+                    .unwrap();
+                client
+                    .execute(
+                        &format!(
+                            "CREATE TABLE {table} ({} TEXT, {} TEXT)",
+                            cm.cluster_id, cm.source_key,
+                        ),
+                        &[],
+                    )
+                    .await
+                    .unwrap();
             }
         }
     }
@@ -580,6 +769,7 @@ async fn dump_hello_world_intermediates() {
     let sql = osi_engine::render::render_sql(&doc, &dag).expect("render");
 
     load_test_data(&client, &doc.tests[0].input).await;
+    ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
     execute_views(&client, &sql).await;
 
     let views = [

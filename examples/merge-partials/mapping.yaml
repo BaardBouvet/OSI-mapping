@@ -100,7 +100,7 @@ tests:
         updates:
           - { customer_id: "E1", customer_email: "acme@example.com", customer_name: "Acme Corporation" }
         inserts:
-          - { _origin_crm_contacts_contact_id: ["C2"], _origin_crm_invoices_invoice_id: null, customer_email: "widgets@example.com", customer_name: "Widget Co" }
+          - { _cluster_id: "crm_contacts:C2", customer_email: "widgets@example.com", customer_name: "Widget Co" }
 
   - description: "ERP customer without invoices gets deleted (is_customer = false)"
     input:

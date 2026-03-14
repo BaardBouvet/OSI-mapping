@@ -72,9 +72,9 @@ tests:
         updates:
           - { id: "C2", company_account: "A12345", company_email: "test2@example.com", company_name: "Test2 Company" }
         inserts:
-          - { _origin_customers_id: ["CU2"], company_email: "test2-customer@example.com", company_account: "A12345", company_name: "Test2 Customer" }
+          - { _cluster_id: "customers:CU2", company_email: "test2-customer@example.com", company_account: "A12345", company_name: "Test2 Customer" }
       customers:
         updates:
           - { id: "CU2", customer_account: "A12345", customer_email: "test2-customer@example.com", customer_name: "Test2 Customer" }
         inserts:
-          - { _origin_companies_id: ["C2"], customer_email: "test2@example.com", customer_account: "A12345", customer_name: "Test2 Company" }
+          - { _cluster_id: "companies:C2", customer_email: "test2@example.com", customer_account: "A12345", customer_name: "Test2 Company" }

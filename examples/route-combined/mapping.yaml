@@ -109,14 +109,14 @@ tests:
           - { id: "CON2", email: "info@acme.com", contact_name: "Acme Corporation", contact_phone: "555-2001", contact_type: "company" }
           - { id: "CON3", email: "bob@example.com", contact_name: "Bob Wilson", contact_phone: "555-3000", contact_type: "person" }
         inserts:
-          - { _origin_crm_persons_id: ["CRM2"], email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-4000", contact_type: "person" }
-          - { _origin_erp_companies_id: ["ERP2"], email: "sales@techco.com", contact_name: "TechCo Inc", contact_phone: "555-5000", contact_type: "company" }
+          - { _cluster_id: "crm_persons:CRM2", email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-4000", contact_type: "person" }
+          - { _cluster_id: "erp_companies:ERP2", email: "sales@techco.com", contact_name: "TechCo Inc", contact_phone: "555-5000", contact_type: "company" }
       crm_persons:
         updates:
           - { id: "CRM1", email: "john@example.com", full_name: "John A. Doe", phone_number: "555-1001" }
           - { id: "CRM2", email: "alice@example.com", full_name: "Alice Brown", phone_number: "555-4000" }
         inserts:
-          - { _origin_contacts_id: ["CON3"], email: "bob@example.com", full_name: "Bob Wilson", phone_number: "555-3000" }
+          - { _cluster_id: "contacts_person:CON3", email: "bob@example.com", full_name: "Bob Wilson", phone_number: "555-3000" }
       erp_companies:
         updates:
           - { id: "ERP1", email: "info@acme.com", company_name: "Acme Corporation", main_phone: "555-2001" }
@@ -131,7 +131,7 @@ tests:
     expected:
       contacts:
         inserts:
-          - { _origin_crm_persons_id: ["CRM1"], email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-1000", contact_type: "person" }
+          - { _cluster_id: "crm_persons:CRM1", email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-1000", contact_type: "person" }
       crm_persons:
         updates:
           - { id: "CRM1", email: "alice@example.com", full_name: "Alice Brown", phone_number: "555-1000" }

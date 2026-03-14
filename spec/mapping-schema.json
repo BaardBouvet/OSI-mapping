@@ -143,7 +143,7 @@
     "Mapping": {
       "type": "object",
       "description": "Maps fields from one source dataset to one target entity.",
-      "required": ["name", "source", "target", "fields"],
+      "required": ["name", "source", "target"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -192,9 +192,75 @@
         },
         "fields": {
           "type": "array",
-          "description": "Field-level mappings from source to target.",
-          "minItems": 1,
+          "description": "Field-level mappings from source to target. Can be empty for linkage-only mappings.",
           "items": { "$ref": "#/$defs/FieldMapping" }
+        },
+        "link_key": {
+          "type": "string",
+          "description": "Column in the linking table providing pre-computed cluster identity. Enables IVM-safe path."
+        },
+        "links": {
+          "type": "array",
+          "description": "External identity edges — references from a linking table to source mappings.",
+          "items": { "$ref": "#/$defs/LinkRef" }
+        },
+        "cluster_members": {
+          "description": "ETL feedback via per-mapping table. `true` uses defaults; object overrides table/column names.",
+          "oneOf": [
+            { "type": "boolean" },
+            { "$ref": "#/$defs/ClusterMembersConfig" }
+          ]
+        },
+        "cluster_field": {
+          "type": "string",
+          "description": "Column in the source table holding a pre-populated cluster ID from ETL feedback."
+        }
+      },
+      "anyOf": [
+        { "required": ["fields"] },
+        { "required": ["links"] }
+      ]
+    },
+
+    "LinkRef": {
+      "type": "object",
+      "description": "A link from a linking table field to a source mapping.",
+      "required": ["field", "references"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "description": "Column(s) in the linking table referencing the target source's PK.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            { "type": "object", "additionalProperties": { "type": "string" } }
+          ]
+        },
+        "references": {
+          "type": "string",
+          "description": "Name of the source mapping being referenced."
+        }
+      }
+    },
+
+    "ClusterMembersConfig": {
+      "type": "object",
+      "description": "Custom configuration for ETL feedback table.",
+      "additionalProperties": false,
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name. Default: _cluster_members_{mapping_name}."
+        },
+        "cluster_id": {
+          "type": "string",
+          "default": "_cluster_id",
+          "description": "Cluster ID column name."
+        },
+        "source_key": {
+          "type": "string",
+          "default": "_src_id",
+          "description": "Source PK column name."
         }
       }
     },

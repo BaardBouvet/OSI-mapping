@@ -136,23 +136,23 @@ tests:
           - { contact_id: "P1", contact_name: "Alice Johnson", contact_email: "alice@example.com" }
           - { contact_id: "P2", contact_name: "Bob Smith", contact_email: "bob@example.com" }
         inserts:
-          - { _origin_erp_contacts_id: ["1001"], contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
+          - { _cluster_id: "erp_contacts_person:1001", contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
       crm_associations:
         updates:
           - { company_id: "C1", contact_id: "P1", relation_type: "decision_maker" }
           - { company_id: "C2", contact_id: "P1", relation_type: "consultant" }
           - { company_id: "C2", contact_id: "P2", relation_type: "employee" }
         inserts:
-          - { _origin_erp_contacts_id: ["1001"], company_id: "C1", contact_id: null, relation_type: "employee" }
+          - { _cluster_id: "erp_contacts_assoc:1001", company_id: "C1", contact_id: null, relation_type: "employee" }
       erp_companies:
         updates:
           - { id: "100", name: "Acme Corp", email: "info@acme.com" }
         inserts:
-          - { _origin_crm_companies_company_id: ["C2"], name: "TechStart", email: "hello@techstart.com" }
+          - { _cluster_id: "crm_companies:C2", name: "TechStart", email: "hello@techstart.com" }
       erp_contacts:
         updates:
           - { id: "1001", name: "Charlie Brown", email: "charlie@example.com", company_id: "100" }
         inserts:
-          - { _origin_crm_contacts_contact_id: ["P1"], name: "Alice Johnson", email: "alice@example.com", company_id: "100" }
-          - { _origin_crm_contacts_contact_id: ["P1"], name: "Alice Johnson", email: "alice@example.com", company_id: null }
-          - { _origin_crm_contacts_contact_id: ["P2"], name: "Bob Smith", email: "bob@example.com", company_id: null }
+          - { _cluster_id: "crm_contacts:P1", name: "Alice Johnson", email: "alice@example.com", company_id: "100" }
+          - { _cluster_id: "crm_contacts:P1", name: "Alice Johnson", email: "alice@example.com", company_id: null }
+          - { _cluster_id: "crm_contacts:P2", name: "Bob Smith", email: "bob@example.com", company_id: null }

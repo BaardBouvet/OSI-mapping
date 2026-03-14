@@ -1,32 +1,23 @@
 use anyhow::Result;
 
-use crate::model::{Mapping, Source};
+use crate::model::Mapping;
 
-/// Render a delta view that classifies rows as updated, inserted, or deleted
-/// by comparing the reverse view with the original source.
+/// Render a delta view that classifies rows as updated, inserted, or deleted.
 ///
 /// Produces: `CREATE OR REPLACE VIEW _delta_{mapping_name} AS ...`
 ///
-/// Uses FULL OUTER JOIN on source identity (`_row_id` fallback or declared PK)
-/// against reverse `_src_id` to detect:
-/// - `update`: row exists in both source and reverse
-/// - `insert`: row exists in reverse but not in source
-/// - `delete`: row exists in source but not in reverse
-pub fn render_delta_view(mapping: &Mapping, source_meta: Option<&Source>) -> Result<String> {
+/// The delta is a single SELECT from the reverse view (no second data source).
+/// The reverse view emits ALL rows (no filtering), and the delta classifies:
+/// - `_src_id IS NULL` → `insert` (entity exists but not in this source)
+/// - `_src_id IS NOT NULL` and reverse filters pass → `update`
+/// - `_src_id IS NOT NULL` and reverse filters fail → `delete`
+///
+/// This avoids a diamond dependency: delta depends only on reverse.
+pub fn render_delta_view(mapping: &Mapping) -> Result<String> {
     let view_name = format!("_delta_{}", mapping.name);
     let rev_view = format!("_rev_{}", mapping.name);
-    let source_table = source_meta
-        .map(|s| s.table_name(&mapping.source.dataset).to_string())
-        .unwrap_or_else(|| mapping.source.dataset.clone());
 
-    let src_id_expr = source_meta
-        .map(|s| s.primary_key.src_id_expr(Some("src")))
-        .unwrap_or_else(|| "src._row_id::text".to_string());
-    let src_missing_predicate = source_meta
-        .map(|s| s.primary_key.src_missing_predicate(Some("src")))
-        .unwrap_or_else(|| "src._row_id IS NULL".to_string());
-
-    // Collect reverse-mapped source field names for change detection
+    // Collect reverse-mapped source field names
     let reverse_fields: Vec<String> = mapping
         .fields
         .iter()
@@ -34,28 +25,50 @@ pub fn render_delta_view(mapping: &Mapping, source_meta: Option<&Source>) -> Res
         .filter_map(|fm| fm.source.clone())
         .collect();
 
-    // Output columns from the reverse view
-    let rev_col_list: String = reverse_fields
-        .iter()
-        .map(|f| format!("rev.{f}"))
-        .collect::<Vec<_>>()
-        .join(",\n  ");
+    // Build the delete predicate from reverse_required + reverse_filter.
+    // When the source row exists (_src_id IS NOT NULL) but these conditions
+    // fail, the row is classified as a delete.
+    let mut delete_conditions: Vec<String> = Vec::new();
+
+    for fm in &mapping.fields {
+        if fm.reverse_required {
+            if let Some(ref tgt) = fm.target {
+                delete_conditions.push(format!("{tgt} IS NULL"));
+            }
+        }
+    }
+    if let Some(ref rf) = mapping.reverse_filter {
+        delete_conditions.push(format!("NOT ({rf})"));
+    }
+
+    // Build the CASE expression for _action
+    let action_expr = if delete_conditions.is_empty() {
+        "CASE WHEN _src_id IS NULL THEN 'insert' ELSE 'update' END".to_string()
+    } else {
+        let delete_pred = delete_conditions.join(" OR ");
+        format!(
+            "CASE\n    \
+             WHEN _src_id IS NULL THEN 'insert'\n    \
+             WHEN {delete_pred} THEN 'delete'\n    \
+             ELSE 'update'\n  \
+           END"
+        )
+    };
+
+    let mut cols: Vec<String> = vec![
+        format!("{action_expr} AS _action"),
+        "_src_id".to_string(),
+        "_cluster_id".to_string(),
+    ];
+    cols.extend(reverse_fields.iter().cloned());
 
     let sql = format!(
         "-- Delta: {name} (updates/inserts/deletes)\n\
          CREATE OR REPLACE VIEW {view_name} AS\n\
-         SELECT\n  \
-           CASE\n    \
-             WHEN {src_missing_predicate} THEN 'insert'\n    \
-             WHEN rev._src_id IS NULL THEN 'delete'\n    \
-             ELSE 'update'\n  \
-           END AS _action,\n  \
-           COALESCE(rev._src_id, {src_id_expr}) AS _src_id,\n  \
-           {rev_cols}\n\
-         FROM {source_table} AS src\n\
-         FULL OUTER JOIN {rev_view} AS rev ON {src_id_expr} = rev._src_id;\n",
+         SELECT\n  {columns}\n\
+         FROM {rev_view};\n",
         name = mapping.name,
-        rev_cols = rev_col_list,
+        columns = cols.join(",\n  "),
     );
 
     Ok(sql)

@@ -100,6 +100,9 @@ pub fn validate(doc: &MappingDocument) -> ValidationResult {
     // Pass 7: SQL expression syntax
     pass_sql_syntax(doc, &mut result);
 
+    // Pass 8: Origin/cluster rules
+    pass_origin_cluster(doc, &mut result);
+
     result
 }
 
@@ -147,10 +150,10 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        if mapping.fields.is_empty() {
+        if mapping.fields.is_empty() && mapping.links.is_empty() {
             result.error(
                 "Schema",
-                format!("mapping '{}': fields must not be empty", mapping.name),
+                format!("mapping '{}': must have fields or links", mapping.name),
             );
         }
 
@@ -722,6 +725,106 @@ fn check_sql_expr(expr: &str, location: &str, result: &mut ValidationResult) {
 
     if expr.trim().is_empty() {
         result.error("SQL", format!("{location}: empty expression"));
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Pass 8 — Origin/cluster rules
+// ──────────────────────────────────────────────────────────────────────
+
+fn pass_origin_cluster(doc: &MappingDocument, result: &mut ValidationResult) {
+    // 8a: Error when a mapping declares both cluster_members and cluster_field.
+    for m in &doc.mappings {
+        if m.cluster_members.is_some() && m.cluster_field.is_some() {
+            result.error(
+                "Cluster",
+                format!(
+                    "mapping '{}': cannot declare both 'cluster_members' and 'cluster_field'",
+                    m.name
+                ),
+            );
+        }
+    }
+
+    // 8b: Warn when target has 2+ identity fields and insert-producing mappings
+    // (multi-value hazard).
+    for (tname, tdef) in &doc.targets {
+        let identity_count = tdef
+            .fields
+            .values()
+            .filter(|f| f.strategy() == Strategy::Identity)
+            .count();
+        if identity_count >= 2 {
+            // Check if any mapping for this target could produce inserts
+            // (i.e. another mapping targets the same target from a different source).
+            let mapping_count = doc
+                .mappings
+                .iter()
+                .filter(|m| m.target.name() == tname && m.has_fields())
+                .count();
+            if mapping_count >= 2 {
+                result.warning(
+                    "Cluster",
+                    format!(
+                        "target '{tname}': {identity_count} identity fields with {mapping_count} mappings — \
+                         multi-value hazard: inserts may create synthetic composites. \
+                         Consider using _cluster_id feedback instead."
+                    ),
+                );
+            }
+        }
+    }
+
+    // 8c: Info when links is present without link_key — batch-safe only.
+    for m in &doc.mappings {
+        if m.has_links() && m.link_key.is_none() {
+            result.warning(
+                "Cluster",
+                format!(
+                    "mapping '{}': links without link_key is batch-safe only; \
+                     add link_key for IVM safety",
+                    m.name
+                ),
+            );
+        }
+    }
+
+    // 8d: Warn when links without link_key is used but no insert-producing
+    // mapping for the same target has cluster_members or cluster_field.
+    for m in &doc.mappings {
+        if !m.has_links() || m.link_key.is_some() {
+            continue;
+        }
+        let tname = m.target.name();
+        let has_feedback = doc.mappings.iter().any(|other| {
+            other.target.name() == tname
+                && other.has_fields()
+                && (other.cluster_members.is_some() || other.cluster_field.is_some())
+        });
+        if !has_feedback {
+            result.warning(
+                "Cluster",
+                format!(
+                    "mapping '{}': links without link_key targets '{tname}' but no mapping \
+                     for that target declares cluster_members or cluster_field for insert feedback",
+                    m.name
+                ),
+            );
+        }
+    }
+
+    // 8e: Warn when a links mapping also has fields (unusual but allowed).
+    for m in &doc.mappings {
+        if m.has_links() && m.has_fields() {
+            result.warning(
+                "Cluster",
+                format!(
+                    "mapping '{}': has both links and fields — \
+                     this is unusual; typically link mappings are linkage-only",
+                    m.name
+                ),
+            );
+        }
     }
 }
 

@@ -17,6 +17,8 @@ pub enum ViewNode {
     Reverse(String),
     /// Delta/changeset view.
     Delta(String),
+    /// Provenance view (cluster membership listing).
+    Provenance(String),
 }
 
 impl ViewNode {
@@ -28,6 +30,7 @@ impl ViewNode {
             ViewNode::Resolved(name) => format!("_resolved_{name}"),
             ViewNode::Reverse(name) => format!("_rev_{name}"),
             ViewNode::Delta(name) => format!("_delta_{name}"),
+            ViewNode::Provenance(name) => format!("_provenance_{name}"),
         }
     }
 
@@ -39,6 +42,7 @@ impl ViewNode {
             ViewNode::Resolved(name) => format!("RES: {name}"),
             ViewNode::Reverse(name) => format!("REV: {name}"),
             ViewNode::Delta(name) => format!("DELTA: {name}"),
+            ViewNode::Provenance(name) => format!("PROV: {name}"),
         }
     }
 }
@@ -73,6 +77,17 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
         // Source table (external, no deps)
         edges.entry(ViewNode::Source(src.clone())).or_default();
 
+        if mapping.is_linkage_only() {
+            // Linkage-only mapping: only contributes identity edges, no forward/reverse/delta.
+            // Identity view depends on the linking source table directly.
+            let id = ViewNode::Identity(tname.to_string());
+            edges
+                .entry(id)
+                .or_default()
+                .push(ViewNode::Source(src.clone()));
+            continue;
+        }
+
         // Forward view depends on source
         let fwd = ViewNode::Forward(mname.clone());
         edges
@@ -93,6 +108,13 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             edges.get_mut(&res).unwrap().push(id.clone());
         }
 
+        // Provenance view depends on identity view
+        let prov = ViewNode::Provenance(tname.to_string());
+        edges.entry(prov.clone()).or_default();
+        if !edges[&prov].contains(&id) {
+            edges.get_mut(&prov).unwrap().push(id.clone());
+        }
+
         // Reverse view depends on resolved view
         let rev = ViewNode::Reverse(mname.clone());
         edges
@@ -100,12 +122,11 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             .or_default()
             .push(ViewNode::Resolved(tname.to_string()));
 
-        // Delta view depends on reverse view and original source
+        // Delta view depends only on reverse view (no diamond dependency).
+        // Delete detection uses reverse_required / reverse_filter conditions
+        // evaluated directly on the reverse view output.
         let delta = ViewNode::Delta(mname.clone());
         edges.entry(delta.clone()).or_default().push(rev.clone());
-        if !edges[&delta].contains(&ViewNode::Source(src.clone())) {
-            edges.get_mut(&delta).unwrap().push(ViewNode::Source(src));
-        }
     }
 
     // Add cross-target dependencies via references.

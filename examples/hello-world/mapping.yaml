@@ -18,6 +18,7 @@ mappings:
   - name: crm
     source: { dataset: crm }
     target: contact
+    cluster_members: true
     fields:
       - source: email
         target: email
@@ -28,6 +29,7 @@ mappings:
   - name: erp
     source: { dataset: erp }
     target: contact
+    cluster_members: true
     fields:
       - source: email
         target: email
@@ -36,12 +38,66 @@ mappings:
         priority: 2
 
 tests:
-  - description: "CRM name wins (priority 1) and propagates to ERP"
+  - description: "Shared contact merges by email; CRM name wins (priority 1)"
     input:
       crm:
         - { id: "1", email: "alice@example.com", name: "Alice" }
       erp:
         - { id: "100", email: "alice@example.com", name: "A. Smith" }
+    expected:
+      crm:
+        updates:
+          - { id: "1", email: "alice@example.com", name: "Alice" }
+      erp:
+        updates:
+          - { id: "100", email: "alice@example.com", name: "Alice" }
+
+  - description: "CRM-only contact triggers insert into ERP"
+    input:
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+        - { id: "2", email: "bob@example.com", name: "Bob" }
+      erp:
+        - { id: "100", email: "alice@example.com", name: "A. Smith" }
+    expected:
+      crm:
+        updates:
+          - { id: "1", email: "alice@example.com", name: "Alice" }
+          - { id: "2", email: "bob@example.com", name: "Bob" }
+      erp:
+        updates:
+          - { id: "100", email: "alice@example.com", name: "Alice" }
+        inserts:
+          - { _cluster_id: "crm:2", email: "bob@example.com", name: "Bob" }
+
+  - description: "ERP-only contact triggers insert into CRM"
+    input:
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+      erp:
+        - { id: "100", email: "alice@example.com", name: "A. Smith" }
+        - { id: "200", email: "carol@example.com", name: "Carol" }
+    expected:
+      crm:
+        updates:
+          - { id: "1", email: "alice@example.com", name: "Alice" }
+        inserts:
+          - { _cluster_id: "erp:200", email: "carol@example.com", name: "Carol" }
+      erp:
+        updates:
+          - { id: "100", email: "alice@example.com", name: "Alice" }
+          - { id: "200", email: "carol@example.com", name: "Carol" }
+
+  - description: "Pre-linked via cluster_members: contacts with no shared email merge"
+    input:
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+      erp:
+        - { id: "100", email: null, name: "A. Smith" }
+      _cluster_members_crm:
+        - { _src_id: "1", _cluster_id: "guid-abc-123" }
+      _cluster_members_erp:
+        - { _src_id: "100", _cluster_id: "guid-abc-123" }
     expected:
       crm:
         updates:

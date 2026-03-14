@@ -67,10 +67,10 @@ tests:
           - { contact_id: "C2", first_name: "Bob", last_name: "Smith", email: "bob@example.com", phone: "+1234567891" }
           - { contact_id: "C3", first_name: "Alice", last_name: "Johnson", email: "alice.j@work.com", phone: "+1234567890" }
         inserts:
-          - { _origin_erp_employees_employee_id: ["E2"], first_name: "Bob", last_name: "Davis", email: "bob@work.com", phone: "+1987654322" }
+          - { _cluster_id: "erp_employees:E2", first_name: "Bob", last_name: "Davis", email: "bob@work.com", phone: "+1987654322" }
       erp_employees:
         updates:
           - { employee_id: "E1", first_name: "Alice", last_name: "Johnson", email: "ajohnson@company.com", phone: "+1234567890" }
           - { employee_id: "E2", first_name: "Bob", last_name: "Davis", email: "bob@work.com", phone: "+1987654322" }
         inserts:
-          - { _origin_crm_contacts_contact_id: ["C2"], first_name: "Bob", last_name: "Smith", email: "bob@example.com", phone: "+1234567891" }
+          - { _cluster_id: "crm_contacts:C2", first_name: "Bob", last_name: "Smith", email: "bob@example.com", phone: "+1234567891" }

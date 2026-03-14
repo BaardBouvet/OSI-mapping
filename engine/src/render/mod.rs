@@ -3,6 +3,7 @@ pub mod identity;
 pub mod resolution;
 pub mod reverse;
 pub mod delta;
+pub mod provenance;
 
 use anyhow::Result;
 
@@ -44,6 +45,8 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag) -> Result<String> {
                     target_name,
                     target,
                     &mappings,
+                    &doc.mappings,
+                    &doc.sources,
                 )?);
                 sql.push('\n');
             }
@@ -89,8 +92,11 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag) -> Result<String> {
                     .iter()
                     .find(|m| &m.name == mapping_name)
                     .expect("mapping exists in dag");
-                let source_meta = doc.sources.get(&mapping.source.dataset);
-                sql.push_str(&delta::render_delta_view(mapping, source_meta)?);
+                sql.push_str(&delta::render_delta_view(mapping)?);
+                sql.push('\n');
+            }
+            ViewNode::Provenance(target_name) => {
+                sql.push_str(&provenance::render_provenance_view(target_name)?);
                 sql.push('\n');
             }
         }

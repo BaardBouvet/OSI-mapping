@@ -249,7 +249,140 @@ pub struct Mapping {
     pub reverse_filter: Option<String>,
     #[serde(default)]
     pub include_base: bool,
+    #[serde(default)]
     pub fields: Vec<FieldMapping>,
+    /// Column in the linking table whose value serves as cluster identity.
+    /// Enables the IVM-safe path (forward-view LEFT JOIN on cluster members).
+    #[serde(default)]
+    pub link_key: Option<String>,
+    /// External identity edges — links to other source mappings.
+    #[serde(default)]
+    pub links: Vec<LinkRef>,
+    /// ETL feedback via a per-mapping table. `true` uses defaults;
+    /// an object overrides table/column names.
+    #[serde(default)]
+    pub cluster_members: Option<ClusterMembers>,
+    /// Column in the source table holding a pre-populated cluster ID.
+    #[serde(default)]
+    pub cluster_field: Option<String>,
+}
+
+impl Mapping {
+    /// Whether this mapping contributes forward data (fields) to the target.
+    pub fn has_fields(&self) -> bool {
+        !self.fields.is_empty()
+    }
+
+    /// Whether this mapping contributes identity edges via links.
+    pub fn has_links(&self) -> bool {
+        !self.links.is_empty()
+    }
+
+    /// Whether this mapping is linkage-only (links but no fields).
+    pub fn is_linkage_only(&self) -> bool {
+        self.has_links() && !self.has_fields()
+    }
+}
+
+/// A link reference — connects a field in a linking table to a source mapping.
+#[derive(Debug, Deserialize)]
+pub struct LinkRef {
+    /// Column(s) in the linking table referencing the target source's PK.
+    pub field: LinkField,
+    /// Name of the source mapping being referenced.
+    pub references: String,
+}
+
+/// Link field — single column name or composite key mapping.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum LinkField {
+    /// Single column: `field: crm_id`
+    Single(String),
+    /// Composite, same-name columns: `field: [order_id, line_no]`
+    List(Vec<String>),
+    /// Composite, renamed columns: `field: { src_col: pk_col, ... }`
+    Map(IndexMap<String, String>),
+}
+
+impl LinkField {
+    /// Pairs of (link_column, pk_column).
+    pub fn column_pairs(&self, referenced_pk: &PrimaryKey) -> Vec<(String, String)> {
+        match self {
+            LinkField::Single(col) => {
+                vec![(col.clone(), referenced_pk.columns()[0].to_string())]
+            }
+            LinkField::List(cols) => {
+                let pk_cols = referenced_pk.columns();
+                cols.iter()
+                    .zip(pk_cols.iter())
+                    .map(|(l, p)| (l.clone(), p.to_string()))
+                    .collect()
+            }
+            LinkField::Map(map) => {
+                map.iter().map(|(l, p)| (l.clone(), p.clone())).collect()
+            }
+        }
+    }
+}
+
+/// ETL feedback configuration — per-mapping cluster membership table.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(from = "ClusterMembersRaw")]
+pub struct ClusterMembers {
+    /// Table name. Default: `_cluster_members_{mapping_name}`.
+    pub table: Option<String>,
+    /// Cluster ID column. Default: `_cluster_id`.
+    pub cluster_id: String,
+    /// Source key column. Default: `_src_id`.
+    pub source_key: String,
+}
+
+/// Raw deserialization target for `cluster_members: true | { ... }`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ClusterMembersRaw {
+    Bool(bool),
+    Full {
+        #[serde(default)]
+        table: Option<String>,
+        #[serde(default = "default_cluster_id")]
+        cluster_id: String,
+        #[serde(default = "default_src_id")]
+        source_key: String,
+    },
+}
+
+fn default_cluster_id() -> String { "_cluster_id".to_string() }
+fn default_src_id() -> String { "_src_id".to_string() }
+
+impl From<ClusterMembersRaw> for ClusterMembers {
+    fn from(raw: ClusterMembersRaw) -> Self {
+        match raw {
+            ClusterMembersRaw::Bool(true) => ClusterMembers {
+                table: None,
+                cluster_id: "_cluster_id".to_string(),
+                source_key: "_src_id".to_string(),
+            },
+            ClusterMembersRaw::Bool(false) => ClusterMembers {
+                table: None,
+                cluster_id: "_cluster_id".to_string(),
+                source_key: "_src_id".to_string(),
+            },
+            ClusterMembersRaw::Full { table, cluster_id, source_key } => ClusterMembers {
+                table,
+                cluster_id,
+                source_key,
+            },
+        }
+    }
+}
+
+impl ClusterMembers {
+    /// Resolved table name — uses the default if not specified.
+    pub fn table_name(&self, mapping_name: &str) -> String {
+        self.table.clone().unwrap_or_else(|| format!("_cluster_members_{mapping_name}"))
+    }
 }
 
 /// Source dataset reference.

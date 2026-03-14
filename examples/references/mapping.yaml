@@ -87,7 +87,7 @@ tests:
         updates:
           - { contact_id: "CC1", company_id: 1000, primary_email: "john@acme.com" }
         inserts:
-          - { _origin_erp_contact_contact_id: ["C2"], company_id: null, primary_email: "orphan@example.com" }
+          - { _cluster_id: "erp_contact:C2", company_id: null, primary_email: "orphan@example.com" }
 
   - description: "Namespace collision — ID '100' in both systems means different things"
     input:

@@ -12,6 +12,7 @@ A mapping file is a YAML document with four top-level keys.
 |---|---|---|---|
 | `version` | string | **yes** | Always `"1.0"` |
 | `description` | string | no | Human-readable summary of what this mapping does |
+| `sources` | object | no | Source dataset metadata (keys are dataset names) ([Source](#source)) |
 | `targets` | object | * | Target entity definitions (keys are entity names) |
 | `mappings` | array | * | Source-to-target field mappings |
 | `tests` | array | no | Inline test cases |
@@ -51,6 +52,35 @@ tests:
 ```
 
 **Examples:** [hello-world](../examples/hello-world/), [minimal](../examples/minimal/)
+
+---
+
+## Source
+
+Metadata for a source dataset. Declared under the top-level `sources:` key.
+
+| Property | Type | Required | Description |
+|---|---|---|---|
+| `table` | string | no | Physical table/view name (defaults to the source key) |
+| `primary_key` | string or string[] | **yes** | Column(s) that uniquely identify a source row |
+
+Source names (keys under `sources`) must match `^[a-z][a-z0-9_]*$`.
+
+```yaml
+sources:
+  crm:
+    primary_key: id
+  erp_order_lines:
+    table: erp_order_lines
+    primary_key: [order_id, line_no]
+```
+
+The primary key is used throughout the pipeline:
+- **Forward view:** `_src_id = pk::text` (single) or `_src_id = jsonb_build_object(...)::text` (composite)
+- **Reverse view:** Restores original PK columns from `_src_id`
+- **Identity view:** Deterministic `_entity_id = md5(mapping || ':' || _src_id)`
+
+**Examples:** Every example with `sources:` declared. See [composite-keys](../examples/composite-keys/) for composite PKs, [references](../examples/references/) for multiple sources.
 
 ---
 
@@ -283,6 +313,10 @@ Maps fields from one source dataset to one target entity.
 | `filter` | string | no | Forward filter: SQL WHERE condition |
 | `reverse_filter` | string | no | Reverse filter: SQL WHERE condition |
 | `include_base` | boolean | no | Include original values in reverse output (default: false) |
+| `links` | array of [LinkRef](#linkref) | no | External identity edges from a linking table |
+| `link_key` | string | no | Column in linking table providing pre-computed cluster ID (IVM-safe) |
+| `cluster_members` | boolean / object | no | ETL feedback table for insert tracking |
+| `cluster_field` | string | no | Source column holding a pre-populated cluster ID |
 
 ```yaml
 mappings:
@@ -352,6 +386,117 @@ When true, reverse output includes `_base_` columns with original source values 
 ```
 
 **Examples:** [concurrent-detection](../examples/concurrent-detection/)
+
+### `links`
+
+External identity edges from a linking table. Each link references a column in the linking table and a source mapping. The engine generates pairwise edges fed into the identity view's connected-components algorithm.
+
+A mapping with `links` but no `fields` is a "linkage-only" mapping — it contributes identity edges without business data.
+
+```yaml
+  - name: match_links
+    source: { dataset: match_results }
+    target: contact
+    links:
+      - field: crm_id
+        references: crm
+      - field: erp_id
+        references: erp
+```
+
+### `link_key`
+
+Column in the linking table providing a pre-computed cluster ID. Enables the IVM-safe path: the cluster ID is pushed into the forward view via LEFT JOIN, so the source row and its cluster membership arrive atomically.
+
+```yaml
+  - name: mdm_links
+    source: { dataset: mdm_xref }
+    target: contact
+    link_key: cluster_id
+    links:
+      - field: crm_id
+        references: crm
+      - field: erp_id
+        references: erp
+```
+
+Without `link_key`, links are processed in the identity layer via pairwise edge SQL (batch-safe but not IVM-safe).
+
+### `cluster_members`
+
+ETL feedback table for insert tracking. When the delta view produces an insert, the ETL writes the generated ID back to this table so the next run links the new row to its cluster.
+
+`true` uses defaults; an object overrides table/column names.
+
+| Property | Default | Description |
+|---|---|---|
+| `table` | `_cluster_members_{mapping}` | Table name |
+| `cluster_id` | `_cluster_id` | Cluster ID column |
+| `source_key` | `_src_id` | Source PK column |
+
+```yaml
+  - name: erp
+    source: { dataset: erp }
+    target: contact
+    cluster_members: true                  # all defaults
+    fields: [...]
+
+  - name: legacy
+    source: { dataset: legacy }
+    target: contact
+    cluster_members:                       # custom names
+      table: legacy_feedback
+      cluster_id: entity_id
+      source_key: record_id
+    fields: [...]
+```
+
+The forward view LEFT JOINs the table: `COALESCE(_cm._cluster_id, md5(...)) AS _cluster_id`. Rows sharing the same `_cluster_id` are linked by the identity algorithm.
+
+**Examples:** [hello-world](../examples/hello-world/)
+
+### `cluster_field`
+
+Column in the source table holding a pre-populated cluster ID from ETL feedback. Simpler than `cluster_members` when the target system supports storing custom fields on records.
+
+```yaml
+  - name: billing
+    source: { dataset: billing }
+    target: customer
+    cluster_field: entity_cluster_id
+    fields: [...]
+```
+
+The forward view uses: `COALESCE(entity_cluster_id, md5(...)) AS _cluster_id`. A mapping should declare `cluster_members` or `cluster_field`, not both.
+
+---
+
+## LinkRef
+
+A link from a linking table field to a source mapping.
+
+| Property | Type | Required | Description |
+|---|---|---|---|
+| `field` | string / string[] / object | **yes** | Column(s) in the linking table referencing the target source's PK |
+| `references` | string | **yes** | Name of the source mapping being referenced |
+
+```yaml
+links:
+  - field: crm_id
+    references: crm
+  - field: erp_id
+    references: erp
+```
+
+For composite PKs, `field` can be an array (same-name columns) or an object (renamed columns):
+
+```yaml
+links:
+  - field: [order_id, line_no]
+    references: erp_lines
+  - field: { src_order: order_id, src_line: line_no }
+    references: erp_lines
+```
 
 ---
 

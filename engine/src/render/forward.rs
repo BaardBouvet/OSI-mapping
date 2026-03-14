@@ -30,6 +30,26 @@ pub fn render_forward_view(
     cols.push(format!("{src_id_expr} AS _src_id"));
     cols.push(format!("'{}'::text AS _mapping", mapping.name));
 
+    // Cluster identity — always emitted for UNION ALL compatibility.
+    if let Some(ref cf) = mapping.cluster_field {
+        // cluster_field: use the source column directly, fallback to md5 singleton.
+        let fallback = format!("md5('{}' || ':' || {})", mapping.name, src_id_expr);
+        cols.push(format!(
+            "COALESCE({cf}, {fallback}) AS _cluster_id"
+        ));
+    } else if let Some(ref cm) = mapping.cluster_members {
+        // cluster_members: LEFT JOIN happens in FROM clause (handled below).
+        // _cluster_id comes from the join, fallback to md5 singleton.
+        let cm_cluster = &cm.cluster_id;
+        let fallback = format!("md5('{}' || ':' || {})", mapping.name, src_id_expr);
+        cols.push(format!(
+            "COALESCE(_cm.{cm_cluster}, {fallback}) AS _cluster_id"
+        ));
+    } else {
+        // No cluster config: emit NULL placeholder for UNION ALL compatibility.
+        cols.push("NULL::text AS _cluster_id".to_string());
+    }
+
     // Mapping-level priority (always present, NULL when unset)
     cols.push(match mapping.priority {
         Some(p) => format!("{p} AS _priority"),
@@ -120,6 +140,15 @@ pub fn render_forward_view(
         target = mapping.target.name(),
         columns = cols.join(",\n  "),
     );
+
+    // LEFT JOIN cluster_members table when declared.
+    if let Some(ref cm) = mapping.cluster_members {
+        let cm_table = cm.table_name(&mapping.name);
+        let cm_src_key = &cm.source_key;
+        sql.push_str(&format!(
+            "\nLEFT JOIN {cm_table} AS _cm ON _cm.{cm_src_key} = {src_id_expr}"
+        ));
+    }
 
     // Nested arrays via LATERAL jsonb_array_elements
     if let Some(ref path) = mapping.source.path {

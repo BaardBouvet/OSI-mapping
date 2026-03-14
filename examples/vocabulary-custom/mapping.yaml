@@ -90,4 +90,4 @@ tests:
         updates:
           - { contact_id: "alice", status_code: 0 }
         inserts:
-          - { _origin_hr_system_employee_id: ["bob"], contact_id: "bob", status_code: 0 }
+          - { _cluster_id: "hr_system:bob", contact_id: "bob", status_code: 0 }

@@ -72,10 +72,10 @@ tests:
           - { employee_id: "E001", employee_email: "alice@company.com", employee_name: "Alice A.", work_phone: "555-1001", dept: "Sales" }
           - { employee_id: "E002", employee_email: "bob@company.com", employee_name: "Bob Brown", work_phone: "555-1003", dept: "IT" }
         inserts:
-          - { _origin_crm_contact_id: ["C002"], employee_email: "carol@external.com", employee_name: "Carol Client", work_phone: "555-1004", dept: null }
+          - { _cluster_id: "crm:C002", employee_email: "carol@external.com", employee_name: "Carol Client", work_phone: "555-1004", dept: null }
       crm:
         updates:
           - { contact_id: "C001", contact_email: "alice@company.com", contact_name: "Alice A.", contact_phone: "555-1002" }
           - { contact_id: "C002", contact_email: "carol@external.com", contact_name: "Carol Client", contact_phone: "555-1004" }
         inserts:
-          - { _origin_hr_employee_id: ["E002"], contact_email: "bob@company.com", contact_name: "Bob Brown", contact_phone: "555-1003" }
+          - { _cluster_id: "hr:E002", contact_email: "bob@company.com", contact_name: "Bob Brown", contact_phone: "555-1003" }

@@ -105,4 +105,4 @@ tests:
         updates:
           - { address_id: "A100", street: "456 Business Ave", city: "Bergen", zip_code: "5000", country: "Norway" }
         inserts:
-          - { _origin_crm_customers_customer_id: ["C1"], street: "123 Main St", city: "Oslo", zip_code: "0150", country: "Norway" }
+          - { _cluster_id: "crm_customers_address:C1", street: "123 Main St", city: "Oslo", zip_code: "0150", country: "Norway" }
