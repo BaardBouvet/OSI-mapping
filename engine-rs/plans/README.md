@@ -17,4 +17,4 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [COMPOSITE-KEY-REFS-PLAN.md](COMPOSITE-KEY-REFS-PLAN.md) | Design | PK-reference field limitation when a source PK column is also mapped to a reference field. |
 | [NAMING-PLAN.md](NAMING-PLAN.md) | Design | Recommends renaming to `osi-compiler` with binary `osic`. |
 | [SOURCE-TYPES-PLAN.md](SOURCE-TYPES-PLAN.md) | Proposed | Optional `sql_type` on field mappings for type-aware forward views. |
-| [TEST-PROGRESS-PLAN.md](TEST-PROGRESS-PLAN.md) | Done | Generic `execute_all_examples` test runner with pass/fail/skip summary. |
+| [TEST-PROGRESS-PLAN.md](TEST-PROGRESS-PLAN.md) | In Progress | Generic `execute_all_examples` test runner with pass/fail/skip summary. |
