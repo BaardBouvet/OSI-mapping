@@ -1,6 +1,6 @@
 # Mapping Correctness Fixes Plan
 
-**Status:** Done  
+**Status:** In Progress  
 **Scope:** Audit and fix questionable expected data and missing type declarations across examples, plus engine fixes for typed identity fields.
 
 ---
@@ -63,7 +63,8 @@ After bulk-fixing 13 examples' expected data to reach 35/35 passing, a review of
 
 **Problem:** `system_a_id`, `system_b_id`, `system_c_id` are integers in source data but stored as text in the center model.  
 **Root cause:** Missing `type: integer` declarations.  
-**Fix:** Added `type: integer` to all three identity fields. Note: reverse PK columns always come from `_src_id` (text), so expected data like `id: "101"` remains correct.  
+**Fix:** Added `type: integer` to all three identity fields.  
+**Engine fix required:** Source PK columns in the reverse view come from `_src_id` (always text). Added `typed_pk_select_exprs()` helper in `reverse.rs` that checks if the PK column maps to a typed identity field — if so, casts `_src_id::integer` instead of plain `_src_id`. Updated expected data from `id: "101"` to `id: 101`.  
 **Status:** Done.
 
 ### 9. value-groups: cid as string
@@ -86,6 +87,8 @@ After bulk-fixing 13 examples' expected data to reach 35/35 passing, a review of
 |------|--------|-------|
 | `src/render/identity.rs` | `COALESCE({field}::text, '')` — cast typed identity fields to text before COALESCE with empty string | ~L101 |
 | `src/render/reverse.rs` | `ref_match.{field}::text = r.{target}::text` — cast identity fields to text in reference matching | ~L95 |
+| `src/render/reverse.rs` | Auto-typed reference resolution: when referenced mapping's single PK maps to a typed identity field, return `ref_local.{field}` (typed) instead of `ref_local._src_id` (text) | `return_expr` |
+| `src/render/reverse.rs` | `typed_pk_select_exprs()` — cast PK columns to declared type (e.g., `_src_id::integer`) when PK maps to typed identity field | New function |
 | `src/validate.rs` | Pass 9: `pass_default_type_compat` — warns on default/type mismatch | New function |
 
 ## Example Changes

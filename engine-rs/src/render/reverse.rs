@@ -4,6 +4,53 @@ use indexmap::IndexMap;
 use crate::model::{Mapping, PrimaryKey, Source, Strategy, Target};
 use crate::qi;
 
+/// Build SELECT expressions for PK columns in the reverse view.
+///
+/// For each PK column, if it maps (via the mapping's field list) to a typed
+/// identity field on the target, cast from `_src_id` (always text) to the
+/// declared type.  Otherwise, emit the default text extraction.
+fn typed_pk_select_exprs(
+    pk: &PrimaryKey,
+    src_alias: &str,
+    mapping: &Mapping,
+    target: Option<&Target>,
+) -> Vec<String> {
+    // Build pk_col → target_field_type map from field mappings.
+    let type_for_pk = |pk_col: &str| -> Option<&str> {
+        let fm = mapping.fields.iter().find(|f| f.source.as_deref() == Some(pk_col))?;
+        let tgt_name = fm.target.as_deref()?;
+        let tgt = target?;
+        let fdef = tgt.fields.get(tgt_name)?;
+        if fdef.strategy() == Strategy::Identity {
+            fdef.field_type.as_deref()
+        } else {
+            None
+        }
+    };
+
+    match pk {
+        PrimaryKey::Single(col) => {
+            let qcol = qi(col);
+            match type_for_pk(col) {
+                Some(t) => vec![format!("{src_alias}._src_id::{t} AS {qcol}")],
+                None => vec![format!("{src_alias}._src_id AS {qcol}")],
+            }
+        }
+        PrimaryKey::Composite(cols) => {
+            let mut sorted: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
+            sorted.sort();
+            sorted.iter().map(|col| {
+                let qcol = qi(col);
+                let base = format!("({src_alias}._src_id::jsonb->>'{col}')");
+                match type_for_pk(col) {
+                    Some(t) => format!("{base}::{t} AS {qcol}"),
+                    None => format!("{base} AS {qcol}"),
+                }
+            }).collect()
+        }
+    }
+}
+
 /// Render a reverse mapping view that projects a resolved target back to source shape.
 ///
 /// Produces: `CREATE OR REPLACE VIEW _rev_{mapping_name} AS ...`
@@ -36,7 +83,12 @@ pub fn render_reverse_view(
 
     let pk_columns: std::collections::HashSet<&str> = match source_meta {
         Some(src) => {
-            select_exprs.extend(src.primary_key.reverse_select_exprs("id"));
+            // For each PK column, check if it maps to a typed identity field.
+            // If so, cast from _src_id (text) to the declared type.
+            let pk_exprs = typed_pk_select_exprs(
+                &src.primary_key, "id", mapping, target,
+            );
+            select_exprs.extend(pk_exprs);
             src.primary_key.columns().into_iter().collect()
         }
         None => std::collections::HashSet::new(),
