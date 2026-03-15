@@ -79,3 +79,6 @@ tests:
           shipping_state: "MA"
           shipping_zip: "02139"
           shipping_country: "US"
+    expected:
+      # Single source — all fields round-trip unchanged
+      customers: {}

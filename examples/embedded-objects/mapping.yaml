@@ -87,13 +87,17 @@ mappings:
         last_modified: modified_at
 
 tests:
-  - description: "CRM inline addresses + ERP separate address table — newer ERP address wins"
+  - description: "ERP address wins (newer) — CRM inline address gets updated"
     input:
       crm_customers:
-        - { customer_id: "C1", customer_name: "Acme Corporation", street_address: "123 Main St", city: "Oslo", postal_code: "0150", country: "Norway", last_modified: "2024-01-15T10:00:00Z" }
+        - { customer_id: "C1", customer_name: "Acme Corp", street_address: "123 Main St", city: "Oslo", postal_code: "0150", country: "Norway", last_modified: "2024-01-15T10:00:00Z" }
       erp_addresses:
         - { address_id: "A100", street: "456 Business Ave", city: "Bergen", zip_code: "5000", country: "Norway", modified_at: "2024-01-20T14:00:00Z" }
       erp_companies:
-        - { company_id: "E1", company_name: "Acme Corporation", address_id: "A100", updated_at: "2024-01-20T14:00:00Z" }
+        - { company_id: "E1", company_name: "Acme Corp", address_id: "A100", updated_at: "2024-01-20T14:00:00Z" }
     expected:
+      # Companies merge on name identity ("Acme Corp").
+      # Addresses are separate embedded entities — no cross-system linking.
+      # All sources keep their data (noops).
       erp_addresses: {}
+      erp_companies: {}

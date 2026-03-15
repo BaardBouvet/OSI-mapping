@@ -11,6 +11,7 @@ Use the docs and examples instead of learning from a dense inline snippet:
 - Start here: [`examples/hello-world/README.md`](examples/hello-world/README.md)
 - Step-by-step walkthrough: [`docs/annotated-example.md`](docs/annotated-example.md)
 - Full schema reference: [`docs/schema-reference.md`](docs/schema-reference.md)
+- Why this project exists: [`docs/motivation.md`](docs/motivation.md)
 - Design background and tradeoffs: [`docs/design-rationale.md`](docs/design-rationale.md)
 - AI authoring guidance: [`docs/ai-guidelines.md`](docs/ai-guidelines.md)
 

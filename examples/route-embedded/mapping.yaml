@@ -82,3 +82,6 @@ tests:
           shipping_city: "Seattle"
           shipping_state: "WA"
           shipping_zip: "98101"
+    expected:
+      # Single source — all embedded fields round-trip unchanged
+      customers: {}

@@ -62,9 +62,14 @@ mappings:
         target: phone
 
 tests:
-  - description: "Scalar conversions — date, name split/join, phone normalization"
+  - description: "System A wins (priority 1) — System B gets corrected values in B's format"
     input:
       system_a:
-        - { person_id: "P001", dob: "15/06/85", first_name: "John", last_name: "Doe", phone_number: "+1 555-1234" }
+        - { person_id: "alice@example.com", dob: "15/06/85", first_name: "Alice", last_name: "Smith", phone_number: "+1 555-1234" }
       system_b:
-        - { user_id: "P001", birthdate: "1985-06-15", name: "John Doe", contact_phone: "15551234" }
+        - { user_id: "alice@example.com", birthdate: "1985-06-15", name: "Alice Jones", contact_phone: "29998877" }
+    expected:
+      system_b:
+        updates:
+          # name and phone corrected to system_a's values (in system_b format)
+          - { user_id: "alice@example.com", birthdate: "1985-06-15", name: "Alice Smith", contact_phone: "15551234" }

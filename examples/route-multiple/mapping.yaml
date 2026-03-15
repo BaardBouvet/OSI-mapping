@@ -57,10 +57,13 @@ mappings:
         expression: "false"
 
 tests:
-  - description: "Primary and secondary contacts map to same target with different priorities"
+  - description: "Separate contacts round-trip unchanged"
     input:
       contacts:
         - { id: "C1", contact_name: "Alice Smith", email: "alice@example.com", phone: "555-0101", is_primary: "true" }
         - { id: "C2", contact_name: "Bob Jones", email: "bob@example.com", phone: "555-0102", is_primary: "false" }
     expected:
+      # Each contact maps to its own person entity — no conflicts, all noops
       contacts: {}
+
+

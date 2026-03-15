@@ -96,11 +96,16 @@ mappings:
         last_modified: modified_at
 
 tests:
-  - description: "Multiple embedded addresses — billing wins with newer timestamp"
+  - description: "Billing system wins (newer) — CRM billing address gets updated"
     input:
       crm:
         - { customer_id: "C1", customer_name: "Acme Corp", billing_address_id: "B1", billing_street: "123 Main St", billing_city: "NYC", shipping_address_id: "S1", shipping_street: "456 Oak Ave", shipping_city: "LA", updated_at: "2024-01-15T10:00:00Z" }
       billing:
-        - { account_id: "C1", account_name: "Acme Corporation", billing_address_id: "B1", street: "123 Main Street", city: "New York", modified_at: "2024-01-20T14:00:00Z" }
+        - { account_id: "C1", account_name: "Acme Corporation", billing_address_id: "B1", street: "789 Broadway", city: "New York", modified_at: "2024-01-20T14:00:00Z" }
     expected:
-      billing: {}
+      crm:
+        updates:
+          # Customer name from billing system (newer timestamp)
+          - { customer_id: "C1", customer_name: "Acme Corporation" }
+          # Billing address fields from billing system (newer timestamp)
+          - { customer_id: "C1", billing_street: "789 Broadway", billing_city: "New York" }

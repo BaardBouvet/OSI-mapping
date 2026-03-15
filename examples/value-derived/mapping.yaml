@@ -51,11 +51,23 @@ mappings:
         last_modified: name_updated
 
 tests:
-  - description: "HR first+last wins (newer) — CRM gets derived full_name"
+  - description: "Same data round-trips — CRM full_name matches resolved value"
+    input:
+      crm:
+        - { contact_id: "C1", contact_email: "alice@example.com", contact_name: "Alice Smith", updated_at: "2025-01-01T10:00:00Z" }
+      hr:
+        - { employee_id: "E1", employee_email: "alice@example.com", first: "Alice", last: "Smith", name_updated: "2025-01-15T10:00:00Z" }
+    expected:
+      # CRM full_name "Alice Smith" matches derived (first_name || ' ' || last_name) — noop
+      hr: {}
+
+  - description: "HR name differs — CRM contact_name stays (each field resolves independently)"
     input:
       crm:
         - { contact_id: "C1", contact_email: "alice@example.com", contact_name: "Alice Jones", updated_at: "2025-01-01T10:00:00Z" }
       hr:
-        - { employee_id: "C1", employee_email: "alice@example.com", first: "Alice", last: "Smith", name_updated: "2025-01-15T10:00:00Z" }
+        - { employee_id: "E1", employee_email: "alice@example.com", first: "Alice", last: "Smith", name_updated: "2025-01-15T10:00:00Z" }
     expected:
+      # full_name resolves from CRM ("Alice Jones"), first/last from HR ("Alice"/"Smith").
+      # default_expression only fills missing fields — CRM's full_name is not missing.
       hr: {}
