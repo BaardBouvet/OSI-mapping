@@ -1,7 +1,7 @@
 use anyhow::Result;
 use indexmap::IndexMap;
 
-use crate::model::{Mapping, Source, Strategy, Target};
+use crate::model::{Mapping, PrimaryKey, Source, Strategy, Target};
 use crate::qi;
 
 /// Render a reverse mapping view that projects a resolved target back to source shape.
@@ -23,6 +23,8 @@ pub fn render_reverse_view(
     target: Option<&Target>,
     _all_targets: &IndexMap<String, Target>,
     source_meta: Option<&Source>,
+    all_mappings: &[Mapping],
+    all_sources: &IndexMap<String, Source>,
 ) -> Result<String> {
     let view_name = qi(&format!("_rev_{}", mapping.name));
     let id_view = format!("_id_{target_name}");
@@ -107,7 +109,36 @@ pub fn render_reverse_view(
                         None if is_parent_field && identity_fields.len() == 1 => {
                             format!("ref_local.{}", qi(identity_fields[0]))
                         }
-                        None => "ref_local._src_id".to_string(),
+                        None => {
+                            // Auto-detect: if the referenced mapping has a single PK
+                            // that maps to a typed identity field, return that field
+                            // (preserves the declared type) instead of _src_id (always text).
+                            let ref_mapping = all_mappings.iter().find(|m| m.name == *ref_mapping_name);
+                            let typed_identity = ref_mapping.and_then(|rm| {
+                                let ref_source = all_sources.get(&rm.source.dataset)?;
+                                match &ref_source.primary_key {
+                                    PrimaryKey::Single(pk_col) => {
+                                        // Find the field mapping where this PK column is the source
+                                        let target_field_name = rm.fields.iter()
+                                            .find(|f| f.source.as_deref() == Some(pk_col.as_str()))
+                                            .and_then(|f| f.target.as_deref())?;
+                                        // Check if that target field has a type declaration
+                                        let ref_tgt = _all_targets.get(rm.target.name())?;
+                                        let fdef = ref_tgt.fields.get(target_field_name)?;
+                                        if fdef.field_type.is_some() && fdef.strategy() == Strategy::Identity {
+                                            Some(target_field_name)
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    PrimaryKey::Composite(_) => None,
+                                }
+                            });
+                            match typed_identity {
+                                Some(field_name) => format!("ref_local.{}", qi(field_name)),
+                                None => "ref_local._src_id".to_string(),
+                            }
+                        }
                     };
 
                     format!(

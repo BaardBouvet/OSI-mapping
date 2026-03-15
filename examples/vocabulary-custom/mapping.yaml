@@ -94,4 +94,4 @@ tests:
           - { employee_id: "alice", employment_status: "I" }
       crm:
         inserts:
-          - { _cluster_id: "hr_system:bob", status_code: "0" }
+          - { _cluster_id: "hr_system:bob", status_code: 0 }
