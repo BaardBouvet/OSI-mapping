@@ -311,6 +311,10 @@
           "type": "string",
           "description": "Name of the mapping whose source identities should be used when translating an entity reference back to a source FK value in the reverse view."
         },
+        "references_field": {
+          "type": "string",
+          "description": "The target field whose value to return when translating this reference back to source namespace. When omitted, the engine returns the referenced source's primary key value — which is the correct default for standard foreign keys. Set this when the source stores a different representation of the reference (e.g. an ISO code rather than the entity's primary key). See vocabulary-standard example."
+        },
         "description": { "type": "string" }
       }
     },

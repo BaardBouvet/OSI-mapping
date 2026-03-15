@@ -1,18 +1,44 @@
 use anyhow::Result;
+use std::collections::HashMap;
 
-use crate::model::{Mapping, Source, Target};
+use crate::model::{Mapping, ParentFieldRef, Source, Target};
 use crate::qi;
+
+/// Resolve a source field name to its SQL expression for nested array mappings.
+///
+/// - Parent field aliases → root table column (single-segment path) or
+///   intermediate JSONB extraction (multi-segment path).
+/// - Regular fields → `(item.value->>'field_name')` (JSONB item extraction).
+/// - When no path is set → quoted column name as before.
+fn resolve_nested_source(
+    source_name: &str,
+    parent_field_exprs: &HashMap<String, String>,
+    has_path: bool,
+) -> String {
+    if let Some(expr) = parent_field_exprs.get(source_name) {
+        expr.clone()
+    } else if has_path {
+        format!("(item.value->>'{source_name}')")
+    } else {
+        qi(source_name)
+    }
+}
 
 /// Render a CREATE VIEW statement for a forward mapping.
 ///
 /// Produces: `CREATE OR REPLACE VIEW _fwd_{mapping_name} AS SELECT ...`
+///
+/// `nested_base_cols` lists source columns (e.g., JSONB array columns) from
+/// nested-path child mappings that should be included in `_base` for noop
+/// detection in the delta view.
 pub fn render_forward_view(
     mapping: &Mapping,
     source_meta: Option<&Source>,
     target: Option<&Target>,
+    nested_base_cols: &[String],
 ) -> Result<String> {
     let view_name = qi(&format!("_fwd_{}", mapping.name));
-    let body = render_forward_body(mapping, source_meta, target)?;
+    let body = render_forward_body(mapping, source_meta, target, nested_base_cols)?;
     Ok(format!(
         "-- Forward: {name}\nCREATE OR REPLACE VIEW {view_name} AS\n{body};\n",
         name = mapping.name,
@@ -26,10 +52,35 @@ pub fn render_forward_body(
     mapping: &Mapping,
     source_meta: Option<&Source>,
     target: Option<&Target>,
+    nested_base_cols: &[String],
 ) -> Result<String> {
     let source = qi(source_meta
         .map(|s| s.table_name(&mapping.source.dataset))
         .unwrap_or(&mapping.source.dataset));
+
+    let has_path = mapping.source.path.is_some();
+    let path_depth = mapping.source.path.as_ref()
+        .map(|p| p.split('.').count())
+        .unwrap_or(0);
+
+    // Build parent field alias → SQL expression map for nested sources.
+    let mut parent_field_exprs: HashMap<String, String> = HashMap::new();
+    if has_path {
+        for (alias, pref) in &mapping.source.parent_fields {
+            let col = match pref {
+                ParentFieldRef::Simple(c) => c.as_str(),
+                ParentFieldRef::Qualified { field, .. } => field.as_str(),
+            };
+            let expr = if path_depth <= 1 {
+                // Single segment: parent is the root table row.
+                qi(col)
+            } else {
+                // Multi-segment: parent is the intermediate JSONB item.
+                format!("(_nest_{}.value->>'{col}')", path_depth - 2)
+            };
+            parent_field_exprs.insert(alias.clone(), expr);
+        }
+    }
 
     let mut cols: Vec<String> = Vec::new();
 
@@ -97,7 +148,7 @@ pub fn render_forward_body(
                 let expr = if let Some(ref e) = fm.expression {
                     e.clone()
                 } else if let Some(ref src) = fm.source {
-                    qi(src)
+                    resolve_nested_source(src, &parent_field_exprs, has_path)
                 } else {
                     "NULL".into()
                 };
@@ -140,7 +191,7 @@ pub fn render_forward_body(
                 let expr = if let Some(ref e) = fm.expression {
                     e.clone()
                 } else if let Some(ref src) = fm.source {
-                    qi(src)
+                    resolve_nested_source(src, &parent_field_exprs, has_path)
                 } else {
                     continue;
                 };
@@ -157,12 +208,20 @@ pub fn render_forward_body(
         for fm in &mapping.fields {
             if let Some(ref src) = fm.source {
                 if fm.is_forward() || fm.is_reverse() {
-                    let qsrc = qi(src);
-                    let part = format!("'{src}', {qsrc}");
+                    let resolved = resolve_nested_source(src, &parent_field_exprs, has_path);
+                    let part = format!("'{src}', {resolved}");
                     if !base_parts.contains(&part) {
                         base_parts.push(part);
                     }
                 }
+            }
+        }
+        // Include nested array source columns for noop detection.
+        for col in nested_base_cols {
+            let qcol = qi(col);
+            let part = format!("'{col}', {qcol}");
+            if !base_parts.contains(&part) {
+                base_parts.push(part);
             }
         }
         if base_parts.is_empty() {
@@ -201,7 +260,7 @@ pub fn render_forward_body(
             let parent = if i == 0 {
                 qi(seg)
             } else {
-                format!("_nest_{}.value", i - 1)
+                format!("_nest_{}.value->'{seg}'", i - 1)
             };
             sql.push_str(&format!(
                 "\nCROSS JOIN LATERAL jsonb_array_elements({parent}) AS {alias}"
@@ -236,7 +295,7 @@ mod tests {
         let sqls: Vec<String> = doc
             .mappings
             .iter()
-            .map(|m| render_forward_body(m, None, Some(target)).unwrap())
+            .map(|m| render_forward_body(m, None, Some(target), &[]).unwrap())
             .collect();
 
         // Both views must have identical column sets

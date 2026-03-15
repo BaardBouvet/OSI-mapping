@@ -462,6 +462,12 @@ pub struct FieldMapping {
     /// translating an entity reference back to a source FK in the reverse view.
     #[serde(default)]
     pub references: Option<String>,
+    /// When set, the reverse view returns this field's value from the referenced
+    /// target instead of `_src_id`. Used for vocabulary-style references where
+    /// the source FK stores a specific field (e.g., `iso_code`) rather than the
+    /// referenced entity's primary key.
+    #[serde(default)]
+    pub references_field: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
 }

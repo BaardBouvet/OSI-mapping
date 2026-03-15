@@ -45,7 +45,25 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
                 if annotate {
                     sql.push_str(&annotate_forward(mapping, target));
                 }
-                sql.push_str(&forward::render_forward_view(mapping, source_meta, target)?);
+                // Collect nested-path source columns from sibling mappings
+                // so the parent's _base includes them for noop detection.
+                let nested_base_cols: Vec<String> = if mapping.source.path.is_none() {
+                    let mut cols: Vec<String> = Vec::new();
+                    for m in &doc.mappings {
+                        if m.source.dataset == mapping.source.dataset && m.source.path.is_some() {
+                            if let Some(ref p) = m.source.path {
+                                let root = p.split('.').next().unwrap_or(p).to_string();
+                                if !cols.contains(&root) {
+                                    cols.push(root);
+                                }
+                            }
+                        }
+                    }
+                    cols
+                } else {
+                    vec![]
+                };
+                sql.push_str(&forward::render_forward_view(mapping, source_meta, target, &nested_base_cols)?);
                 sql.push('\n');
             }
             ViewNode::Identity(target_name) => {

@@ -1351,6 +1351,11 @@ async fn ensure_source_columns(
             if mapping.source.dataset != *dataset {
                 continue;
             }
+            // Skip nested-path mappings — their field sources are JSONB item
+            // fields or parent_field aliases, not real table columns.
+            if mapping.source.path.is_some() {
+                continue;
+            }
             for fm in &mapping.fields {
                 if let Some(ref src) = fm.source {
                     if !needed.contains(src) {

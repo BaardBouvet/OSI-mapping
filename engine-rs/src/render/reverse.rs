@@ -74,15 +74,43 @@ pub fn render_reverse_view(
                 // Requires explicit fm.references to know which mapping to resolve through.
                 if let Some(ref ref_mapping_name) = fm.references {
                     let id_ref = qi(&format!("_id_{ref_target_name}"));
+
+                    // Match on _src_id first (standard FK references), then
+                    // fall back to identity fields (vocabulary-style references
+                    // where the resolved value may differ from _src_id).
+                    let ref_target_def = _all_targets.get(ref_target_name);
+                    let identity_fields: Vec<&str> = ref_target_def
+                        .map(|t| {
+                            t.fields
+                                .iter()
+                                .filter(|(_, fd)| fd.strategy() == Strategy::Identity)
+                                .map(|(name, _)| name.as_str())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    let qtgt = qi(tgt);
+                    let mut match_parts = vec![
+                        format!("ref_match._src_id = r.{qtgt}::text"),
+                    ];
+                    for f in &identity_fields {
+                        match_parts.push(format!("ref_match.{} = r.{qtgt}::text", qi(f)));
+                    }
+                    let match_clause = match_parts.join(" OR ");
+
+                    let return_expr = match &fm.references_field {
+                        Some(rf) => format!("ref_local.{}", qi(rf)),
+                        None => "ref_local._src_id".to_string(),
+                    };
+
                     format!(
-                        "(SELECT ref_local._src_id \
+                        "(SELECT {return_expr} \
                          FROM {id_ref} ref_match \
                          JOIN {id_ref} ref_local \
                            ON ref_local._entity_id_resolved = ref_match._entity_id_resolved \
-                         WHERE ref_match._src_id = r.{}::text \
+                         WHERE ({match_clause}) \
                          AND ref_local._mapping = '{ref_mapping_name}' \
                          LIMIT 1)",
-                        qi(tgt)
                     )
                 } else {
                     // No explicit references — pass through raw value.

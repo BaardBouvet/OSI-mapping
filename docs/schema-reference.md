@@ -239,6 +239,35 @@ targets:
 
 **Examples:** [references](../examples/references/) (cross-system FK resolution), [reference-preservation](../examples/reference-preservation/) (FK preservation after merge), [embedded-objects](../examples/embedded-objects/), [nested-arrays](../examples/nested-arrays/), [vocabulary-custom](../examples/vocabulary-custom/), [vocabulary-standard](../examples/vocabulary-standard/)
 
+### `references_field`
+
+Controls what value is returned when a reference is translated back to the source's FK column during reverse mapping. By default the engine returns the referenced source's primary key value — which is correct for standard foreign keys. Set `references_field` when the source stores a different representation of the entity reference.
+
+**The problem it solves:** A vocabulary or lookup table might be keyed by `name` but the referencing source stores the ISO code, not the name. Without `references_field`, the reverse mapping would return the primary key (`name: "Denmark"`) when the source actually expects an ISO code (`country_code: "DK"`).
+
+```yaml
+# CRM stores ISO codes, ERP stores full names — same country entity
+- name: crm_system
+  source: { dataset: crm_system }
+  target: customer
+  fields:
+    - source: country_code
+      target: country
+      references: country_vocabulary
+      references_field: iso_code   # return iso_code, not the PK (name)
+
+- name: erp_system
+  source: { dataset: erp_system }
+  target: customer
+  fields:
+    - source: country
+      target: country
+      references: country_vocabulary
+      references_field: name       # return name (happens to be the PK)
+```
+
+**Examples:** [vocabulary-standard](../examples/vocabulary-standard/) (vocabulary with ISO codes and full names)
+
 ### `default` / `default_expression`
 
 Fallback values when no source provides data:
