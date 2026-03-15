@@ -42,7 +42,7 @@ mappings:
         target: last_name
       - source: phone_number
         target: phone
-        expression: "REGEXP_REPLACE(phone_number, '[^0-9]', '')"
+        expression: "REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')"
         reverse_expression: "'+' || SUBSTRING(phone, 1, 1) || ' ' || SUBSTRING(phone, 2, 3) || '-' || SUBSTRING(phone, 5)"
 
   - name: system_b
@@ -76,4 +76,4 @@ tests:
       system_b:
         updates:
           # name and phone corrected to system_a's values (in system_b format)
-          - { user_id: "alice@example.com", birthdate: "1985-06-15", name: "Alice Smith", contact_phone: "1 555-1234" }
+          - { user_id: "alice@example.com", birthdate: "1985-06-15", name: "Alice Smith", contact_phone: "15551234" }

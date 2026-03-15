@@ -103,6 +103,9 @@ pub fn validate(doc: &MappingDocument) -> ValidationResult {
     // Pass 8: Origin/cluster rules
     pass_origin_cluster(doc, &mut result);
 
+    // Pass 9: Default value compatibility with field type
+    pass_default_type_compat(doc, &mut result);
+
     result
 }
 
@@ -843,6 +846,57 @@ fn pass_origin_cluster(doc: &MappingDocument, result: &mut ValidationResult) {
                     m.name
                 ),
             );
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Pass 9 — Default value compatibility with field type
+// ──────────────────────────────────────────────────────────────────────
+
+fn pass_default_type_compat(doc: &MappingDocument, result: &mut ValidationResult) {
+    let numeric_types: HashSet<&str> = ["integer", "int", "numeric", "bigint", "smallint", "real", "double precision", "float"]
+        .into_iter().collect();
+    let boolean_types: HashSet<&str> = ["boolean", "bool"].into_iter().collect();
+
+    for (tname, tdef) in &doc.targets {
+        for (fname, fdef) in &tdef.fields {
+            let (default_val, field_type) = match (fdef.default_value(), &fdef.field_type) {
+                (Some(d), Some(t)) => (d, t.as_str()),
+                _ => continue,
+            };
+            let type_lower = field_type.to_lowercase();
+
+            if numeric_types.contains(type_lower.as_str()) {
+                match default_val {
+                    serde_yaml::Value::Number(_) => {} // ok
+                    serde_yaml::Value::String(s) if s.parse::<f64>().is_ok() => {} // ok
+                    _ => {
+                        result.warning(
+                            "DefaultType",
+                            format!(
+                                "target '{tname}' field '{fname}': default {:?} is not numeric but type is '{field_type}'",
+                                default_val
+                            ),
+                        );
+                    }
+                }
+            } else if boolean_types.contains(type_lower.as_str()) {
+                match default_val {
+                    serde_yaml::Value::Bool(_) => {} // ok
+                    serde_yaml::Value::String(s) if s == "true" || s == "false" => {} // ok
+                    _ => {
+                        result.warning(
+                            "DefaultType",
+                            format!(
+                                "target '{tname}' field '{fname}': default {:?} is not boolean but type is '{field_type}'",
+                                default_val
+                            ),
+                        );
+                    }
+                }
+            }
+            // For text/date/etc, any default is acceptable (string representation)
         }
     }
 }

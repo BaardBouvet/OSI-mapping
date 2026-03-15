@@ -94,7 +94,7 @@ pub fn render_reverse_view(
                         format!("ref_match._src_id = r.{qtgt}::text"),
                     ];
                     for f in &identity_fields {
-                        match_parts.push(format!("ref_match.{} = r.{qtgt}::text", qi(f)));
+                        match_parts.push(format!("ref_match.{}::text = r.{qtgt}::text", qi(f)));
                     }
                     let match_clause = match_parts.join(" OR ");
 

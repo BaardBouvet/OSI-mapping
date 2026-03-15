@@ -24,10 +24,13 @@ targets:
         strategy: coalesce
       system_a_id:
         strategy: identity
+        type: integer
       system_b_id:
         strategy: identity
+        type: integer
       system_c_id:
         strategy: identity
+        type: integer
 
 mappings:
   - name: system_a

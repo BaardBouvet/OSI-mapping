@@ -1,0 +1,102 @@
+# Mapping Correctness Fixes Plan
+
+**Status:** Done  
+**Scope:** Audit and fix questionable expected data and missing type declarations across examples, plus engine fixes for typed identity fields.
+
+---
+
+## Background
+
+After bulk-fixing 13 examples' expected data to reach 35/35 passing, a review of the changes revealed several examples where the expected data was matched to engine output rather than corrected to reflect the intended behavior. This plan documents the analysis and fixes.
+
+---
+
+## Issues Analyzed
+
+### 1. vocabulary-custom: status should be integer
+
+**Problem:** CRM uses integer status codes (`crm_code: 1`, `crm_code: 0`), but the target field had no `type:` declaration, so the center model stores them as text.  
+**Root cause:** Missing `type: integer` on `status.crm_code`.  
+**Fix:** Added `type: integer` to the target field.  
+**Engine fix required:** Forward view casts to `::integer`, but identity hash uses `COALESCE(field, '')` which fails for non-text types. Fixed `identity.rs` to use `COALESCE(field::text, '')`. Also, reverse reference matching `ref_match.{field} = r.{target}::text` fails for integer identity fields. Fixed `reverse.rs` to use `ref_match.{field}::text`.  
+**Status:** Done.
+
+### 2. composite-keys: unit_price decimal precision
+
+**Problem:** Question about whether decimal numbers like `10.50` and `25.00` are handled correctly.  
+**Analysis:** `type: numeric` is already declared on `quantity` and `unit_price`. PostgreSQL preserves `NUMERIC` precision. Input `25.00` resolves to `25` via PostgreSQL's numeric normalization. The expected data (`25`) is correct.  
+**Status:** No fix needed.
+
+### 3. relationship-embedded: crm_associations missing relation_type
+
+**Problem:** Insert row for `crm_associations` has no `relation_type` value — just `{_cluster_id: "..."}`.  
+**Analysis:** All three fields (`company_id`, `contact_id`, `relation_type`) are composite PK columns. The reverse view extracts PK values from `_src_id`, but for insert rows `_src_id` is NULL (entity exists only in ERP, not yet in CRM). The three `forward_only` fields in `erp_companies_assoc` don't produce reverse output. This is the known COMPOSITE-KEY-REFS-PLAN limitation — not a data bug.  
+**Status:** No fix needed (tracked in COMPOSITE-KEY-REFS-PLAN).
+
+### 4. value-conversions: phone not fully stripped
+
+**Problem:** `REGEXP_REPLACE(phone_number, '[^0-9]', '')` only strips the first non-digit character. Input `"+1 555-1234"` becomes `"1 555-1234"` instead of `"15551234"`.  
+**Root cause:** PostgreSQL's `REGEXP_REPLACE` requires the `'g'` flag for global replacement.  
+**Fix:** Changed expression to `REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')`. Updated expected `contact_phone` from `"1 555-1234"` to `"15551234"`.  
+**Status:** Done.
+
+### 5. embedded-simple: billing/shipping columns are null
+
+**Problem:** CRM's billing_street, billing_city, shipping_street, shipping_city are all null in the update row, even though billing system has newer address data.  
+**Root cause:** `billing_address` target had no identity field. Without identity, CRM's embedded billing entity and the billing system's entity are separate (no merge). The resolved billing_address has no CRM member, so the embedded row is noop — and the non-embedded customer mapping row gets `NULL::text` for all billing columns (UNION ALL padding).  
+**Fix:** Added `customer_ref: identity, references: customer` field to both `billing_address` and `shipping_address` targets. Added corresponding field mappings (`customer_email → customer_ref` for CRM, `account_email → customer_ref` for billing). Now address entities merge via customer email. Updated expected to show billing address update flowing from billing system to CRM.  
+**Status:** Done.
+
+### 6. embedded-multiple: two rows with null columns
+
+**Problem:** Two update rows for CRM, each with most columns null.  
+**Analysis:** Correct by design. The delta view uses UNION ALL of separate embedded mappings (crm_customer, crm_billing, crm_shipping). Each mapping's reverse view only projects its own fields; other columns are padded with `NULL::text`. Row 1 = billing address update, Row 2 = customer name update. This is the expected representation for a source with multiple embedded mappings — the consumer merges them by PK.  
+**Status:** No fix needed (by design).
+
+### 7. embedded-vs-many-to-many: domain is null
+
+**Problem:** CRM update row shows `domain: null` instead of `"acme.com"`.  
+**Analysis:** Correct by design. The update is from the embedded contacts mapping (`crm_embedded_contacts`), which has `NULL::text AS "domain"` in the UNION ALL. The non-embedded customer mapping (`crm_customers`) produces a noop (domain unchanged at "acme.com"). Same pattern as #6.  
+**Status:** No fix needed (by design).
+
+### 8. merge-generated-ids: id columns not numeric
+
+**Problem:** `system_a_id`, `system_b_id`, `system_c_id` are integers in source data but stored as text in the center model.  
+**Root cause:** Missing `type: integer` declarations.  
+**Fix:** Added `type: integer` to all three identity fields. Note: reverse PK columns always come from `_src_id` (text), so expected data like `id: "101"` remains correct.  
+**Status:** Done.
+
+### 9. value-groups: cid as string
+
+**Problem:** Expected data has `cid: "1"` instead of numeric `1`.  
+**Analysis:** Correct. `cid` is the source primary key, and source PKs are always cast to `::text` in the forward view (`pk::text AS _src_id`). The delta view's PK column comes from the identity view which carries this text representation.  
+**Status:** No fix needed.
+
+### 10. Validate default value vs field type (new validation)
+
+**Problem:** No validation catches when a `default:` value is incompatible with the declared `type:` (e.g., `default: "foo"` on a `type: numeric` field).  
+**Fix:** Added Pass 9 (`pass_default_type_compat`) to `validate.rs`. Warns when a string/non-numeric default is used on a numeric field, or a non-boolean default on a boolean field.  
+**Status:** Done.
+
+---
+
+## Engine Changes
+
+| File | Change | Lines |
+|------|--------|-------|
+| `src/render/identity.rs` | `COALESCE({field}::text, '')` — cast typed identity fields to text before COALESCE with empty string | ~L101 |
+| `src/render/reverse.rs` | `ref_match.{field}::text = r.{target}::text` — cast identity fields to text in reference matching | ~L95 |
+| `src/validate.rs` | Pass 9: `pass_default_type_compat` — warns on default/type mismatch | New function |
+
+## Example Changes
+
+| Example | Change |
+|---------|--------|
+| `vocabulary-custom` | Added `type: integer` to `status.crm_code` |
+| `value-conversions` | Added `'g'` flag to REGEXP_REPLACE; updated expected phone |
+| `merge-generated-ids` | Added `type: integer` to 3 identity fields |
+| `embedded-simple` | Added `customer_ref` identity field to address targets + mappings; updated expected |
+
+## Verification
+
+All 35/35 examples passing, 21/21 tests green (`cargo test`).

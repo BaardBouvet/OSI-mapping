@@ -98,7 +98,7 @@ pub fn render_identity_view(
         "md5(_mapping || ':' || _src_id)".to_string()
     } else {
         let id_parts: Vec<String> = all_id_fields.iter()
-            .map(|f| format!("COALESCE({}, '')", qi(f)))
+            .map(|f| format!("COALESCE({}::text, '')", qi(f)))
             .collect();
         format!(
             "md5(_mapping || ':' || _src_id || ':' || {})",

@@ -19,6 +19,9 @@ targets:
 
   billing_address:
     fields:
+      customer_ref:
+        strategy: identity
+        references: customer
       street:
         strategy: last_modified
       city:
@@ -26,6 +29,9 @@ targets:
 
   shipping_address:
     fields:
+      customer_ref:
+        strategy: identity
+        references: customer
       street:
         strategy: last_modified
       city:
@@ -47,6 +53,8 @@ mappings:
     target: billing_address
     embedded: true
     fields:
+      - source: customer_email
+        target: customer_ref
       - source: billing_street
         target: street
         last_modified: updated_at
@@ -59,6 +67,8 @@ mappings:
     target: shipping_address
     embedded: true
     fields:
+      - source: customer_email
+        target: customer_ref
       - source: shipping_street
         target: street
         last_modified: updated_at
@@ -81,6 +91,8 @@ mappings:
     target: billing_address
     embedded: true
     fields:
+      - source: account_email
+        target: customer_ref
       - source: street
         target: street
         last_modified: modified_at
@@ -98,4 +110,5 @@ tests:
     expected:
       crm:
         updates:
+          - { billing_city: "New York", billing_street: "999 Updated St", customer_email: "acme@example.com", customer_id: "C1", customer_name: null, shipping_city: null, shipping_street: null }
           - { billing_city: null, billing_street: null, customer_email: "acme@example.com", customer_id: "C1", customer_name: "Acme Corporation", shipping_city: null, shipping_street: null }
