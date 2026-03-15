@@ -13,8 +13,10 @@ sources:
 targets:
   contact:
     fields:
-      email: identity
-      name: coalesce
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
 
 mappings:
   - name: crm

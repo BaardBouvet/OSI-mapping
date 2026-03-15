@@ -10,7 +10,8 @@ sources:
 targets:
   customer:
     fields:
-      customer_id: identity
+      customer_id:
+        strategy: identity
       name:
         strategy: last_modified
       street:

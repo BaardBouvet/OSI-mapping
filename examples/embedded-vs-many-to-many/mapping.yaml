@@ -16,13 +16,15 @@ sources:
 targets:
   customer:
     fields:
-      domain: identity
+      domain:
+        strategy: identity
 
   contact:
     fields:
       name:
         strategy: last_modified
-      email: identity
+      email:
+        strategy: identity
 
   customer_contact:
     fields:
@@ -32,7 +34,8 @@ targets:
       contact_id:
         strategy: coalesce
         references: contact
-      relation_type: coalesce
+      relation_type:
+        strategy: coalesce
 
 mappings:
   - name: crm_customers

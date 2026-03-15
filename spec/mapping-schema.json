@@ -85,15 +85,7 @@
     },
 
     "TargetField": {
-      "description": "Resolution rule for a target field. String shorthand for simple strategies; object for advanced configuration.",
-      "oneOf": [
-        {
-          "type": "string",
-          "enum": ["identity", "collect", "coalesce", "last_modified"],
-          "description": "Shorthand: just the strategy name. 'identity' = collect all values and use for entity linking. 'collect' = collect all values (no linking). 'coalesce' = pick from highest-priority source. 'last_modified' = pick from most recently updated source."
-        },
-        { "$ref": "#/$defs/TargetFieldDef" }
-      ]
+      "$ref": "#/$defs/TargetFieldDef"
     },
 
     "TargetFieldDef": {

@@ -12,13 +12,17 @@ sources:
 targets:
   person:
     fields:
-      email: identity
+      email:
+        strategy: identity
       date_of_birth:
         strategy: coalesce
         type: date
-      first_name: coalesce
-      last_name: coalesce
-      phone: coalesce
+      first_name:
+        strategy: coalesce
+      last_name:
+        strategy: coalesce
+      phone:
+        strategy: coalesce
 
 mappings:
   - name: system_a

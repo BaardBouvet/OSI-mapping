@@ -16,13 +16,17 @@ sources:
 targets:
   company:
     fields:
-      email: identity
-      name: last_modified
+      email:
+        strategy: identity
+      name:
+        strategy: last_modified
 
   person:
     fields:
-      email: identity
-      name: last_modified
+      email:
+        strategy: identity
+      name:
+        strategy: last_modified
 
   company_person_association:
     fields:

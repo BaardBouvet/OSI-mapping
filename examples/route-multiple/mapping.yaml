@@ -10,9 +10,12 @@ sources:
 targets:
   person:
     fields:
-      email: coalesce
-      name: coalesce
-      phone: coalesce
+      email:
+        strategy: coalesce
+      name:
+        strategy: coalesce
+      phone:
+        strategy: coalesce
       is_primary_contact:
         strategy: coalesce
         type: boolean

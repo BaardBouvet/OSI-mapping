@@ -2,53 +2,73 @@ version: "1.0"
 description: >
   Multiple independent nested branches from one root. Organization has departments
   (with employees) and projects (with tasks) — five targets total.
+  Includes flat HR and PM sources to test cross-source merging into both branches.
 
 sources:
   source:
     primary_key: id
+  hr_departments:
+    primary_key: did
+  hr_employees:
+    primary_key: eid
 
 targets:
   organization:
     fields:
-      org_id: identity
-      name: coalesce
-      country: coalesce
+      org_id:
+        strategy: identity
+      name:
+        strategy: coalesce
+      country:
+        strategy: coalesce
 
   department:
     fields:
-      dept_id: identity
+      dept_id:
+        strategy: identity
       org_ref:
         strategy: coalesce
         references: organization
-      dept_name: coalesce
-      budget: coalesce
+      dept_name:
+        strategy: coalesce
+      budget:
+        strategy: coalesce
 
   employee:
     fields:
-      emp_id: identity
+      emp_id:
+        strategy: identity
       dept_ref:
         strategy: coalesce
         references: department
-      emp_name: coalesce
-      salary: coalesce
+      emp_name:
+        strategy: coalesce
+      salary:
+        strategy: coalesce
 
   project:
     fields:
-      proj_id: identity
+      proj_id:
+        strategy: identity
       org_ref:
         strategy: coalesce
         references: organization
-      proj_name: coalesce
-      status: coalesce
+      proj_name:
+        strategy: coalesce
+      status:
+        strategy: coalesce
 
   task:
     fields:
-      task_id: identity
+      task_id:
+        strategy: identity
       proj_ref:
         strategy: coalesce
         references: project
-      task_name: coalesce
-      priority: coalesce
+      task_name:
+        strategy: coalesce
+      priority:
+        strategy: coalesce
 
 mappings:
   - name: source_orgs
@@ -134,6 +154,37 @@ mappings:
       - source: priority
         target: priority
 
+  # Flat HR sources
+  - name: hr_departments
+    source: { dataset: hr_departments }
+    target: department
+    fields:
+      - source: dept_id
+        target: dept_id
+      - source: org_id
+        target: org_ref
+        references: source_orgs
+      - source: dept_name
+        target: dept_name
+      - source: budget
+        target: budget
+        priority: 1
+
+  - name: hr_employees
+    source: { dataset: hr_employees }
+    target: employee
+    fields:
+      - source: emp_id
+        target: emp_id
+      - source: dept_id
+        target: dept_ref
+        references: hr_departments
+      - source: emp_name
+        target: emp_name
+      - source: salary
+        target: salary
+        priority: 1
+
 tests:
   - description: "Organization with departments+employees and projects+tasks"
     input:
@@ -165,6 +216,39 @@ tests:
               status: "planning"
               tasks:
                 - { task_id: "t3", task_name: "Create Content", priority: "medium" }
+      hr_departments: []
+      hr_employees: []
     expected:
       # Single source — all nested branches round-trip unchanged
       source: {}
+
+  - description: "HR system corrects salary via priority — nested source gets updated"
+    input:
+      source:
+        - id: "org1"
+          name: "Acme Corp"
+          country: "USA"
+          departments:
+            - dept_id: "d1"
+              dept_name: "Engineering"
+              budget: 500000
+              employees:
+                - { emp_id: "e1", emp_name: "Alice", salary: 90000 }
+          projects: []
+      hr_departments:
+        - { did: "HD1", dept_id: "d1", org_id: "org1", dept_name: "Engineering", budget: 600000 }
+      hr_employees:
+        - { eid: "HE1", emp_id: "e1", dept_id: "d1", emp_name: "Alice", salary: 120000 }
+    expected:
+      source:
+        updates:
+          - id: "org1"
+            name: "Acme Corp"
+            country: "USA"
+            departments:
+              - dept_id: "d1"
+                dept_name: "Engineering"
+                budget: "600000"
+                employees:
+                  - { emp_id: "e1", emp_name: "Alice", salary: "120000" }
+            projects: null

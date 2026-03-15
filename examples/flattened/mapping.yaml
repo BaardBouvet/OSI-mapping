@@ -15,8 +15,10 @@ sources:
 targets:
   customer:
     fields:
-      name: identity
-      address_ref: identity
+      name:
+        strategy: identity
+      address_ref:
+        strategy: identity
       street:
         strategy: last_modified
       city:

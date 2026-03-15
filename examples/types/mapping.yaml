@@ -12,13 +12,17 @@ sources:
 targets:
   person:
     fields:
-      email: identity
-      name: coalesce
-      phone: coalesce
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+      phone:
+        strategy: coalesce
       type:
         strategy: expression
         expression: "string_agg(distinct type, ',' order by type)"
-      department: coalesce
+      department:
+        strategy: coalesce
 
 mappings:
   - name: hr

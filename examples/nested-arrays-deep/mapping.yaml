@@ -2,32 +2,45 @@ version: "1.0"
 description: >
   Two levels of nested arrays: parent → children → grandchildren.
   Uses source.path and parent_fields to flatten deep nesting into three targets.
+  Includes flat sources for each target level to test cross-source merging.
 
 sources:
   source:
     primary_key: id
+  flat_parents:
+    primary_key: pid
+  flat_children:
+    primary_key: cid
+  flat_grandchildren:
+    primary_key: gid
 
 targets:
   parent:
     fields:
-      parent_id: identity
-      name: coalesce
+      parent_id:
+        strategy: identity
+      name:
+        strategy: coalesce
 
   child:
     fields:
-      child_id: identity
+      child_id:
+        strategy: identity
       parent_ref:
         strategy: coalesce
         references: parent
-      value: coalesce
+      value:
+        strategy: coalesce
 
   grandchild:
     fields:
-      grandchild_id: identity
+      grandchild_id:
+        strategy: identity
       child_ref:
         strategy: coalesce
         references: child
-      data: coalesce
+      data:
+        strategy: coalesce
 
 mappings:
   - name: source_parents
@@ -71,6 +84,42 @@ mappings:
       - source: data
         target: data
 
+  # Flat sources for parents, children, grandchildren
+  - name: flat_parents
+    source: { dataset: flat_parents }
+    target: parent
+    fields:
+      - source: parent_id
+        target: parent_id
+      - source: name
+        target: name
+
+  - name: flat_children
+    source: { dataset: flat_children }
+    target: child
+    fields:
+      - source: child_id
+        target: child_id
+      - source: parent_id
+        target: parent_ref
+        references: flat_parents
+      - source: value
+        target: value
+        priority: 1
+
+  - name: flat_grandchildren
+    source: { dataset: flat_grandchildren }
+    target: grandchild
+    fields:
+      - source: grandchild_id
+        target: grandchild_id
+      - source: child_id
+        target: child_ref
+        references: flat_children
+      - source: data
+        target: data
+        priority: 1
+
 tests:
   - description: "Deep nesting round-trips — 2 children with 2+3 grandchildren"
     input:
@@ -89,6 +138,36 @@ tests:
                 - { grandchild_id: 21, data: "GC 2.1" }
                 - { grandchild_id: 22, data: "GC 2.2" }
                 - { grandchild_id: 23, data: "GC 2.3" }
+      flat_parents: []
+      flat_children: []
+      flat_grandchildren: []
     expected:
       # Single source — deep nesting round-trips unchanged
       source: {}
+
+  - description: "Flat source overrides grandchild data via priority"
+    input:
+      source:
+        - id: "P1"
+          name: "Parent A"
+          children:
+            - child_id: 1
+              value: "Child 1"
+              grandchildren:
+                - { grandchild_id: 11, data: "OLD" }
+      flat_parents:
+        - { pid: "FP1", parent_id: "P1", name: "Parent A" }
+      flat_children:
+        - { cid: "FC1", child_id: "1", parent_id: "P1", value: "Updated Child" }
+      flat_grandchildren:
+        - { gid: "FG1", grandchild_id: "11", child_id: "1", data: "NEW" }
+    expected:
+      source:
+        updates:
+          - id: "P1"
+            name: "Parent A"
+            children:
+              - child_id: "1"
+                value: "Updated Child"
+                grandchildren:
+                  - { grandchild_id: "11", data: "NEW" }

@@ -320,6 +320,15 @@ tests:
 - `inserts`: new rows to create (originated from another source). Must include `_cluster_id` — a seed like `"mapping:src_id"` identifying which entity the insert belongs to
 - `deletes`: rows to remove (failed `reverse_required` or filter)
 
+### Matching Policy
+
+Expected rows must be an **exact match** of the complete actual delta-view output — every column, every value. Partial assertions (listing only some fields) are not allowed.
+
+- Include **all source columns** from the input (including unmapped columns such as timestamps).
+- Include **all reverse-mapped fields** with their resolved values (use `null` when resolution produces no value).
+- **`_base` may be omitted** for brevity — the test harness strips it from both sides before comparison.
+- **Insert rows** must include `_cluster_id` (seed notation) plus every reverse-mapped field.
+
 ## Validation Checklist
 
 Before submitting a mapping file, verify:

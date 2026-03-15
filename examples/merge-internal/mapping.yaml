@@ -10,10 +10,12 @@ sources:
 targets:
   company:
     fields:
-      email: identity
+      email:
+        strategy: identity
       name:
         strategy: last_modified
-      phone: identity
+      phone:
+        strategy: identity
 
 mappings:
   - name: crm

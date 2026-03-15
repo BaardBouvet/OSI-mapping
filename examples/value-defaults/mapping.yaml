@@ -10,16 +10,20 @@ sources:
 targets:
   customer:
     fields:
-      email: identity
-      name: coalesce
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
       industry:
         strategy: coalesce
         default: "Unknown"
       credit_limit:
         strategy: coalesce
+        type: numeric
         default: 1000
       active:
         strategy: coalesce
+        type: boolean
         default: true
 
 mappings:

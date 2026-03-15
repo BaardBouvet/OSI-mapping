@@ -381,9 +381,12 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
             assert!(!source_mappings.is_empty(), "No mapping for key {expected_key}");
             let dataset = &source_mappings[0].source.dataset;
 
-            // Build the list of reverse-mapped source field names from all mappings.
+            // Build reverse field mapping (needed for noop verification)
             let mut reverse_fields: Vec<(String, String)> = Vec::new();
             for mapping in &source_mappings {
+                if mapping.source.path.is_some() {
+                    continue;
+                }
                 for fm in &mapping.fields {
                     if fm.is_reverse() && fm.source.is_some() {
                         let pair = (fm.source.clone().unwrap(), fm.target.clone().unwrap_or_default());
@@ -394,103 +397,21 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                 }
             }
 
-            // Get all source columns (from test input)
-            let source_columns: Vec<String> = {
-                let mut cols = Vec::new();
-                if let Some(rows) = test.input.get(dataset.as_str()) {
-                    for row in rows {
-                        if let Some(obj) = row.as_object() {
-                            for key in obj.keys() {
-                                if !cols.contains(key) {
-                                    cols.push(key.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-                cols
-            };
-
             // Query delta view for update rows
             let delta_view = osi_engine::qi(&format!("_delta_{dataset}"));
             let rev_rows = client
-                .query(&format!("SELECT * FROM {delta_view} WHERE _action = 'update'"), &[])
+                .query(&format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'update'"), &[])
                 .await
                 .unwrap_or_else(|e| panic!("Failed to query {delta_view}: {e:?}"));
 
-            // Build actual output by joining reverse view with source table
-            let mut actual_updates: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
-
-            for rev_row in &rev_rows {
-                // Build PK-based WHERE clause from restored PK columns in delta view
-                let (pk_where, pk_params): (String, Vec<String>) = if let Some(src_meta) = doc.sources.get(dataset.as_str()) {
-                    let cols = src_meta.primary_key.columns();
-                    let clauses: Vec<String> = cols.iter().enumerate()
-                        .map(|(i, c)| format!("{c}::text = ${}", i + 1))
-                        .collect();
-                    let vals: Vec<String> = cols.iter()
-                        .map(|c| rev_row.try_get::<_, Option<String>>(c)
-                            .ok().flatten()
-                            .unwrap_or_default())
-                        .collect();
-                    (clauses.join(" AND "), vals)
-                } else {
-                    let val = rev_row.try_get::<_, Option<String>>("_row_id")
-                        .ok().flatten().unwrap_or_default();
-                    ("_row_id::text = $1".to_string(), vec![val])
-                };
-
-                // Fetch the source row
-                let query = format!("SELECT * FROM {} WHERE {pk_where}", osi_engine::qi(dataset));
-                let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-                    pk_params.iter().map(|s| s as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
-                let source_rows = client
-                    .query(&query, &params)
-                    .await
-                    .unwrap();
-                let source_row = &source_rows[0];
-
-                let mut output = serde_json::Map::new();
-
-                // Start with unmapped source columns
-                for col in &source_columns {
-                    let mapped = reverse_fields.iter().any(|(src, _)| src == col);
-                    if !mapped {
-                        // Use source value
-                        let val: Option<String> = get_text(source_row, col.as_str());
-                        output.insert(
-                            col.clone(),
-                            val.map(serde_json::Value::String)
-                                .unwrap_or(serde_json::Value::Null),
-                        );
-                    }
-                }
-                // Override with reverse-mapped values
-                for (src_field, _) in &reverse_fields {
-                    let val: Option<String> =
-                        rev_row.try_get(src_field.as_str()).ok().flatten();
-                    output.insert(
-                        src_field.clone(),
-                        val.map(serde_json::Value::String)
-                            .unwrap_or(serde_json::Value::Null),
-                    );
-                }
-
-                // Include _base in actual output when expected data mentions it
-                let expects_base = expected.updates.iter().any(|v| {
-                    v.as_object().map_or(false, |obj| obj.contains_key("_base"))
-                });
-                if expects_base {
-                    let base_val: Option<serde_json::Value> =
-                        rev_row.try_get("_base").ok().flatten();
-                    output.insert(
-                        "_base".to_string(),
-                        base_val.unwrap_or(serde_json::Value::Null),
-                    );
-                }
-
-                actual_updates.push(output);
-            }
+            // Build actual output directly from delta view columns
+            let expects_base = expected.updates.iter().any(|v| {
+                v.as_object().map_or(false, |obj| obj.contains_key("_base"))
+            });
+            let actual_updates: Vec<serde_json::Map<String, serde_json::Value>> = rev_rows
+                .iter()
+                .map(|row| delta_row_to_map(row, expects_base, false))
+                .collect();
 
             // Compare with expected updates
             let expected_updates: Vec<serde_json::Map<String, serde_json::Value>> = expected
@@ -509,24 +430,10 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
             let mut expected_sorted: Vec<String> = expected_updates
                 .iter()
                 .map(|m| {
-                    // Normalize: convert all values to strings for comparison
+                    // Normalize: recursively convert all values to strings
                     let normalized: serde_json::Map<String, serde_json::Value> = m
                         .iter()
-                        .map(|(k, v)| {
-                            let str_val = match v {
-                                serde_json::Value::String(s) => {
-                                    serde_json::Value::String(s.clone())
-                                }
-                                serde_json::Value::Number(n) => {
-                                    serde_json::Value::String(n.to_string())
-                                }
-                                serde_json::Value::Bool(b) => {
-                                    serde_json::Value::String(b.to_string())
-                                }
-                                other => other.clone(),
-                            };
-                            (k.clone(), str_val)
-                        })
+                        .map(|(k, v)| (k.clone(), normalize_json_to_text(v)))
                         .collect();
                     serde_json::to_string(&normalized).unwrap()
                 })
@@ -556,47 +463,28 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
             if !expected_inserts.is_empty() {
                 let insert_rows = client
                     .query(
-                        &format!("SELECT * FROM {delta_view} WHERE _action = 'insert'"),
+                        &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'insert'"),
                         &[],
                     )
                     .await
                     .unwrap_or_else(|e| panic!("query {delta_view} inserts: {e}"));
 
-                // Build actual insert maps: _cluster_id + business fields
-                let mut actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> =
-                    Vec::new();
-                for row in &insert_rows {
-                    let mut map = serde_json::Map::new();
-                    let cluster_id: Option<String> = row.try_get("_cluster_id").ok().flatten();
-                    map.insert(
-                        "_cluster_id".into(),
-                        cluster_id
-                            .map(serde_json::Value::String)
-                            .unwrap_or(serde_json::Value::Null),
-                    );
-                    // Include reverse-mapped business fields
-                    for (src_field, _) in &reverse_fields {
-                        let val: Option<String> = row.try_get(src_field.as_str()).ok().flatten();
-                        map.insert(
-                            src_field.clone(),
-                            val.map(serde_json::Value::String)
-                                .unwrap_or(serde_json::Value::Null),
-                        );
-                    }
-                    // Include _base in actual output when expected data mentions it
-                    let expects_base = expected_inserts.iter().any(|obj| {
-                        obj.contains_key("_base")
-                    });
-                    if expects_base {
-                        let base_val: Option<serde_json::Value> =
-                            row.try_get("_base").ok().flatten();
-                        map.insert(
-                            "_base".to_string(),
-                            base_val.unwrap_or(serde_json::Value::Null),
-                        );
-                    }
-                    actual_inserts.push(map);
-                }
+                // Build actual insert maps directly from delta view columns.
+                // Strip source primary key columns — inserts are new rows so PKs are always null.
+                let pk_cols: Vec<String> = doc.sources.get(dataset.as_str())
+                    .map(|src| src.primary_key.columns().into_iter().map(|s| s.to_string()).collect())
+                    .unwrap_or_default();
+                let expects_base = expected_inserts.iter().any(|obj| {
+                    obj.contains_key("_base")
+                });
+                let actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> = insert_rows
+                    .iter()
+                    .map(|row| {
+                        let mut m = delta_row_to_map(row, expects_base, true);
+                        for pk in &pk_cols { m.remove(pk); }
+                        m
+                    })
+                    .collect();
 
                 // Resolve expected _cluster_id seeds: "mapping:src_id" → look up
                 // _entity_id_resolved from the identity view.
@@ -677,45 +565,19 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
             if !expected_deletes.is_empty() {
                 let delete_rows = client
                     .query(
-                        &format!("SELECT * FROM {delta_view} WHERE _action = 'delete'"),
+                        &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'delete'"),
                         &[],
                     )
                     .await
                     .unwrap_or_else(|e| panic!("query {delta_view} deletes: {e}"));
 
-                // Use PK column names from source metadata
-                let pk_cols: Vec<String> = doc
-                    .sources
-                    .get(dataset.as_str())
-                    .map(|src| src.primary_key.columns().into_iter().map(|s| s.to_string()).collect())
-                    .unwrap_or_else(|| vec!["_row_id".to_string()]);
-
-                let mut actual_deletes: Vec<serde_json::Map<String, serde_json::Value>> =
-                    Vec::new();
-                for row in &delete_rows {
-                    let mut map = serde_json::Map::new();
-                    for col in &pk_cols {
-                        let val: Option<String> = row.try_get(col.as_str()).ok().flatten();
-                        map.insert(
-                            col.clone(),
-                            val.map(serde_json::Value::String)
-                                .unwrap_or(serde_json::Value::Null),
-                        );
-                    }
-                    // Include _base in actual output when expected data mentions it
-                    let expects_base = expected_deletes.iter().any(|obj| {
-                        obj.contains_key("_base")
-                    });
-                    if expects_base {
-                        let base_val: Option<serde_json::Value> =
-                            row.try_get("_base").ok().flatten();
-                        map.insert(
-                            "_base".to_string(),
-                            base_val.unwrap_or(serde_json::Value::Null),
-                        );
-                    }
-                    actual_deletes.push(map);
-                }
+                let expects_base = expected_deletes.iter().any(|obj| {
+                    obj.contains_key("_base")
+                });
+                let actual_deletes: Vec<serde_json::Map<String, serde_json::Value>> = delete_rows
+                    .iter()
+                    .map(|row| delta_row_to_map(row, expects_base, false))
+                    .collect();
 
                 let mut actual_sorted: Vec<String> = actual_deletes
                     .iter()
@@ -767,7 +629,7 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
             // Verify noop content: reverse-mapped values must match source row.
             let noop_rows = client
                 .query(
-                    &format!("SELECT * FROM {delta_view} WHERE _action = 'noop'"),
+                    &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'noop'"),
                     &[],
                 )
                 .await
@@ -776,20 +638,29 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
             let noop_count = noop_rows.len() as i64;
 
             for noop_row in &noop_rows {
+                let noop_json: serde_json::Value = noop_row.get("_json");
+                let noop_obj = noop_json.as_object().expect("row_to_json should produce object");
+
                 let (pk_where, pk_params): (String, Vec<String>) = if let Some(src_meta) = doc.sources.get(dataset.as_str()) {
                     let cols = src_meta.primary_key.columns();
                     let clauses: Vec<String> = cols.iter().enumerate()
                         .map(|(i, c)| format!("{}::text = ${}", osi_engine::qi(c), i + 1))
                         .collect();
                     let vals: Vec<String> = cols.iter()
-                        .map(|c| noop_row.try_get::<_, Option<String>>(c)
-                            .ok().flatten()
+                        .map(|c| noop_obj.get(*c)
+                            .and_then(|v| match v {
+                                serde_json::Value::String(s) => Some(s.clone()),
+                                serde_json::Value::Number(n) => Some(n.to_string()),
+                                _ => None,
+                            })
                             .unwrap_or_default())
                         .collect();
                     (clauses.join(" AND "), vals)
                 } else {
-                    let val = noop_row.try_get::<_, Option<String>>("_row_id")
-                        .ok().flatten().unwrap_or_default();
+                    let val = noop_obj.get("_row_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     ("_row_id::text = $1".to_string(), vec![val])
                 };
 
@@ -804,7 +675,14 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                 let source_row = &source_rows[0];
 
                 for (src_field, _) in &reverse_fields {
-                    let noop_val: Option<String> = get_text(noop_row, src_field.as_str());
+                    let noop_val: Option<String> = noop_obj.get(src_field.as_str())
+                        .and_then(|v| match v {
+                            serde_json::Value::String(s) => Some(s.clone()),
+                            serde_json::Value::Number(n) => Some(n.to_string()),
+                            serde_json::Value::Bool(b) => Some(b.to_string()),
+                            serde_json::Value::Null => None,
+                            other => Some(other.to_string()),
+                        });
                     let source_val: Option<String> = get_text(source_row, src_field.as_str());
                     // Skip comparison if delta field is NULL — this mapping doesn't project it
                     // (happens with embedded mappings where UNION ALL produces multiple partial rows)
@@ -858,9 +736,12 @@ async fn verify_test_expected(
 
         let delta_view = format!("_delta_{dataset}");
 
-        // Build reverse field mapping from all mappings for this source.
+        // Build reverse field mapping (needed for noop verification)
         let mut reverse_fields: Vec<(String, String)> = Vec::new();
         for mapping in &source_mappings {
+            if mapping.source.path.is_some() {
+                continue;
+            }
             for fm in &mapping.fields {
                 if fm.is_reverse() && fm.source.is_some() {
                     let pair = (fm.source.clone().unwrap(), fm.target.clone().unwrap_or_default());
@@ -871,83 +752,6 @@ async fn verify_test_expected(
             }
         }
 
-        // Source columns from test input
-        let source_columns: Vec<String> = {
-            let mut cols = Vec::new();
-            if let Some(rows) = test.input.get(dataset.as_str()) {
-                for row in rows {
-                    if let Some(obj) = row.as_object() {
-                        for key in obj.keys() {
-                            if !cols.contains(key) {
-                                cols.push(key.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            cols
-        };
-
-        // Helper: build output row from delta row + source row
-        let _build_output_row = |rev_row: &tokio_postgres::Row,
-                                source_row: &tokio_postgres::Row|
-         -> serde_json::Map<String, serde_json::Value> {
-            let mut output = serde_json::Map::new();
-            for col in &source_columns {
-                let mapped = reverse_fields.iter().any(|(src, _)| src == col);
-                if !mapped {
-                    let val: Option<String> = get_text(source_row, col.as_str());
-                    output.insert(
-                        col.clone(),
-                        val.map(serde_json::Value::String)
-                            .unwrap_or(serde_json::Value::Null),
-                    );
-                }
-            }
-            for (src_field, _) in &reverse_fields {
-                let val: Option<String> = rev_row.try_get(src_field.as_str()).ok().flatten();
-                output.insert(
-                    src_field.clone(),
-                    val.map(serde_json::Value::String)
-                        .unwrap_or(serde_json::Value::Null),
-                );
-            }
-            output
-        };
-
-        let pk_where = |d: &str| -> String {
-            if let Some(src_meta) = doc.sources.get(d) {
-                let cols = src_meta.primary_key.columns();
-                if cols.len() == 1 {
-                    format!("{}::text = $1", cols[0])
-                } else {
-                    "_row_id::text = $1".to_string()
-                }
-            } else {
-                "_row_id::text = $1".to_string()
-            }
-        };
-
-        let _normalize = |m: &serde_json::Map<String, serde_json::Value>| -> String {
-            let normalized: serde_json::Map<String, serde_json::Value> = m
-                .iter()
-                .map(|(k, v)| {
-                    let str_val = match v {
-                        serde_json::Value::String(s) => serde_json::Value::String(s.clone()),
-                        serde_json::Value::Number(n) => {
-                            serde_json::Value::String(n.to_string())
-                        }
-                        serde_json::Value::Bool(b) => {
-                            serde_json::Value::String(b.to_string())
-                        }
-                        other => other.clone(),
-                    };
-                    (k.clone(), str_val)
-                })
-                .collect();
-            serde_json::to_string(&normalized).unwrap()
-        };
-
         // ── Verify updates ─────────────────────────
         let expected_updates: Vec<serde_json::Map<String, serde_json::Value>> = expected
             .updates
@@ -957,7 +761,7 @@ async fn verify_test_expected(
 
         let update_rows = client
             .query(
-                &format!("SELECT * FROM {delta_view} WHERE _action = 'update'"),
+                &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'update'"),
                 &[],
             )
             .await
@@ -971,32 +775,36 @@ async fn verify_test_expected(
             ));
         }
 
-        let pw = pk_where(dataset);
-        for rev_row in &update_rows {
-            // Use restored PK columns from delta view for source row lookup
-            let pk_val: String = if let Some(src_meta) = doc.sources.get(dataset.as_str()) {
-                let cols = src_meta.primary_key.columns();
-                if cols.len() == 1 {
-                    rev_row.try_get::<_, Option<String>>(cols[0])
-                        .ok().flatten()
-                        .ok_or_else(|| format!("{dataset}: update row missing PK column {}", cols[0]))?
-                } else {
-                    // Composite PK — fall back to _row_id
-                    rev_row.try_get::<_, Option<String>>("_row_id")
-                        .ok().flatten()
-                        .ok_or_else(|| format!("{dataset}: update row missing _row_id"))?
-                }
-            } else {
-                rev_row.try_get::<_, Option<String>>("_row_id")
-                    .ok().flatten()
-                    .ok_or_else(|| format!("{dataset}: update row missing _row_id"))?
-            };
-            let source_rows = client
-                .query(&format!("SELECT * FROM {dataset} WHERE {pw}"), &[&pk_val])
-                .await
-                .map_err(|e| format!("{dataset} source lookup: {e}"))?;
-            if source_rows.is_empty() {
-                return Err(format!("{dataset}: no source row for pk={pk_val}"));
+        let expects_base = expected_updates.iter().any(|obj| obj.contains_key("_base"));
+        let actual_updates: Vec<serde_json::Map<String, serde_json::Value>> = update_rows
+            .iter()
+            .map(|row| delta_row_to_map(row, expects_base, false))
+            .collect();
+
+        // Compare actual vs expected updates (full row comparison)
+        let mut actual_sorted: Vec<String> = actual_updates
+            .iter()
+            .map(|m| serde_json::to_string(m).unwrap())
+            .collect();
+        actual_sorted.sort();
+
+        let mut expected_sorted: Vec<String> = expected_updates
+            .iter()
+            .map(|m| {
+                let normalized: serde_json::Map<String, serde_json::Value> = m
+                    .iter()
+                    .map(|(k, v)| (k.clone(), normalize_json_to_text(v)))
+                    .collect();
+                serde_json::to_string(&normalized).unwrap()
+            })
+            .collect();
+        expected_sorted.sort();
+
+        for (actual, exp) in actual_sorted.iter().zip(expected_sorted.iter()) {
+            if actual != exp {
+                return Err(format!(
+                    "{dataset}: update row mismatch.\n  actual:   {actual}\n  expected: {exp}"
+                ));
             }
         }
 
@@ -1010,7 +818,7 @@ async fn verify_test_expected(
         if !expected_inserts.is_empty() {
             let insert_rows = client
                 .query(
-                    &format!("SELECT * FROM {delta_view} WHERE _action = 'insert'"),
+                    &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'insert'"),
                     &[],
                 )
                 .await
@@ -1022,6 +830,57 @@ async fn verify_test_expected(
                     insert_rows.len(),
                     expected_inserts.len()
                 ));
+            }
+
+            // Strip source primary key columns — inserts are new rows so PKs are always null.
+            let pk_cols: Vec<String> = doc.sources.get(dataset.as_str())
+                .map(|src| src.primary_key.columns().into_iter().map(|s| s.to_string()).collect())
+                .unwrap_or_default();
+            let expects_base = expected_inserts.iter().any(|obj| obj.contains_key("_base"));
+            let actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> = insert_rows
+                .iter()
+                .map(|row| {
+                    let mut m = delta_row_to_map(row, expects_base, true);
+                    for pk in &pk_cols { m.remove(pk); }
+                    m
+                })
+                .collect();
+
+            // Resolve expected _cluster_id seeds and normalize
+            let mut expected_resolved: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
+            for exp in &expected_inserts {
+                let mut resolved = serde_json::Map::new();
+                for (k, v) in exp {
+                    if k == "_cluster_id" {
+                        if let Some(seed) = v.as_str() {
+                            let seed_mapping = seed.split_once(':').map(|(m, _)| m).unwrap_or("");
+                            let target_name = doc.mappings.iter()
+                                .find(|m| m.name == seed_mapping)
+                                .map(|m| m.target.name())
+                                .unwrap_or_else(|| source_mappings[0].target.name());
+                            let cluster_id = resolve_cluster_id(client, seed, target_name).await;
+                            resolved.insert(k.clone(), serde_json::Value::String(cluster_id));
+                        } else {
+                            resolved.insert(k.clone(), v.clone());
+                        }
+                    } else {
+                        resolved.insert(k.clone(), normalize_json_to_text(v));
+                    }
+                }
+                expected_resolved.push(resolved);
+            }
+
+            let mut ai_sorted: Vec<String> = actual_inserts.iter().map(|m| serde_json::to_string(m).unwrap()).collect();
+            ai_sorted.sort();
+            let mut ei_sorted: Vec<String> = expected_resolved.iter().map(|m| serde_json::to_string(m).unwrap()).collect();
+            ei_sorted.sort();
+
+            for (actual, exp) in ai_sorted.iter().zip(ei_sorted.iter()) {
+                if actual != exp {
+                    return Err(format!(
+                        "{dataset}: insert row mismatch.\n  actual:   {actual}\n  expected: {exp}"
+                    ));
+                }
             }
         }
 
@@ -1035,7 +894,7 @@ async fn verify_test_expected(
         if !expected_deletes.is_empty() {
             let delete_rows = client
                 .query(
-                    &format!("SELECT * FROM {delta_view} WHERE _action = 'delete'"),
+                    &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'delete'"),
                     &[],
                 )
                 .await
@@ -1053,7 +912,7 @@ async fn verify_test_expected(
         // ── Verify implicit noops ──────────────────
         let noop_rows = client
             .query(
-                &format!("SELECT * FROM {delta_view} WHERE _action = 'noop'"),
+                &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'noop'"),
                 &[],
             )
             .await
@@ -1061,17 +920,30 @@ async fn verify_test_expected(
 
         // Verify noop content: reverse-mapped values must match source row.
         for noop_row in &noop_rows {
+            let noop_json: serde_json::Value = noop_row.get("_json");
+            let noop_obj = noop_json.as_object().expect("row_to_json should produce object");
+
+            let json_to_string = |v: &serde_json::Value| -> Option<String> {
+                match v {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Number(n) => Some(n.to_string()),
+                    serde_json::Value::Bool(b) => Some(b.to_string()),
+                    serde_json::Value::Null => None,
+                    other => Some(other.to_string()),
+                }
+            };
+
             let (pk_vals, pk_where_str): (Vec<String>, String) = if let Some(src_meta) = doc.sources.get(dataset.as_str()) {
                 let cols = src_meta.primary_key.columns();
                 if cols.len() == 1 {
-                    let val = get_text(noop_row, cols[0])
+                    let val = noop_obj.get(cols[0]).and_then(|v| json_to_string(v))
                         .ok_or_else(|| format!("{dataset}: noop row missing PK column {}", cols[0]))?;
                     (vec![val], format!("{}::text = $1", cols[0]))
                 } else {
                     let mut vals = Vec::new();
                     let mut clauses = Vec::new();
                     for (i, col) in cols.iter().enumerate() {
-                        let val = get_text(noop_row, col)
+                        let val = noop_obj.get(*col).and_then(|v| json_to_string(v))
                             .ok_or_else(|| format!("{dataset}: noop row missing PK column {col}"))?;
                         vals.push(val);
                         clauses.push(format!("{col}::text = ${}", i + 1));
@@ -1079,7 +951,7 @@ async fn verify_test_expected(
                     (vals, clauses.join(" AND "))
                 }
             } else {
-                let val = get_text(noop_row, "_row_id")
+                let val = noop_obj.get("_row_id").and_then(|v| json_to_string(v))
                     .ok_or_else(|| format!("{dataset}: noop row missing _row_id"))?;
                 (vec![val], "_row_id::text = $1".to_string())
             };
@@ -1096,7 +968,7 @@ async fn verify_test_expected(
             let source_row = &source_rows[0];
 
             for (src_field, _) in &reverse_fields {
-                let noop_val: Option<String> = get_text(noop_row, src_field.as_str());
+                let noop_val: Option<String> = noop_obj.get(src_field.as_str()).and_then(|v| json_to_string(v));
                 let source_val: Option<String> = get_text(source_row, src_field.as_str());
                 if noop_val.is_none() && source_val.is_some() {
                     continue;
@@ -1146,6 +1018,27 @@ async fn resolve_cluster_id(
         "_cluster_id seed '{seed}': no row found in {id_view} for _mapping='{mapping}' _src_id='{src_id}'"
     );
     rows[0].get::<_, String>("_entity_id_resolved")
+}
+
+/// Recursively normalize JSON values: convert Number/Bool to String at all depths.
+/// Matches the engine pipeline which normalizes all values to text.
+fn normalize_json_to_text(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) => serde_json::Value::String(s.clone()),
+        serde_json::Value::Number(n) => serde_json::Value::Number(n.clone()),
+        serde_json::Value::Bool(b) => serde_json::Value::Bool(*b),
+        serde_json::Value::Null => serde_json::Value::Null,
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(normalize_json_to_text).collect())
+        }
+        serde_json::Value::Object(obj) => {
+            serde_json::Value::Object(
+                obj.iter()
+                    .map(|(k, v)| (k.clone(), normalize_json_to_text(v)))
+                    .collect(),
+            )
+        }
+    }
 }
 
 /// Infer Postgres column types from JSON test data values.
@@ -1351,6 +1244,24 @@ async fn load_test_data(
             }
         }
     }
+}
+
+/// Read all columns from a delta-view row into a JSON map.
+/// Skips `_action` always. Skips `_base` unless `include_base` is true.
+/// Skips `_cluster_id` unless `include_cluster_id` is true.
+fn delta_row_to_map(row: &tokio_postgres::Row, include_base: bool, include_cluster_id: bool) -> serde_json::Map<String, serde_json::Value> {
+    // Row is from: SELECT row_to_json(d.*) AS _json FROM delta_view d WHERE ...
+    // So we get a single JSONB column containing all fields with native types.
+    let json_val: serde_json::Value = row.get("_json");
+    let obj = json_val.as_object().expect("row_to_json should produce object");
+    let mut map = serde_json::Map::new();
+    for (k, v) in obj {
+        if k == "_action" { continue; }
+        if k == "_base" && !include_base { continue; }
+        if k == "_cluster_id" && !include_cluster_id { continue; }
+        map.insert(k.clone(), v.clone());
+    }
+    map
 }
 
 /// Ensure source tables have all columns referenced by mappings (PK, field sources,

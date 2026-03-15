@@ -10,15 +10,21 @@ sources:
 targets:
   customer:
     fields:
-      id: identity
-      name: coalesce
+      id:
+        strategy: identity
+      name:
+        strategy: coalesce
 
   address:
     fields:
-      street: coalesce
-      city: coalesce
-      state: coalesce
-      zip: coalesce
+      street:
+        strategy: coalesce
+      city:
+        strategy: coalesce
+      state:
+        strategy: coalesce
+      zip:
+        strategy: coalesce
 
 mappings:
   - name: customers

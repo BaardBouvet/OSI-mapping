@@ -12,7 +12,8 @@ sources:
 targets:
   person:
     fields:
-      email: identity
+      email:
+        strategy: identity
       first_name:
         strategy: last_modified
         group: name

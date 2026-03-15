@@ -12,13 +12,15 @@ sources:
 targets:
   customer:
     fields:
-      customer_id: identity
+      customer_id:
+        strategy: identity
       name:
         strategy: last_modified
 
   billing_address:
     fields:
-      address_id: identity
+      address_id:
+        strategy: identity
       street:
         strategy: last_modified
       city:
@@ -26,7 +28,8 @@ targets:
 
   shipping_address:
     fields:
-      address_id: identity
+      address_id:
+        strategy: identity
       street:
         strategy: last_modified
       city:

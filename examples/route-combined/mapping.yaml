@@ -14,15 +14,21 @@ sources:
 targets:
   person:
     fields:
-      email: identity
-      name: last_modified
-      phone: last_modified
+      email:
+        strategy: identity
+      name:
+        strategy: last_modified
+      phone:
+        strategy: last_modified
 
   company:
     fields:
-      email: identity
-      name: last_modified
-      phone: last_modified
+      email:
+        strategy: identity
+      name:
+        strategy: last_modified
+      phone:
+        strategy: last_modified
 
 mappings:
   # Routing: contacts → person (where contact_type = 'person')

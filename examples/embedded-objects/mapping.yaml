@@ -14,14 +14,16 @@ sources:
 targets:
   company:
     fields:
-      name: identity
+      name:
+        strategy: identity
       address_ref:
         strategy: coalesce
         references: address
 
   address:
     fields:
-      address_id: identity
+      address_id:
+        strategy: identity
       street:
         strategy: last_modified
       city:

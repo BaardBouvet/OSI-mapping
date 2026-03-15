@@ -921,8 +921,10 @@ version: "1.0"
 targets:
   contact:
     fields:
-      email: identity
-      name: coalesce
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
 mappings:
   - name: crm
     source: { dataset: crm }
@@ -952,7 +954,8 @@ version: "1.0"
 targets:
   contact:
     fields:
-      email: identity
+      email:
+        strategy: identity
 mappings:
   - name: crm
     source: { dataset: crm }
@@ -977,7 +980,8 @@ version: "1.0"
 targets:
   contact:
     fields:
-      email: identity
+      email:
+        strategy: identity
 mappings:
   - name: crm
     source: { dataset: crm }
@@ -1003,9 +1007,12 @@ version: "1.0"
 targets:
   contact:
     fields:
-      email: identity
-      name: coalesce
-      phone: coalesce
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+      phone:
+        strategy: coalesce
 mappings:
   - name: crm
     source: { dataset: crm }
@@ -1031,7 +1038,8 @@ version: "1.0"
 targets:
   contact:
     fields:
-      email: identity
+      email:
+        strategy: identity
       name:
         strategy: expression
         expression: "max(name"

@@ -14,7 +14,8 @@ sources:
 targets:
   organization:
     fields:
-      email: identity
+      email:
+        strategy: identity
       name:
         strategy: last_modified
       is_customer:
@@ -24,12 +25,14 @@ targets:
 
   invoice:
     fields:
-      invoice_number: identity
+      invoice_number:
+        strategy: identity
       amount:
         strategy: last_modified
       invoice_date:
         strategy: last_modified
-      customer_email: coalesce
+      customer_email:
+        strategy: coalesce
 
 mappings:
   - name: crm_contacts

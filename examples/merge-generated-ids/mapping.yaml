@@ -20,10 +20,14 @@ sources:
 targets:
   user:
     fields:
-      name: coalesce
-      system_a_id: identity
-      system_b_id: identity
-      system_c_id: identity
+      name:
+        strategy: coalesce
+      system_a_id:
+        strategy: identity
+      system_b_id:
+        strategy: identity
+      system_c_id:
+        strategy: identity
 
 mappings:
   - name: system_a

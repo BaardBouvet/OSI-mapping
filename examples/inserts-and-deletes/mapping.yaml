@@ -12,8 +12,10 @@ sources:
 targets:
   person:
     fields:
-      email: identity
-      customer_id: coalesce
+      email:
+        strategy: identity
+      customer_id:
+        strategy: coalesce
 
 mappings:
   - name: crm_a

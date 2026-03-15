@@ -14,12 +14,15 @@ sources:
 targets:
   country:
     fields:
-      name: identity
-      iso_code: identity
+      name:
+        strategy: identity
+      iso_code:
+        strategy: identity
 
   customer:
     fields:
-      id: identity
+      id:
+        strategy: identity
       country:
         strategy: last_modified
         references: country

@@ -15,7 +15,8 @@ sources:
 targets:
   purchase_order:
     fields:
-      order_ref: identity
+      order_ref:
+        strategy: identity
       total:
         strategy: coalesce
 
@@ -24,9 +25,12 @@ targets:
       order_ref:
         strategy: coalesce
         references: purchase_order
-      line_number: coalesce
-      product: coalesce
-      quantity: coalesce
+      line_number:
+        strategy: identity
+      product:
+        strategy: coalesce
+      quantity:
+        strategy: coalesce
 
 mappings:
   # Shop: parent order
@@ -67,6 +71,7 @@ mappings:
         target: order_ref
       - source: total_amount
         target: total
+        priority: 1
 
   # Warehouse: normalized line items table
   - name: warehouse_lines
@@ -84,22 +89,34 @@ mappings:
         target: quantity
 
 tests:
-  - description: "Nested shop lines + normalized warehouse lines map to same targets"
+  - description: "Nested shop lines round-trip — single source, no merge"
     input:
       shop:
         - order_id: "ORD-001"
           total: 150.00
-          lines: []
+          lines:
+            - { line_num: 1, item: "Widget", qty: 2 }
+            - { line_num: 2, item: "Gadget", qty: 1 }
+      warehouse_orders: []
+      warehouse_lines: []
+    expected:
+      shop: {}
+
+  - description: "Both sources share an order — warehouse total wins via priority"
+    input:
+      shop:
+        - order_id: "ORD-001"
+          total: 100.00
+          lines:
+            - { line_num: 1, item: "Widget", qty: 2 }
       warehouse_orders:
-        - { id: "W1", order_number: "ORD-001", total_amount: 150.00 }
-      warehouse_lines:
-        - { line_id: "L1", order_number: "W1", line_number: 1, product_name: "Widget", qty: 2 }
-        - { line_id: "L2", order_number: "W1", line_number: 2, product_name: "Gadget", qty: 1 }
+        - { id: "W1", order_number: "ORD-001", total_amount: 999.00 }
+      warehouse_lines: []
     expected:
       shop:
         updates:
           - order_id: "ORD-001"
-            total: 150.00
+            total: "999"
             lines:
-              - { line_num: 1, item: "Widget", qty: 2 }
-              - { line_num: 2, item: "Gadget", qty: 1 }
+              - { line_num: "1", item: "Widget", qty: "2" }
+

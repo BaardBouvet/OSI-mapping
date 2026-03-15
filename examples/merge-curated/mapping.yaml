@@ -14,9 +14,12 @@ sources:
 targets:
   customer:
     fields:
-      name: coalesce
-      crm_id: identity
-      billing_id: identity
+      name:
+        strategy: coalesce
+      crm_id:
+        strategy: identity
+      billing_id:
+        strategy: identity
 
 mappings:
   - name: crm

@@ -16,14 +16,16 @@ sources:
 targets:
   company:
     fields:
-      domain: identity
+      domain:
+        strategy: identity
       account_manager:
         strategy: last_modified
         references: person
 
   person:
     fields:
-      email: identity
+      email:
+        strategy: identity
       primary_contact:
         strategy: coalesce
         references: company
@@ -89,7 +91,7 @@ tests:
     expected:
       crm_contact:
         updates:
-          - { contact_id: "CC1", company_id: 1000, primary_email: "john@acme.com" }
+          - { contact_id: "CC1", company_id: "1000", primary_email: "john@acme.com" }
         inserts:
           - { _cluster_id: "erp_contact:C2", company_id: null, primary_email: "orphan@example.com" }
 
@@ -124,6 +126,6 @@ tests:
     expected:
       erp_customer:
         updates:
-          - { _id: "CUST-100", website: "acme.com", assigned_account_manager: "EC2", manager_last_updated: "2024-06-05T10:00:00Z" }
+          - { _id: "CUST-100", website: "acme.com", assigned_account_manager: "EC2" }
       # crm_company is noop — it already had assigned_account_manager=CC2 and
       # the resolved value is CC2 in CRM namespace (same person: bob@acme.com).

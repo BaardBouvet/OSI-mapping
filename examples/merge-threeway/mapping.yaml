@@ -14,10 +14,14 @@ sources:
 targets:
   company:
     fields:
-      email: identity
-      name: coalesce
-      phone: identity
-      industry: coalesce
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+      phone:
+        strategy: identity
+      industry:
+        strategy: coalesce
 
 mappings:
   - name: source_a

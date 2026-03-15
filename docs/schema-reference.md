@@ -852,6 +852,15 @@ Expected values are **always objects** with explicit `updates`, `inserts`, `dele
 
 Omit a key when that category is empty. Rows not listed in any category are implicitly **noops** — source rows where the resolved values match the original values, requiring no write.
 
+### Matching policy
+
+Expected rows must match the **complete** actual output from the delta view — every column, every value. Partial assertions (listing only a subset of fields) are not allowed; this ensures tests genuinely verify the full pipeline rather than silently ignoring regressions.
+
+- **All source columns** present in the input must appear in the expected row (including unmapped columns like timestamps).
+- **All reverse-mapped fields** must appear with their resolved values (or `null` when resolution produces no value).
+- **`_base` may be omitted** from expected rows for brevity. The test harness strips `_base` from both sides before comparison.
+- **Insert rows** must include `_cluster_id` (seed notation like `"mapping:src_id"`) plus every reverse-mapped field. Fields that cannot be reverse-resolved appear as `null`.
+
 ```yaml
 tests:
   - description: "CRM name wins, propagates to ERP"

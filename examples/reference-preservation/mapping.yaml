@@ -12,13 +12,17 @@ sources:
 targets:
   company:
     fields:
-      id: identity
-      domain: identity
-      name: last_modified
+      id:
+        strategy: identity
+      domain:
+        strategy: identity
+      name:
+        strategy: last_modified
 
   contact:
     fields:
-      id: identity
+      id:
+        strategy: identity
       company:
         strategy: identity
         references: company

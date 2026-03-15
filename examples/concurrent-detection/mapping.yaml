@@ -14,8 +14,10 @@ targets:
     fields:
       name:
         strategy: last_modified
-      account: coalesce
-      email: identity
+      account:
+        strategy: coalesce
+      email:
+        strategy: identity
 
 mappings:
   - name: companies

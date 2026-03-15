@@ -18,8 +18,10 @@ targets:
       last_name:
         strategy: identity
         link_group: name
-      email: identity
-      phone: coalesce
+      email:
+        strategy: identity
+      phone:
+        strategy: coalesce
 
 mappings:
   - name: crm_contacts

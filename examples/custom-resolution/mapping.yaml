@@ -10,8 +10,10 @@ sources:
 targets:
   product:
     fields:
-      name: coalesce
-      sku: identity
+      name:
+        strategy: coalesce
+      sku:
+        strategy: identity
       category:
         strategy: expression
         expression: "string_agg(distinct category, ', ' order by category)"

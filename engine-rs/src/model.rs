@@ -142,78 +142,10 @@ impl Source {
 pub struct Target {
     #[serde(default)]
     pub description: Option<String>,
-    pub fields: IndexMap<String, TargetField>,
+    pub fields: IndexMap<String, TargetFieldDef>,
 }
 
-/// A target field — either a shorthand string or a full definition.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum TargetField {
-    Shorthand(Strategy),
-    Full(TargetFieldDef),
-}
-
-impl TargetField {
-    pub fn strategy(&self) -> Strategy {
-        match self {
-            TargetField::Shorthand(s) => *s,
-            TargetField::Full(f) => f.strategy,
-        }
-    }
-
-    pub fn references(&self) -> Option<&str> {
-        match self {
-            TargetField::Shorthand(_) => None,
-            TargetField::Full(f) => f.references.as_deref(),
-        }
-    }
-
-    pub fn group(&self) -> Option<&str> {
-        match self {
-            TargetField::Shorthand(_) => None,
-            TargetField::Full(f) => f.group.as_deref(),
-        }
-    }
-
-    pub fn link_group(&self) -> Option<&str> {
-        match self {
-            TargetField::Shorthand(_) => None,
-            TargetField::Full(f) => f.link_group.as_deref(),
-        }
-    }
-
-    pub fn expression(&self) -> Option<&str> {
-        match self {
-            TargetField::Shorthand(_) => None,
-            TargetField::Full(f) => f.expression.as_deref(),
-        }
-    }
-
-    pub fn default_value(&self) -> Option<&serde_yaml::Value> {
-        match self {
-            TargetField::Shorthand(_) => None,
-            TargetField::Full(f) => f.default.as_ref(),
-        }
-    }
-
-    pub fn default_expression(&self) -> Option<&str> {
-        match self {
-            TargetField::Shorthand(_) => None,
-            TargetField::Full(f) => f.default_expression.as_deref(),
-        }
-    }
-
-    /// Optional SQL type for this field (e.g. "numeric", "boolean", "date").
-    /// When set, forward views cast to this type instead of text.
-    pub fn field_type(&self) -> Option<&str> {
-        match self {
-            TargetField::Shorthand(_) => None,
-            TargetField::Full(f) => f.field_type.as_deref(),
-        }
-    }
-}
-
-/// Full target field definition.
+/// Target field definition.
 #[derive(Debug, Deserialize)]
 pub struct TargetFieldDef {
     pub strategy: Strategy,
@@ -233,6 +165,42 @@ pub struct TargetFieldDef {
     pub description: Option<String>,
     #[serde(default, rename = "type")]
     pub field_type: Option<String>,
+}
+
+impl TargetFieldDef {
+    pub fn strategy(&self) -> Strategy {
+        self.strategy
+    }
+
+    pub fn references(&self) -> Option<&str> {
+        self.references.as_deref()
+    }
+
+    pub fn group(&self) -> Option<&str> {
+        self.group.as_deref()
+    }
+
+    pub fn link_group(&self) -> Option<&str> {
+        self.link_group.as_deref()
+    }
+
+    pub fn expression(&self) -> Option<&str> {
+        self.expression.as_deref()
+    }
+
+    pub fn default_value(&self) -> Option<&serde_yaml::Value> {
+        self.default.as_ref()
+    }
+
+    pub fn default_expression(&self) -> Option<&str> {
+        self.default_expression.as_deref()
+    }
+
+    /// Optional SQL type for this field (e.g. "numeric", "boolean", "date").
+    /// When set, forward views cast to this type instead of text.
+    pub fn field_type(&self) -> Option<&str> {
+        self.field_type.as_deref()
+    }
 }
 
 /// Resolution strategy enum.

@@ -16,13 +16,17 @@ sources:
 targets:
   status:
     fields:
-      name: identity
-      hr_code: identity
-      crm_code: identity
+      name:
+        strategy: identity
+      hr_code:
+        strategy: identity
+      crm_code:
+        strategy: identity
 
   employee:
     fields:
-      id: identity
+      id:
+        strategy: identity
       status:
         strategy: last_modified
         references: status
