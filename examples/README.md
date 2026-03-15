@@ -13,7 +13,6 @@ This directory contains runnable mapping examples, each in its own subdirectory.
 ## Suggested Starting Points
 
 - `hello-world/` for the simplest end-to-end example
-- `minimal/` for the smallest complete multi-source mapping
 - `merge-threeway/` for merge behavior across multiple systems
 - `reference-preservation/` for foreign-key handling across merged entities
 
@@ -23,8 +22,7 @@ Use these examples together with `../docs/annotated-example.md` and `../docs/sch
 
 | Example | Demonstrates |
 |---|---|
-| [`hello-world`](hello-world/README.md) | Simplest mapping - two sources, one target, coalesce |
-| [`minimal`](minimal/README.md) | Minimal complete mapping with identity + resolution |
+| [`hello-world`](hello-world/README.md) | Simplest mapping — two sources, one target, identity + coalesce |
 | [`composite-keys`](composite-keys/README.md) | Multi-field identity (compound match key) |
 | [`concurrent-detection`](concurrent-detection/README.md) | Detecting and handling concurrent edits |
 | [`custom-resolution`](custom-resolution/README.md) | Custom resolution strategy via expression |

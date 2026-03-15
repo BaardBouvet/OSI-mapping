@@ -1,6 +1,8 @@
 version: "1.0"
 description: >
   Two systems, one shared contact, synced by email.
+  The simplest possible mapping showing identity matching,
+  conflict resolution, and bidirectional sync.
 
 sources:
   crm:
@@ -18,8 +20,6 @@ mappings:
   - name: crm
     source: { dataset: crm }
     target: contact
-    cluster_members: true
-    reverse_filter: "name NOT LIKE 'X%'"
     fields:
       - source: email
         target: email
@@ -30,92 +30,50 @@ mappings:
   - name: erp
     source: { dataset: erp }
     target: contact
-    cluster_members: true
     fields:
-      - source: email
+      - source: contact_email
         target: email
-      - source: name
+      - source: contact_name
         target: name
         priority: 2
 
 tests:
-  - description: "Shared contact merges by email; CRM is noop (base matches resolved)"
+  - description: "Shared contact — CRM name wins (priority 1), ERP gets updated"
     input:
       crm:
         - { id: "1", email: "alice@example.com", name: "Alice" }
       erp:
-        - { id: "100", email: "alice@example.com", name: "A. Smith" }
+        - { id: "100", contact_email: "alice@example.com", contact_name: "A. Smith" }
     expected:
       erp:
         updates:
-          - { id: "100", email: "alice@example.com", name: "Alice" }
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }
 
-  - description: "CRM-only contact triggers insert into ERP; CRM rows are noops"
+  - description: "CRM-only contact triggers insert into ERP"
     input:
       crm:
         - { id: "1", email: "alice@example.com", name: "Alice" }
         - { id: "2", email: "bob@example.com", name: "Bob" }
       erp:
-        - { id: "100", email: "alice@example.com", name: "A. Smith" }
+        - { id: "100", contact_email: "alice@example.com", contact_name: "A. Smith" }
     expected:
       erp:
         updates:
-          - { id: "100", email: "alice@example.com", name: "Alice" }
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }
         inserts:
-          - { _cluster_id: "crm:2", email: "bob@example.com", name: "Bob" }
+          - { _cluster_id: "crm:2", contact_email: "bob@example.com", contact_name: "Bob" }
 
-  - description: "ERP-only contact triggers insert into CRM; existing CRM is noop"
+  - description: "ERP-only contact triggers insert into CRM"
     input:
       crm:
         - { id: "1", email: "alice@example.com", name: "Alice" }
       erp:
-        - { id: "100", email: "alice@example.com", name: "A. Smith" }
-        - { id: "200", email: "carol@example.com", name: "Carol" }
+        - { id: "100", contact_email: "alice@example.com", contact_name: "A. Smith" }
+        - { id: "200", contact_email: "carol@example.com", contact_name: "Carol" }
     expected:
       crm:
         inserts:
           - { _cluster_id: "erp:200", email: "carol@example.com", name: "Carol", _base: null }
       erp:
         updates:
-          - { id: "100", email: "alice@example.com", name: "Alice" }
-
-  - description: "Self-merge: two CRM rows merge; only the changed row is an update"
-    input:
-      crm:
-        - { id: "1", email: "alice@example.com", name: "Alice" }
-        - { id: "2", email: "alice@example.com", name: "Alice B" }
-      erp:
-        - { id: "100", email: "bob@example.com", name: "Bob" }
-    expected:
-      crm:
-        updates:
-          - { id: "1", email: "alice@example.com", name: "Alice B", _base: { email: "alice@example.com", name: "Alice" } }
-      erp:
-        inserts:
-          - { _cluster_id: "crm:2", email: "alice@example.com", name: "Alice B" }
-
-  - description: "Pre-linked via cluster_members: CRM is noop after merge"
-    input:
-      crm:
-        - { id: "1", email: "alice@example.com", name: "Alice" }
-      erp:
-        - { id: "100", email: null, name: "A. Smith" }
-      _cluster_members_crm:
-        - { _src_id: "1", _cluster_id: "guid-abc-123" }
-      _cluster_members_erp:
-        - { _src_id: "100", _cluster_id: "guid-abc-123" }
-    expected:
-      erp:
-        updates:
-          - { id: "100", email: "alice@example.com", name: "Alice" }
-
-  - description: "Name starting with 'X' triggers delete for CRM with _base (reverse_filter)"
-    input:
-      crm:
-        - { id: "1", email: "alice@example.com", name: "Xander" }
-      erp:
-        - { id: "100", email: "alice@example.com", name: "Xander" }
-    expected:
-      crm:
-        deletes:
-          - { id: "1", _base: { email: "alice@example.com", name: "Xander" } }
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }

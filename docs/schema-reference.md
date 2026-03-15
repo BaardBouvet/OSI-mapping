@@ -51,7 +51,7 @@ tests:
           - { id: "1", email: "a@x.com", name: "Alice" }
 ```
 
-**Examples:** [hello-world](../examples/hello-world/), [minimal](../examples/minimal/)
+**Examples:** [hello-world](../examples/hello-world/)
 
 ---
 
@@ -163,7 +163,7 @@ Marks a field as a match key for record linking. Records from different sources 
 email: identity
 ```
 
-**Examples:** [hello-world](../examples/hello-world/), [minimal](../examples/minimal/), [composite-keys](../examples/composite-keys/)
+**Examples:** [hello-world](../examples/hello-world/), [composite-keys](../examples/composite-keys/)
 
 #### `coalesce`
 
@@ -183,7 +183,7 @@ Most recently changed value wins. Requires a `last_modified` timestamp on the ma
 name: last_modified
 ```
 
-**Examples:** [minimal](../examples/minimal/), [embedded-simple](../examples/embedded-simple/), [value-groups](../examples/value-groups/)
+**Examples:** [embedded-simple](../examples/embedded-simple/), [value-groups](../examples/value-groups/)
 
 #### `expression`
 
@@ -482,7 +482,7 @@ ETL feedback table for insert tracking. When the delta view produces an insert, 
 
 The forward view LEFT JOINs the table: `COALESCE(_cm._cluster_id, md5(...)) AS _cluster_id`. Rows sharing the same `_cluster_id` are linked by the identity algorithm.
 
-**Examples:** [hello-world](../examples/hello-world/)
+**Examples:** [inserts-and-deletes](../examples/inserts-and-deletes/)
 
 ### `cluster_field`
 
@@ -793,7 +793,7 @@ last_modified:
 
 \* At least one of `field` or `expression` must be present.
 
-**Examples:** [minimal](../examples/minimal/), [value-groups](../examples/value-groups/), [merge-internal](../examples/merge-internal/)
+**Examples:** [value-groups](../examples/value-groups/), [merge-internal](../examples/merge-internal/)
 
 ---
 

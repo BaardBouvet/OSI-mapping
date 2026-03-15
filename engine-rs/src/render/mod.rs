@@ -25,6 +25,36 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
     sql.push_str("-- Do not edit manually.\n\n");
     sql.push_str("BEGIN;\n\n");
 
+    // Emit JSONB text-normalization helper when nested arrays are present.
+    // This function recursively converts all scalar values to text/string
+    // so noop detection can compare original JSONB (which may have native
+    // integer/boolean types) against reconstructed JSONB (always text).
+    let has_nested = doc.mappings.iter().any(|m| m.source.path.is_some());
+    if has_nested {
+        sql.push_str(
+            "CREATE OR REPLACE FUNCTION _osi_text_norm(j jsonb) RETURNS jsonb\n\
+             LANGUAGE plpgsql IMMUTABLE AS $$\n\
+             BEGIN\n  \
+               IF j IS NULL THEN RETURN NULL; END IF;\n  \
+               CASE jsonb_typeof(j)\n    \
+                 WHEN 'array' THEN\n      \
+                   RETURN COALESCE(\n        \
+                     (SELECT jsonb_agg(_osi_text_norm(elem) ORDER BY idx)\n         \
+                      FROM jsonb_array_elements(j) WITH ORDINALITY AS t(elem, idx)),\n        \
+                     '[]'::jsonb);\n    \
+                 WHEN 'object' THEN\n      \
+                   RETURN COALESCE(\n        \
+                     (SELECT jsonb_object_agg(key, _osi_text_norm(value))\n         \
+                      FROM jsonb_each(j)),\n        \
+                     '{}'::jsonb);\n    \
+                 WHEN 'null' THEN RETURN 'null'::jsonb;\n    \
+                 ELSE RETURN to_jsonb(j #>> '{}');\n  \
+               END CASE;\n\
+             END;\n\
+             $$;\n\n"
+        );
+    }
+
     for node in &dag.order {
         match node {
             ViewNode::Source(table_name) => {

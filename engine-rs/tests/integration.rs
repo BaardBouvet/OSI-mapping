@@ -14,6 +14,29 @@ fn examples_dir() -> PathBuf {
         .join("examples")
 }
 
+/// Split SQL into statements, respecting dollar-quoted blocks (`$$...$$`).
+fn split_sql_statements(sql: &str) -> Vec<String> {
+    let mut stmts = Vec::new();
+    let mut current = String::new();
+    let mut in_dollar = false;
+    let mut chars = sql.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '$' && chars.peek() == Some(&'$') {
+            current.push(ch);
+            current.push(chars.next().unwrap());
+            in_dollar = !in_dollar;
+        } else if ch == ';' && !in_dollar {
+            stmts.push(std::mem::take(&mut current));
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.trim().is_empty() {
+        stmts.push(current);
+    }
+    stmts
+}
+
 /// Discover all example directories that have tests defined.
 fn discover_test_examples() -> Vec<(String, PathBuf)> {
     let examples = examples_dir();
@@ -235,7 +258,7 @@ async fn execute_all_examples() {
 
             // Execute views — may fail for unsupported features
             let mut exec_err = None;
-            for stmt in sql.split(';') {
+            for stmt in split_sql_statements(&sql) {
                 let stmt: String = stmt
                     .lines()
                     .filter(|line| !line.trim_start().starts_with("--"))
@@ -330,7 +353,7 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
         ensure_source_columns(&client, &doc, &test.input).await;
 
         // Execute the rendered SQL views
-        for stmt in sql.split(';') {
+        for stmt in split_sql_statements(&sql) {
             // Strip leading comment lines and whitespace
             let stmt: String = stmt
                 .lines()
@@ -1423,7 +1446,7 @@ async fn ensure_cluster_members_tables(
 }
 
 async fn execute_views(client: &tokio_postgres::Client, sql: &str) {
-    for stmt in sql.split(';') {
+    for stmt in split_sql_statements(sql) {
         let stmt: String = stmt
             .lines()
             .filter(|line| !line.trim_start().starts_with("--"))

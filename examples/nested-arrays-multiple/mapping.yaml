@@ -165,3 +165,6 @@ tests:
               status: "planning"
               tasks:
                 - { task_id: "t3", task_name: "Create Content", priority: "medium" }
+    expected:
+      # Single source — all nested branches round-trip unchanged
+      source: {}

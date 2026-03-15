@@ -185,7 +185,46 @@ detection compares the original source values (captured in `_base` at forward
 time) against the resolved values, so round-trip echoes are suppressed without
 maintaining external state.
 
-## Problem 7: These Problems Compound
+## Problem 7: Generated IDs on Insert
+
+The delta detects an entity that exists in CRM but not ERP and produces an
+insert. The ETL creates the ERP record — and the target system assigns a new
+ID (`CUST-042`). On the next run the engine sees that new record but doesn't
+know it's the same entity. Without feedback, it generates another insert. And
+another. An infinite duplicate-creation loop.
+
+Solving this requires linking the new record's ID back to the entity cluster
+before the next run, handling the case where the target system modifies values
+on write, and surviving concurrent inserts from multiple sources.
+
+Custom implementations build "sync ID maps" — cross-system key-pair tables
+maintained by triggers or batch jobs. These break when entities merge, when
+systems reassign IDs, or when multiple sync processes run concurrently.
+
+Our approach: `cluster_members` and `cluster_field` provide a standard
+feedback path. After an insert, the ETL writes the new record's ID and the
+entity's `_cluster_id` to a membership table. On the next run, the engine
+includes those memberships in the identity graph automatically.
+
+## Problem 8: Three-Way (and N-Way) Sync
+
+Most teams start with two systems. Then a third arrives. Every pairwise
+approach breaks:
+
+- Adding system C to an existing A↔B sync means building A↔C and B↔C — three
+  pipelines, each with its own identity matching and conflict resolution. Four
+  systems need six. Ten need forty-five.
+- Pairwise conflict resolution doesn't compose. If A beats B and B beats C,
+  what happens between A and C? The answer depends on all three values
+  simultaneously.
+- Identity linking becomes transitive. A matches B, B matches C, but A and C
+  share no field — yet they're the same entity. Pairwise matching misses this.
+
+Our approach: every source maps to a shared target model, not to other sources.
+Adding a system means adding one mapping, not rebuilding existing ones. Identity
+linking and conflict resolution work across all sources simultaneously.
+
+## Problem 9: These Problems Compound
 
 None of these problems exists in isolation. A real integration faces all of them
 simultaneously:

@@ -89,3 +89,6 @@ tests:
                 - { grandchild_id: 21, data: "GC 2.1" }
                 - { grandchild_id: 22, data: "GC 2.2" }
                 - { grandchild_id: 23, data: "GC 2.3" }
+    expected:
+      # Single source — deep nesting round-trips unchanged
+      source: {}

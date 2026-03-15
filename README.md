@@ -15,7 +15,7 @@ Use the docs and examples instead of learning from a dense inline snippet:
 - Design background and tradeoffs: [`docs/design-rationale.md`](docs/design-rationale.md)
 - AI authoring guidance: [`docs/ai-guidelines.md`](docs/ai-guidelines.md)
 
-If you want a minimal complete file, see [`examples/minimal/mapping.yaml`](examples/minimal/mapping.yaml).
+
 
 ## Structure
 
@@ -24,8 +24,7 @@ spec/
   mapping-schema.json    # JSON Schema (Draft 2020-12)
 examples/
   hello-world/           # Simplest possible mapping (start here)
-  minimal/               # Minimal multi-source mapping
-  ...                    # 35 examples covering all features
+  ...                    # 34 more examples covering all features
 docs/
   ai-guidelines.md       # Guidelines for AI agents working with mapping files
   design-rationale.md    # Design decisions and rationale

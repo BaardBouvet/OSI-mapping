@@ -3,15 +3,29 @@ use anyhow::Result;
 use crate::model::{Mapping, Source};
 use crate::qi;
 
-/// Info about a nested-path child mapping for delta re-assembly.
-struct NestedChild<'a> {
+/// A node in the nesting tree for delta re-assembly.
+/// Each node represents one level of nested arrays (e.g. "children" or "grandchildren").
+struct NestingNode<'a> {
+    /// The segment name (last part of path, e.g. "grandchildren").
+    segment: String,
+    /// The mapping for this nesting level.
     mapping: &'a Mapping,
-    /// The source.path value (JSONB column name in the parent source, e.g. "lines").
-    path: &'a str,
     /// Source field names that are array element data (non-PK, non-parent-alias).
     item_fields: Vec<String>,
-    /// The parent_field alias that links back to the parent PK (for grouping).
+    /// The parent_field alias that links back to the parent level (for GROUP BY).
     parent_fk_field: Option<String>,
+    /// Child nesting levels (deeper arrays within this one).
+    children: Vec<NestingNode<'a>>,
+}
+
+/// Collected CTE output from recursive nesting tree traversal.
+struct NestedCteResult {
+    /// All CTE definitions (bottom-up order, leaves first).
+    ctes: Vec<String>,
+    /// The alias of the top-level CTE for this node.
+    alias: String,
+    /// The JSONB column name this node produces (= segment name).
+    column: String,
 }
 
 /// Build the CASE expression that classifies a row from a single mapping's
@@ -111,47 +125,17 @@ pub fn render_delta_view(
         .iter()
         .filter(|m| m.source.path.is_none())
         .collect();
-    let nested_mappings: Vec<NestedChild> = mappings
-        .iter()
-        .filter_map(|m| {
-            let path = m.source.path.as_deref()?;
-            // Only single-segment paths (direct children of the parent table).
-            // Multi-segment paths (e.g., "children.grandchildren") are deeper
-            // levels that need recursive re-assembly — not yet supported.
-            if path.contains('.') {
-                return None;
-            }
-            let parent_aliases: std::collections::HashSet<String> = m
-                .source
-                .parent_fields
-                .keys()
-                .cloned()
-                .collect();
-            let item_fields: Vec<String> = m
-                .fields
-                .iter()
-                .filter(|fm| fm.is_reverse() && fm.source.is_some())
-                .filter_map(|fm| fm.source.clone())
-                .filter(|src| !pk_columns.contains(src.as_str()) && !parent_aliases.contains(src))
-                .collect();
-            // Find the parent_field alias that maps to a parent PK column.
-            let parent_fk_field = m.source.parent_fields.keys().next().cloned();
-            Some(NestedChild {
-                mapping: m,
-                path,
-                item_fields,
-                parent_fk_field,
-            })
-        })
-        .collect();
+
+    // Build nesting tree from all nested-path mappings (including multi-segment).
+    let nesting_roots = build_nesting_tree(mappings, &pk_columns);
 
     // If there are nested children, group them by parent mapping and aggregate.
-    if !parent_mappings.is_empty() && !nested_mappings.is_empty() {
+    if !parent_mappings.is_empty() && !nesting_roots.is_empty() {
         return render_delta_with_nested(
             source_name,
             &view_name,
             &parent_mappings,
-            &nested_mappings,
+            &nesting_roots,
             &pk_columns,
             source_meta,
         );
@@ -240,18 +224,201 @@ pub fn render_delta_view(
     Ok(sql)
 }
 
+/// Build a nesting tree from all nested-path mappings.
+///
+/// Organizes mappings into a tree based on their `source.path` segments:
+/// - `children` → root child
+/// - `children.grandchildren` → child of "children" node
+/// - `projects` → another root child
+/// - `projects.tasks` → child of "projects" node
+fn build_nesting_tree<'a>(
+    mappings: &[&'a Mapping],
+    pk_columns: &std::collections::HashSet<&str>,
+) -> Vec<NestingNode<'a>> {
+    // Collect all nested mappings with their parsed info.
+    struct FlatNested<'a> {
+        segments: Vec<String>,
+        mapping: &'a Mapping,
+        item_fields: Vec<String>,
+        parent_fk_field: Option<String>,
+    }
+
+    let mut all_nested: Vec<FlatNested<'a>> = Vec::new();
+    for m in mappings {
+        if let Some(path) = m.source.path.as_deref() {
+            let parent_aliases: std::collections::HashSet<String> =
+                m.source.parent_fields.keys().cloned().collect();
+            let item_fields: Vec<String> = m
+                .fields
+                .iter()
+                .filter(|fm| fm.is_reverse() && fm.source.is_some())
+                .filter_map(|fm| fm.source.clone())
+                .filter(|src| !pk_columns.contains(src.as_str()) && !parent_aliases.contains(src))
+                .collect();
+            let parent_fk_field = m.source.parent_fields.keys().next().cloned();
+            let segments: Vec<String> = path.split('.').map(|s| s.to_string()).collect();
+            all_nested.push(FlatNested {
+                segments,
+                mapping: m,
+                item_fields,
+                parent_fk_field,
+            });
+        }
+    }
+
+    // Sort by depth (shallow first) so parents are inserted before children.
+    all_nested.sort_by_key(|n| n.segments.len());
+
+    // Build tree: insert each mapping at the correct depth.
+    let mut roots: Vec<NestingNode<'a>> = Vec::new();
+
+    for flat in all_nested {
+        if flat.segments.len() == 1 {
+            // Direct child of root.
+            roots.push(NestingNode {
+                segment: flat.segments[0].clone(),
+                mapping: flat.mapping,
+                item_fields: flat.item_fields,
+                parent_fk_field: flat.parent_fk_field,
+                children: Vec::new(),
+            });
+        } else {
+            // Multi-segment path: find the parent node and insert as child.
+            let parent_segments = &flat.segments[..flat.segments.len() - 1];
+            let leaf_segment = flat.segments.last().unwrap().clone();
+            if let Some(parent_node) = find_node_mut(&mut roots, parent_segments) {
+                parent_node.children.push(NestingNode {
+                    segment: leaf_segment,
+                    mapping: flat.mapping,
+                    item_fields: flat.item_fields,
+                    parent_fk_field: flat.parent_fk_field,
+                    children: Vec::new(),
+                });
+            }
+        }
+    }
+
+    roots
+}
+
+/// Find a node in the nesting tree by its path segments.
+fn find_node_mut<'a, 'b>(
+    nodes: &'b mut [NestingNode<'a>],
+    segments: &[String],
+) -> Option<&'b mut NestingNode<'a>> {
+    if segments.is_empty() {
+        return None;
+    }
+    let first = &segments[0];
+    for node in nodes.iter_mut() {
+        if &node.segment == first {
+            if segments.len() == 1 {
+                return Some(node);
+            }
+            return find_node_mut(&mut node.children, &segments[1..]);
+        }
+    }
+    None
+}
+
+/// Recursively generate CTEs for a nesting node (bottom-up: children first).
+///
+/// Returns all CTE definitions and the alias/column name of the top-level CTE.
+fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
+    let alias = format!("{cte_prefix}_{}", node.segment);
+    let rev_view = qi(&format!("_rev_{}", node.mapping.name));
+    let group_col = node.parent_fk_field.as_deref().unwrap_or("_src_id");
+
+    // First, recursively process all children.
+    let mut all_ctes: Vec<String> = Vec::new();
+    let mut child_results: Vec<NestedCteResult> = Vec::new();
+    for child in &node.children {
+        let child_result = build_nested_ctes(child, &alias);
+        all_ctes.extend(child_result.ctes.clone());
+        child_results.push(child_result);
+    }
+
+    // Build jsonb_build_object parts for this node's own fields.
+    let table_alias = if child_results.is_empty() { "" } else { "n." };
+    let mut obj_parts: Vec<String> = node
+        .item_fields
+        .iter()
+        .map(|f| format!("'{f}', {table_alias}{}", qi(f)))
+        .collect();
+
+    // Add child array columns to the object.
+    for cr in &child_results {
+        obj_parts.push(format!(
+            "'{seg}', COALESCE({alias}.{qcol}, '[]'::jsonb)",
+            seg = cr.column,
+            alias = cr.alias,
+            qcol = qi(&cr.column),
+        ));
+    }
+
+    let obj_expr = format!("jsonb_build_object({})", obj_parts.join(", "));
+    let qgroup = qi(group_col);
+    let qsegment = qi(&node.segment);
+
+    if child_results.is_empty() {
+        // Leaf node: simple aggregation.
+        all_ctes.push(format!(
+            "{alias} AS (\n\
+             SELECT {qgroup} AS _parent_key, \
+             COALESCE(jsonb_agg({obj_expr} ORDER BY {table_alias}{first_item}), '[]'::jsonb) AS {qsegment}\n\
+             FROM {rev_view}\n\
+             WHERE {qgroup} IS NOT NULL\n\
+             GROUP BY {qgroup}\n\
+             )",
+            first_item = qi(node.item_fields.first().map(|s| s.as_str()).unwrap_or("_src_id")),
+        ));
+    } else {
+        // Interior node: join child CTEs, then aggregate.
+        let mut joins = Vec::new();
+        for cr in &child_results {
+            // The child CTE groups by _parent_key which corresponds to the
+            // child's parent_fk_field. We join it to this node's identity column —
+            // which is the first item_field (typically the PK-like field).
+            let join_col = node.item_fields.first().map(|s| s.as_str()).unwrap_or("_src_id");
+            joins.push(format!(
+                "LEFT JOIN {child_alias} ON {child_alias}._parent_key = n.{qjoin}::text",
+                child_alias = cr.alias,
+                qjoin = qi(join_col),
+            ));
+        }
+
+        let first_item = qi(node.item_fields.first().map(|s| s.as_str()).unwrap_or("_src_id"));
+        all_ctes.push(format!(
+            "{alias} AS (\n\
+             SELECT n.{qgroup} AS _parent_key, \
+             COALESCE(jsonb_agg({obj_expr} ORDER BY n.{first_item}), '[]'::jsonb) AS {qsegment}\n\
+             FROM {rev_view} AS n\n\
+             {joins}\n\
+             WHERE n.{qgroup} IS NOT NULL\n\
+             GROUP BY n.{qgroup}\n\
+             )",
+            joins = joins.join("\n"),
+        ));
+    }
+
+    NestedCteResult {
+        ctes: all_ctes,
+        alias,
+        column: node.segment.clone(),
+    }
+}
+
 /// Render a delta view that aggregates nested-path child mappings into JSONB
 /// arrays and joins them onto the parent reverse view.
 fn render_delta_with_nested(
     source_name: &str,
     view_name: &str,
     parent_mappings: &[&&Mapping],
-    nested_children: &[NestedChild],
+    nesting_roots: &[NestingNode],
     pk_columns: &std::collections::HashSet<&str>,
     _source_meta: Option<&Source>,
 ) -> Result<String> {
     // For now, use the first parent mapping as the base.
-    // Future: support multiple parents via UNION ALL, each with their nested children.
     let parent = parent_mappings[0];
     let parent_rev = qi(&format!("_rev_{}", parent.name));
 
@@ -264,41 +431,17 @@ fn render_delta_with_nested(
         .filter(|src| !pk_columns.contains(src.as_str()))
         .collect();
 
-    // Build CTE for each nested child: aggregate rows into JSONB array.
-    let mut ctes: Vec<String> = Vec::new();
-    let mut child_join_aliases: Vec<(String, String, Option<String>)> = Vec::new(); // (alias, path, parent_fk)
+    // Generate CTEs recursively for each root nesting node.
+    let mut all_ctes: Vec<String> = Vec::new();
+    let mut root_results: Vec<NestedCteResult> = Vec::new();
+    for node in nesting_roots {
+        let result = build_nested_ctes(node, "_nested");
+        all_ctes.extend(result.ctes.clone());
+        root_results.push(result);
+    }
 
     // Determine the parent PK column(s) for joining.
     let parent_pk_col: String = pk_columns.iter().next().copied().unwrap_or("_src_id").to_string();
-
-    for (i, child) in nested_children.iter().enumerate() {
-        let alias = format!("_nested_{i}");
-        let child_rev = qi(&format!("_rev_{}", child.mapping.name));
-
-        // Build jsonb_build_object for array element fields.
-        let obj_parts: Vec<String> = child
-            .item_fields
-            .iter()
-            .map(|f| format!("'{f}', {}", qi(f)))
-            .collect();
-        let obj_expr = format!("jsonb_build_object({})", obj_parts.join(", "));
-
-        // Group by the parent FK field (links child back to parent row).
-        // Falls back to _src_id if no parent_field is declared.
-        let group_col = child.parent_fk_field.as_deref().unwrap_or("_src_id");
-        let qgroup = qi(group_col);
-
-        ctes.push(format!(
-            "{alias} AS (\n\
-             SELECT {qgroup} AS _parent_key, COALESCE(jsonb_agg({obj_expr}), '[]'::jsonb) AS {path}\n\
-             FROM {child_rev}\n\
-             WHERE {qgroup} IS NOT NULL\n\
-             GROUP BY {qgroup}\n\
-             )",
-            path = qi(child.path),
-        ));
-        child_join_aliases.push((alias, child.path.to_string(), child.parent_fk_field.clone()));
-    }
 
     // Build the noop detection CASE.
     let mut noop_parts: Vec<String> = Vec::new();
@@ -315,10 +458,14 @@ fn render_delta_with_nested(
         }
     }
     // Add nested array noop checks: compare original JSONB array with reconstructed.
-    for (alias, path, _) in &child_join_aliases {
-        let qpath = qi(path);
+    // Use _osi_text_norm to normalize original types (integers etc.) to text
+    // so the comparison matches the always-text reconstruction pipeline.
+    for rr in &root_results {
+        let qcol = qi(&rr.column);
         noop_parts.push(format!(
-            "COALESCE(p._base->>'{path}', '[]') IS NOT DISTINCT FROM COALESCE({alias}.{qpath}::text, '[]')"
+            "COALESCE(_osi_text_norm(p._base->'{col}')::text, '[]') IS NOT DISTINCT FROM COALESCE({alias}.{qcol}::text, '[]')",
+            col = rr.column,
+            alias = rr.alias,
         ));
     }
 
@@ -348,26 +495,27 @@ fn render_delta_with_nested(
         select_cols.push(format!("p.{}", qi(f)));
     }
 
-    // Nested array columns
-    for (alias, path, _) in &child_join_aliases {
-        select_cols.push(format!("{alias}.{}", qi(path)));
+    // Nested array columns (from root-level CTEs only)
+    for rr in &root_results {
+        select_cols.push(format!("{}.{}", rr.alias, qi(&rr.column)));
     }
 
     select_cols.push("p.\"_base\"".to_string());
 
-    // Build JOINs for nested children.
+    // Build JOINs for root nested CTEs.
     let mut join_clauses: Vec<String> = Vec::new();
-    for (alias, _path, _parent_fk) in &child_join_aliases {
-        let qpk = qi(&parent_pk_col);
+    let qpk = qi(&parent_pk_col);
+    for rr in &root_results {
         join_clauses.push(format!(
-            "LEFT JOIN {alias} ON {alias}._parent_key = p.{qpk}::text"
+            "LEFT JOIN {} ON {}._parent_key = p.{qpk}::text",
+            rr.alias, rr.alias,
         ));
     }
 
-    let cte_sql = if ctes.is_empty() {
+    let cte_sql = if all_ctes.is_empty() {
         String::new()
     } else {
-        format!("WITH {}\n", ctes.join(",\n"))
+        format!("WITH {}\n", all_ctes.join(",\n"))
     };
 
     let sql = format!(

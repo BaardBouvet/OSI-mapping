@@ -1,11 +1,18 @@
 # Hello World
 
-The absolute simplest mapping: two systems that each have a contacts table,
-synced by email address.
+The simplest possible mapping: two systems syncing contacts by email.
 
 ## How it works
 
-1. Both CRM and ERP have a contact with the same email
-2. `email` is the identity field — it's how records are matched
-3. `name` uses `coalesce` — the first non-null value wins (priority 1 beats 2)
+1. CRM and ERP each have contacts — with different column names (`name` vs `contact_name`)
+2. `email` is the identity field — it's how records are matched across systems
+3. `name` uses `coalesce` — the first non-null value wins (CRM priority 1 beats ERP priority 2)
 4. After sync, both systems agree on the same name
+
+## What the tests show
+
+| Test | Scenario |
+|---|---|
+| 1 | Shared contact merges — CRM value wins, ERP gets updated |
+| 2 | Contact exists only in CRM → insert into ERP |
+| 3 | Contact exists only in ERP → insert into CRM |

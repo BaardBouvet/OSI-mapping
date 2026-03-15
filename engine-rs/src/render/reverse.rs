@@ -98,8 +98,15 @@ pub fn render_reverse_view(
                     }
                     let match_clause = match_parts.join(" OR ");
 
+                    // For parent_fields references in nested sources, the _src_id
+                    // is the root document's PK — not the array item's identity.
+                    // Return the identity field value instead.
+                    let is_parent_field = mapping.source.parent_fields.contains_key(&source_name);
                     let return_expr = match &fm.references_field {
                         Some(rf) => format!("ref_local.{}", qi(rf)),
+                        None if is_parent_field && identity_fields.len() == 1 => {
+                            format!("ref_local.{}", qi(identity_fields[0]))
+                        }
                         None => "ref_local._src_id".to_string(),
                     };
 

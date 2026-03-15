@@ -88,9 +88,23 @@ pub fn render_identity_view(
          WITH RECURSIVE _id_base AS (\n  {base_query}\n),\n",
     ));
 
-    // Deterministic row identity — md5 of (mapping, src_id)
-    // instead of ROW_NUMBER() so that _entity_id is stable across runs.
-    let eid = "md5(_mapping || ':' || _src_id)";
+    // Deterministic row identity — md5 of (mapping, src_id, identity fields).
+    // Including identity field values ensures nested array items with different
+    // identities get distinct entity IDs (they share _src_id but differ in identity).
+    let all_id_fields: Vec<&String> = ungrouped_identity.iter()
+        .chain(link_groups.values().flat_map(|v| v.iter()))
+        .collect();
+    let eid = if all_id_fields.is_empty() {
+        "md5(_mapping || ':' || _src_id)".to_string()
+    } else {
+        let id_parts: Vec<String> = all_id_fields.iter()
+            .map(|f| format!("COALESCE({}, '')", qi(f)))
+            .collect();
+        format!(
+            "md5(_mapping || ':' || _src_id || ':' || {})",
+            id_parts.join(" || ':' || ")
+        )
+    };
     sql.push_str(&format!(
         "_id_numbered AS (\n  \
            SELECT *, {eid} AS _entity_id\n  \
