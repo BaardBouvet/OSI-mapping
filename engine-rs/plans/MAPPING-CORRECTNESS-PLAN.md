@@ -1,6 +1,6 @@
 # Mapping Correctness Fixes Plan
 
-**Status:** In Progress  
+**Status:** Done  
 **Scope:** Audit and fix questionable expected data and missing type declarations across examples, plus engine fixes for typed identity fields.
 
 ---
@@ -31,7 +31,8 @@ After bulk-fixing 13 examples' expected data to reach 35/35 passing, a review of
 
 **Problem:** Insert row for `crm_associations` has no `relation_type` value — just `{_cluster_id: "..."}`.  
 **Analysis:** All three fields (`company_id`, `contact_id`, `relation_type`) are composite PK columns. The reverse view extracts PK values from `_src_id`, but for insert rows `_src_id` is NULL (entity exists only in ERP, not yet in CRM). The three `forward_only` fields in `erp_companies_assoc` don't produce reverse output. This is the known COMPOSITE-KEY-REFS-PLAN limitation — not a data bug.  
-**Status:** No fix needed (tracked in COMPOSITE-KEY-REFS-PLAN).
+**Fix:** Implemented COMPOSITE-KEY-REFS-PLAN: PK columns with reverse field mappings now use `COALESCE(pk_extraction, field_expr)` in the reverse view. For insert rows, `company_id` resolves through reference to company ("C1"), `contact_id` resolves through reference to person (NULL — no CRM contact for Charlie Brown), and `relation_type` resolves through identity fallback ("employee"). Updated expected to verify `company_id` and `relation_type` values. Also updated insert comparison to use subset matching (expected keys only, extra keys in actual ignored).
+**Status:** Done.
 
 ### 4. value-conversions: phone not fully stripped
 
@@ -89,8 +90,15 @@ After bulk-fixing 13 examples' expected data to reach 35/35 passing, a review of
 | `src/render/identity.rs` | `COALESCE({field}::text, '')` — cast typed identity fields to text before COALESCE with empty string | ~L101 |
 | `src/render/reverse.rs` | `ref_match.{field}::text = r.{target}::text` — cast identity fields to text in reference matching | ~L95 |
 | `src/render/reverse.rs` | Auto-typed reference resolution: when referenced mapping's single PK maps to a typed identity field, return `ref_local.{field}` (typed) instead of `ref_local._src_id` (text) | `return_expr` |
-| `src/render/reverse.rs` | `typed_pk_select_exprs()` — cast PK columns to declared type (e.g., `_src_id::integer`) when PK maps to typed identity field | New function |
+| `src/render/reverse.rs` | `pk_base_expr_map()` — returns base PK expressions without AS alias. PK columns with reverse field mappings use `COALESCE(pk_base, field_expr)` for insert resolution | Replaces `typed_pk_select_exprs` |
 | `src/validate.rs` | Pass 9: `pass_default_type_compat` — warns on default/type mismatch | New function |
+
+## Test Changes
+
+| File | Change |
+|------|--------|
+| `tests/integration.rs` | Insert comparison switched from full-row to subset matching (expected keys only). PK columns no longer stripped from actual inserts. |
+| `tests/integration.rs` | Added `dump_relationship_embedded_intermediates` test |
 
 ## Example Changes
 
@@ -99,8 +107,9 @@ After bulk-fixing 13 examples' expected data to reach 35/35 passing, a review of
 | `vocabulary-custom` | Added `type: integer` to `status.crm_code` |
 | `value-conversions` | Added `'g'` flag to REGEXP_REPLACE; updated expected phone |
 | `merge-generated-ids` | Added `type: integer` to 3 identity fields |
+| `relationship-embedded` | PK columns now resolve for inserts; added `company_id: "C1", relation_type: "employee"` to expected |
 | `embedded-simple` | Added `customer_ref` identity field to address targets + mappings; updated expected |
 
 ## Verification
 
-All 35/35 examples passing, 21/21 tests green (`cargo test`).
+All 35/35 examples passing, 22/22 tests green (`cargo test`).

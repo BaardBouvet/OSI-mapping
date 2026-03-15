@@ -16,7 +16,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [NESTED-TYPED-NOOP-PLAN.md](NESTED-TYPED-NOOP-PLAN.md) | Planned | Fix `_osi_text_norm` to normalize both sides of nested noop comparison for type-aware fields. |
 | [ATOMIC-GROUPS-PLAN.md](ATOMIC-GROUPS-PLAN.md) | Planned | Implement atomic resolution groups (`group:` property) using DISTINCT ON CTEs. |
 | [MAPPING-CORRECTNESS-PLAN.md](MAPPING-CORRECTNESS-PLAN.md) | Done | Audit of questionable expected data: type declarations, REGEXP_REPLACE, embedded identity. |
-| [COMPOSITE-KEY-REFS-PLAN.md](COMPOSITE-KEY-REFS-PLAN.md) | Planned | PK columns mapped to reference fields need COALESCE for insert rows. |
+| [COMPOSITE-KEY-REFS-PLAN.md](COMPOSITE-KEY-REFS-PLAN.md) | Done | PK columns mapped to reference fields use COALESCE for insert rows. |
 | [VIEW-CONSOLIDATION-PLAN.md](VIEW-CONSOLIDATION-PLAN.md) | Partial | Changes 1-3 reverted for debuggability; change 4 (naming) kept. |
 | [REFERENCE-HEURISTIC-PLAN.md](REFERENCE-HEURISTIC-PLAN.md) | Superseded | LCP heuristic — replaced by [FK-REFERENCES-PLAN](FK-REFERENCES-PLAN.md). |
 | [NAMING-PLAN.md](NAMING-PLAN.md) | Design | Recommends renaming to `osi-compiler` with binary `osic`. |

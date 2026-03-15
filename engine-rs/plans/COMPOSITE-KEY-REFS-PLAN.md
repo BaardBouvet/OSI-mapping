@@ -65,4 +65,10 @@ Change the reverse view to handle PK-mapped reference fields specially:
   (less common but possible)
 - Non-PK reference fields already work correctly
 
-## Status: Proposed
+## Status: Done
+
+Implemented via COALESCE wrapping in `pk_base_expr_map` + field loop in `reverse.rs`.
+PK columns with reverse field mappings get `COALESCE(pk_extraction, field_expr)`
+where `field_expr` is either a reference subquery or identity/resolved fallback.
+Insert rows (where `_src_id IS NULL`) now resolve PK values through references
+or identity, while update rows still use the PK extraction (first non-NULL wins).

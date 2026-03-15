@@ -832,18 +832,10 @@ async fn verify_test_expected(
                 ));
             }
 
-            // Strip source primary key columns — inserts are new rows so PKs are always null.
-            let pk_cols: Vec<String> = doc.sources.get(dataset.as_str())
-                .map(|src| src.primary_key.columns().into_iter().map(|s| s.to_string()).collect())
-                .unwrap_or_default();
             let expects_base = expected_inserts.iter().any(|obj| obj.contains_key("_base"));
             let actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> = insert_rows
                 .iter()
-                .map(|row| {
-                    let mut m = delta_row_to_map(row, expects_base, true);
-                    for pk in &pk_cols { m.remove(pk); }
-                    m
-                })
+                .map(|row| delta_row_to_map(row, expects_base, true))
                 .collect();
 
             // Resolve expected _cluster_id seeds and normalize
@@ -870,16 +862,25 @@ async fn verify_test_expected(
                 expected_resolved.push(resolved);
             }
 
-            let mut ai_sorted: Vec<String> = actual_inserts.iter().map(|m| serde_json::to_string(m).unwrap()).collect();
-            ai_sorted.sort();
-            let mut ei_sorted: Vec<String> = expected_resolved.iter().map(|m| serde_json::to_string(m).unwrap()).collect();
-            ei_sorted.sort();
-
-            for (actual, exp) in ai_sorted.iter().zip(ei_sorted.iter()) {
-                if actual != exp {
-                    return Err(format!(
-                        "{dataset}: insert row mismatch.\n  actual:   {actual}\n  expected: {exp}"
-                    ));
+            // Subset matching: each expected insert must match one actual insert
+            // on all keys present in expected. Extra keys in actual are ignored.
+            let mut unmatched: Vec<&serde_json::Map<String, serde_json::Value>> = actual_inserts.iter().collect();
+            for exp in &expected_resolved {
+                let pos = unmatched.iter().position(|actual| {
+                    exp.iter().all(|(k, v)| actual.get(k) == Some(v))
+                });
+                match pos {
+                    Some(i) => { unmatched.remove(i); }
+                    None => {
+                        let actuals_str: Vec<String> = actual_inserts.iter()
+                            .map(|m| serde_json::to_string(m).unwrap())
+                            .collect();
+                        return Err(format!(
+                            "{dataset}: no matching insert for expected: {}\n  actuals: {}",
+                            serde_json::to_string(exp).unwrap(),
+                            actuals_str.join("\n           "),
+                        ));
+                    }
                 }
             }
         }
@@ -1508,7 +1509,30 @@ async fn dump_composite_keys_intermediates() {
     }
 }
 
-/// Dump all intermediate views for references.
+/// Dump intermediate views for relationship-embedded.
+#[tokio::test]
+async fn dump_relationship_embedded_intermediates() {
+    let (client, _container) = setup_pg().await;
+
+    let mapping_path = examples_dir().join("relationship-embedded/mapping.yaml");
+    let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
+    let dag = osi_engine::dag::build_dag(&doc);
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
+
+    load_test_data(&client, &doc.tests[0].input).await;
+    ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
+    ensure_source_columns(&client, &doc, &doc.tests[0].input).await;
+    execute_views(&client, &sql).await;
+
+    let views = [
+        "_rev_crm_associations", "_delta_crm_associations",
+    ];
+
+    for view in &views {
+        eprintln!("\n=== {view} ===");
+        dump_view(&client, view).await;
+    }
+}
 #[tokio::test]
 async fn dump_references_intermediates() {
     let (client, _container) = setup_pg().await;

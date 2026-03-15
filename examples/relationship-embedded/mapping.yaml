@@ -136,7 +136,7 @@ tests:
           - { _cluster_id: "erp_companies_person:100", contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
       crm_associations:
         inserts:
-          - { _cluster_id: "erp_companies_assoc:100" }
+          - { _cluster_id: "erp_companies_assoc:100", company_id: "C1", relation_type: "employee" }
       erp_companies:
         inserts:
           - { _cluster_id: "crm_companies:C2", name: "TechStart", email: "hello@techstart.com", contact_name: null, contact_email: null }

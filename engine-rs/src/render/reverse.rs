@@ -4,19 +4,19 @@ use indexmap::IndexMap;
 use crate::model::{Mapping, PrimaryKey, Source, Strategy, Target};
 use crate::qi;
 
-/// Build SELECT expressions for PK columns in the reverse view.
+/// Build a map from PK column name to its base SQL expression (without AS alias).
 ///
 /// Type resolution order for each PK column:
 /// 1. Target field `type:` — if the PK column maps to a typed identity field
-/// 2. Source `types:` map — explicit column type on the source definition
+/// 2. Source `fields:` type — explicit column type on the source definition
 /// 3. Default — plain text (no cast)
-fn typed_pk_select_exprs(
+fn pk_base_expr_map(
     pk: &PrimaryKey,
     src_alias: &str,
     mapping: &Mapping,
     target: Option<&Target>,
     source_meta: Option<&Source>,
-) -> Vec<String> {
+) -> IndexMap<String, String> {
     // Resolve the type for a PK column.
     let type_for_pk = |pk_col: &str| -> Option<&str> {
         // 1. Check if PK maps to a typed identity field on the target.
@@ -37,22 +37,24 @@ fn typed_pk_select_exprs(
 
     match pk {
         PrimaryKey::Single(col) => {
-            let qcol = qi(col);
-            match type_for_pk(col) {
-                Some(t) => vec![format!("{src_alias}._src_id::{t} AS {qcol}")],
-                None => vec![format!("{src_alias}._src_id AS {qcol}")],
-            }
+            let base = match type_for_pk(col) {
+                Some(t) => format!("{src_alias}._src_id::{t}"),
+                None => format!("{src_alias}._src_id"),
+            };
+            let mut map = IndexMap::new();
+            map.insert(col.clone(), base);
+            map
         }
         PrimaryKey::Composite(cols) => {
             let mut sorted: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
             sorted.sort();
             sorted.iter().map(|col| {
-                let qcol = qi(col);
-                let base = format!("({src_alias}._src_id::jsonb->>'{col}')");
-                match type_for_pk(col) {
-                    Some(t) => format!("{base}::{t} AS {qcol}"),
-                    None => format!("{base} AS {qcol}"),
-                }
+                let raw = format!("({src_alias}._src_id::jsonb->>'{col}')");
+                let base = match type_for_pk(col) {
+                    Some(t) => format!("{raw}::{t}"),
+                    None => raw,
+                };
+                (col.to_string(), base)
             }).collect()
         }
     }
@@ -88,18 +90,27 @@ pub fn render_reverse_view(
     select_exprs.push("id._src_id".to_string());
     select_exprs.push("COALESCE(id._entity_id_resolved, r._entity_id) AS _cluster_id".to_string());
 
-    let pk_columns: std::collections::HashSet<&str> = match source_meta {
-        Some(src) => {
-            // For each PK column, check if it maps to a typed identity field.
-            // If so, cast from _src_id (text) to the declared type.
-            let pk_exprs = typed_pk_select_exprs(
-                &src.primary_key, "id", mapping, target, source_meta,
-            );
-            select_exprs.extend(pk_exprs);
-            src.primary_key.columns().into_iter().collect()
-        }
-        None => std::collections::HashSet::new(),
+    // Build PK column base expressions (col → SQL expr without AS alias).
+    let pk_base_map: IndexMap<String, String> = match source_meta {
+        Some(src) => pk_base_expr_map(&src.primary_key, "id", mapping, target, source_meta),
+        None => IndexMap::new(),
     };
+
+    // Determine which PK columns have reverse field mappings.
+    // These will be handled in the field loop with COALESCE(pk_extraction, field_expr)
+    // so that insert rows (where _src_id is NULL) get resolved values.
+    let pk_with_reverse: std::collections::HashSet<&str> = mapping.fields.iter()
+        .filter(|f| f.is_reverse() && f.source.is_some())
+        .filter_map(|f| f.source.as_deref())
+        .filter(|s| pk_base_map.contains_key(*s))
+        .collect();
+
+    // Add plain PK extraction for columns NOT handled by the field loop.
+    for (col, base) in &pk_base_map {
+        if !pk_with_reverse.contains(col.as_str()) {
+            select_exprs.push(format!("{base} AS {}", qi(col)));
+        }
+    }
 
     for fm in &mapping.fields {
         if !fm.is_reverse() {
@@ -107,12 +118,7 @@ pub fn render_reverse_view(
         }
 
         let source_name = match &fm.source {
-            Some(s) => {
-                if pk_columns.contains(s.as_str()) {
-                    continue;
-                }
-                s.clone()
-            }
+            Some(s) => s.clone(),
             None => {
                 if let Some(ref rev_expr) = fm.reverse_expression {
                     select_exprs.push(format!("{rev_expr} AS _rev_computed"));
@@ -226,7 +232,13 @@ pub fn render_reverse_view(
             continue;
         };
 
-        select_exprs.push(format!("{expr} AS {}", qi(&source_name)));
+        select_exprs.push(if let Some(pk_base) = pk_base_map.get(&source_name) {
+            // PK column with reverse field mapping: COALESCE preserves PK for
+            // updates while resolving through references/identity for inserts.
+            format!("COALESCE({pk_base}, {expr}) AS {}", qi(&source_name))
+        } else {
+            format!("{expr} AS {}", qi(&source_name))
+        });
     }
 
     // _base: pass through from identity view (built in forward view).
