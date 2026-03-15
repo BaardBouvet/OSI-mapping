@@ -140,7 +140,17 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             // Delta is per-source-dataset (combines all reverse views for this source).
             let delta = ViewNode::Delta(src.clone());
             edges.entry(delta.clone()).or_default();
-            if !edges[&delta].contains(&rev) {
+            if mapping.source.path.is_some() {
+                // Nested-path child mappings are LEFT JOINed into the delta
+                // (not the driving table). Record as a join edge so the DOT
+                // output renders a dotted line instead of a solid dependency.
+                if !edges[&delta].contains(&rev) {
+                    edges.get_mut(&delta).unwrap().push(rev.clone());
+                }
+                // We still need the edge for topological ordering, but we also
+                // record it as a join_edge so to_dot renders it dotted.
+                // The actual marking happens below in the join_edges section.
+            } else if !edges[&delta].contains(&rev) {
                 edges.get_mut(&delta).unwrap().push(rev);
             }
         }
@@ -173,7 +183,14 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             ViewNode::Identity(tname.to_string()),
             ViewNode::Reverse(mapping.name.clone()),
         ));
-    }
+        // Nested-path child reverse views are LEFT JOINed into the delta
+        // (the parent mapping drives it). Mark as join edge for dotted rendering.
+        if mapping.source.path.is_some() {
+            join_edges.push((
+                ViewNode::Reverse(mapping.name.clone()),
+                ViewNode::Delta(mapping.source.dataset.clone()),
+            ));
+        }    }
 
     // Topological sort (Kahn's algorithm).
     let order = topological_sort(&edges);
@@ -240,6 +257,13 @@ fn topological_sort(edges: &BTreeMap<ViewNode, Vec<ViewNode>>) -> Vec<ViewNode> 
 pub fn to_dot(dag: &ViewDag) -> String {
     let mut out = String::from("digraph view_dag {\n  rankdir=TB;\n  node [shape=box];\n\n");
 
+    // Collect join edge pairs so we can render them dotted instead of solid.
+    let join_set: std::collections::HashSet<(String, String)> = dag
+        .join_edges
+        .iter()
+        .map(|(from, to)| (from.view_name(), to.view_name()))
+        .collect();
+
     for (node, deps) in &dag.edges {
         let name = node.view_name();
         let label = node.label();
@@ -252,9 +276,14 @@ pub fn to_dot(dag: &ViewDag) -> String {
         };
         out.push_str(&format!("  \"{name}\" [label=\"{label}\" shape={shape}];\n"));
         for dep in deps {
+            // Skip solid edge if a join edge exists for the same pair
+            // (will be rendered dotted below).
+            let dep_name = dep.view_name();
+            if join_set.contains(&(dep_name.clone(), name.clone())) {
+                continue;
+            }
             out.push_str(&format!(
-                "  \"{}\" -> \"{name}\";\n",
-                dep.view_name()
+                "  \"{dep_name}\" -> \"{name}\";\n",
             ));
         }
     }
