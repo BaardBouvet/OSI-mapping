@@ -160,16 +160,38 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        // Each field mapping must have at least source or target
+        // Each field mapping must have at least source, source_path, or target
         for (i, fm) in mapping.fields.iter().enumerate() {
-            if fm.source.is_none() && fm.target.is_none() {
+            if fm.source.is_none() && fm.source_path.is_none() && fm.target.is_none() {
                 result.error(
                     "Schema",
                     format!(
-                        "mapping '{}' field[{}]: must have at least 'source' or 'target'",
+                        "mapping '{}' field[{}]: must have at least 'source', 'source_path', or 'target'",
                         mapping.name, i
                     ),
                 );
+            }
+            // source and source_path are mutually exclusive
+            if fm.source.is_some() && fm.source_path.is_some() {
+                result.error(
+                    "Schema",
+                    format!(
+                        "mapping '{}' field[{}]: 'source' and 'source_path' are mutually exclusive",
+                        mapping.name, i
+                    ),
+                );
+            }
+            // source_path must contain at least one dot
+            if let Some(ref sp) = fm.source_path {
+                if !sp.contains('.') {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}' field[{}]: source_path '{}' must contain at least one dot (column.key)",
+                            mapping.name, i, sp
+                        ),
+                    );
+                }
             }
         }
     }

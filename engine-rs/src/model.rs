@@ -425,6 +425,11 @@ impl TargetRef {
 pub struct FieldMapping {
     #[serde(default)]
     pub source: Option<String>,
+    /// Dotted path into a JSONB column (e.g. `metadata.tier`).
+    /// First segment is the column name, rest navigates JSON keys.
+    /// Mutually exclusive with `source`.
+    #[serde(default)]
+    pub source_path: Option<String>,
     #[serde(default)]
     pub target: Option<String>,
     #[serde(default)]
@@ -457,7 +462,7 @@ impl FieldMapping {
     /// Effective direction considering defaults.
     pub fn effective_direction(&self) -> Direction {
         self.direction.unwrap_or_else(|| {
-            if self.source.is_some() {
+            if self.source.is_some() || self.source_path.is_some() {
                 Direction::Bidirectional
             } else {
                 Direction::ForwardOnly
@@ -479,6 +484,23 @@ impl FieldMapping {
             self.effective_direction(),
             Direction::Bidirectional | Direction::ReverseOnly
         )
+    }
+
+    /// Logical source identity — used as `_base` key and reverse view column alias.
+    /// Returns the full dotted `source_path` if set, else `source`.
+    pub fn source_name(&self) -> Option<&str> {
+        self.source_path.as_deref().or(self.source.as_deref())
+    }
+
+    /// Physical source column in the source table.
+    /// For `source_path`, this is the first segment (the JSONB column).
+    /// For `source`, this is the column name itself.
+    pub fn source_column(&self) -> Option<&str> {
+        if let Some(ref sp) = self.source_path {
+            sp.split('.').next()
+        } else {
+            self.source.as_deref()
+        }
     }
 }
 

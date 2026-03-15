@@ -117,8 +117,8 @@ pub fn render_reverse_view(
             continue;
         }
 
-        let source_name = match &fm.source {
-            Some(s) => s.clone(),
+        let source_name = match fm.source_name() {
+            Some(s) => s.to_string(),
             None => {
                 if let Some(ref rev_expr) = fm.reverse_expression {
                     select_exprs.push(format!("{rev_expr} AS _rev_computed"));

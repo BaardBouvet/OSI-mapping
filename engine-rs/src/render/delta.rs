@@ -1,7 +1,93 @@
 use anyhow::Result;
+use indexmap::IndexMap;
 
 use crate::model::{Mapping, Source};
 use crate::qi;
+
+/// Build `jsonb_build_object(...)` expressions that reconstruct JSONB columns
+/// from individual `source_path` fields in the delta output.
+///
+/// Takes the list of output columns and the mappings, detects `source_path`
+/// fields, groups them by root column, and returns modified SELECT expressions
+/// with JSONB reconstruction replacing individual dotted columns.
+fn delta_output_exprs(
+    out_cols: &[String],
+    mappings: &[&Mapping],
+) -> Vec<String> {
+    // Collect source_path info: root_col → [(json_keys, full_dotted_name)]
+    let mut json_groups: IndexMap<String, Vec<(Vec<String>, String)>> = IndexMap::new();
+    for m in mappings {
+        for fm in &m.fields {
+            if let Some(ref sp) = fm.source_path {
+                if fm.is_reverse() {
+                    let segments: Vec<&str> = sp.split('.').collect();
+                    let root = segments[0].to_string();
+                    let keys: Vec<String> = segments[1..].iter().map(|s| s.to_string()).collect();
+                    let entry = json_groups.entry(root).or_default();
+                    if !entry.iter().any(|(_, p)| p == sp) {
+                        entry.push((keys, sp.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    if json_groups.is_empty() {
+        // No source_path fields — return columns as-is.
+        return out_cols.iter().map(|c| qi(c)).collect();
+    }
+
+    let json_roots: std::collections::HashSet<&str> =
+        json_groups.keys().map(|s| s.as_str()).collect();
+    let mut exprs = Vec::new();
+    let mut emitted_roots: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for col in out_cols {
+        // Check if this is a dotted source_path column.
+        let root = col.split('.').next().unwrap();
+        if col.contains('.') && json_roots.contains(root) {
+            if !emitted_roots.contains(root) {
+                emitted_roots.insert(root.to_string());
+                let group = &json_groups[root];
+                let obj_expr = build_jsonb_tree(group);
+                exprs.push(format!("{obj_expr} AS {}", qi(root)));
+            }
+            // Skip individual dotted columns (already emitted via group).
+        } else {
+            exprs.push(qi(col));
+        }
+    }
+
+    exprs
+}
+
+/// Recursively build a nested `jsonb_build_object(...)` from a list of
+/// (json_key_segments, full_dotted_column_name) pairs.
+fn build_jsonb_tree(fields: &[(Vec<String>, String)]) -> String {
+    // Group by first key segment.
+    let mut groups: IndexMap<String, Vec<(Vec<String>, String)>> = IndexMap::new();
+    for (keys, full_path) in fields {
+        let first = &keys[0];
+        let rest: Vec<String> = keys[1..].to_vec();
+        groups
+            .entry(first.clone())
+            .or_default()
+            .push((rest, full_path.clone()));
+    }
+
+    let mut parts = Vec::new();
+    for (key, sub_fields) in &groups {
+        if sub_fields.len() == 1 && sub_fields[0].0.is_empty() {
+            // Leaf: reference the column directly.
+            parts.push(format!("'{key}', {}", qi(&sub_fields[0].1)));
+        } else {
+            // Branch: recurse to build nested object.
+            parts.push(format!("'{key}', {}", build_jsonb_tree(sub_fields)));
+        }
+    }
+
+    format!("jsonb_build_object({})", parts.join(", "))
+}
 
 /// A node in the nesting tree for delta re-assembly.
 /// Each node represents one level of nested arrays (e.g. "children" or "grandchildren").
@@ -35,7 +121,7 @@ fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) 
     let mut delete_conditions: Vec<String> = Vec::new();
     for fm in &mapping.fields {
         if fm.reverse_required {
-            if let Some(ref src) = fm.source {
+            if let Some(src) = fm.source_name() {
                 delete_conditions.push(format!("{} IS NULL", qi(src)));
             }
         }
@@ -48,10 +134,10 @@ fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) 
     let noop_parts: Vec<String> = mapping
         .fields
         .iter()
-        .filter(|fm| fm.is_reverse() && fm.source.is_some())
+        .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
         .filter_map(|fm| {
-            let src = fm.source.as_ref()?;
-            if pk_columns.contains(src.as_str()) {
+            let src = fm.source_name()?;
+            if pk_columns.contains(src) {
                 return None;
             }
             Some(format!("_base->>'{src}' IS NOT DISTINCT FROM {}::text", qi(src)))
@@ -88,7 +174,7 @@ fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) 
     // to compare — existing rows are always noops.
     let has_non_pk_reverse = mapping.fields.iter().any(|fm| {
         fm.is_reverse()
-            && fm.source.as_deref().map_or(false, |s| !pk_columns.contains(s))
+            && fm.source_name().map_or(false, |s| !pk_columns.contains(s))
     });
     if !has_non_pk_reverse {
         branches.push("ELSE 'noop'".to_string());
@@ -148,9 +234,9 @@ pub fn render_delta_view(
     for mapping in mappings {
         for fm in &mapping.fields {
             if fm.is_reverse() {
-                if let Some(ref src) = fm.source {
-                    if !pk_columns.contains(src.as_str()) && !reverse_fields.contains(src) {
-                        reverse_fields.push(src.clone());
+                if let Some(src) = fm.source_name() {
+                    if !pk_columns.contains(src) && !reverse_fields.contains(&src.to_string()) {
+                        reverse_fields.push(src.to_string());
                     }
                 }
             }
@@ -171,7 +257,7 @@ pub fn render_delta_view(
         // Single mapping: simple SELECT with CASE from the one reverse view.
         let action_expr = action_case(mappings[0], &pk_columns);
         let mut cols: Vec<String> = vec![format!("{action_expr} AS _action")];
-        cols.extend(out_cols.iter().map(|c| qi(c)));
+        cols.extend(delta_output_exprs(&out_cols, mappings));
 
         let rev_view = qi(&format!("_rev_{}", mappings[0].name));
         let sql = format!(
@@ -193,8 +279,7 @@ pub fn render_delta_view(
             m.embedded
                 && m.fields.iter().any(|f| {
                     f.is_reverse()
-                        && f.source
-                            .as_deref()
+                        && f.source_name()
                             .map_or(false, |s| !pk_columns.contains(s))
                 })
         })
@@ -232,7 +317,7 @@ fn merged_action_case(
     for m in primary_mappings {
         for fm in &m.fields {
             if fm.reverse_required {
-                if let Some(ref src) = fm.source {
+                if let Some(src) = fm.source_name() {
                     delete_conditions.push(format!("{} IS NULL", qi(src)));
                 }
             }
@@ -301,8 +386,8 @@ fn render_delta_with_embedded(
     let primary_fields: std::collections::HashSet<&str> = primary_mappings
         .iter()
         .flat_map(|m| m.fields.iter())
-        .filter(|fm| fm.is_reverse() && fm.source.is_some())
-        .filter_map(|fm| fm.source.as_deref())
+        .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
+        .filter_map(|fm| fm.source_name())
         .filter(|s| !pk_columns.contains(*s))
         .collect();
 
@@ -319,8 +404,8 @@ fn render_delta_with_embedded(
         let new_fields: Vec<String> = m
             .fields
             .iter()
-            .filter(|fm| fm.is_reverse() && fm.source.is_some())
-            .filter_map(|fm| fm.source.clone())
+            .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
+            .filter_map(|fm| fm.source_name().map(|s| s.to_string()))
             .filter(|s| !pk_columns.contains(s.as_str()) && !claimed.contains(s.as_str()))
             .collect();
         for f in &new_fields {
@@ -373,8 +458,8 @@ fn render_delta_with_embedded(
                 let m_fields: std::collections::HashSet<&str> = m
                     .fields
                     .iter()
-                    .filter(|fm| fm.is_reverse() && fm.source.is_some())
-                    .filter_map(|fm| fm.source.as_deref())
+                    .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
+                    .filter_map(|fm| fm.source_name())
                     .collect();
                 // Primary-only out_cols (without embedded-unique fields).
                 let mut projected: Vec<String> = vec![
@@ -453,11 +538,14 @@ fn render_delta_with_embedded(
     ));
 
     // --- Outer SELECT with merged action ---
+    let all_mappings_for_output: Vec<&Mapping> = primary_mappings
+        .iter()
+        .chain(embedded_mappings.iter())
+        .map(|m| **m)
+        .collect();
     let action_expr = merged_action_case(primary_mappings, pk_columns, reverse_fields);
     let mut outer_cols: Vec<String> = vec![format!("{action_expr} AS _action")];
-    for col in out_cols {
-        outer_cols.push(qi(col));
-    }
+    outer_cols.extend(delta_output_exprs(out_cols, &all_mappings_for_output.iter().collect::<Vec<_>>().iter().map(|m| **m).collect::<Vec<_>>()));
 
     // Include target fields for reverse_filter pass-through from primary.
     // These are already projected in the primary reverse view; we just need
@@ -503,8 +591,8 @@ fn render_delta_union_all(
             let m_fields: std::collections::HashSet<&str> = m
                 .fields
                 .iter()
-                .filter(|fm| fm.is_reverse() && fm.source.is_some())
-                .filter_map(|fm| fm.source.as_deref())
+                .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
+                .filter_map(|fm| fm.source_name())
                 .collect();
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
             for col in out_cols {
@@ -564,8 +652,8 @@ fn build_nesting_tree<'a>(
             let item_fields: Vec<String> = m
                 .fields
                 .iter()
-                .filter(|fm| fm.is_reverse() && fm.source.is_some())
-                .filter_map(|fm| fm.source.clone())
+                .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
+                .filter_map(|fm| fm.source_name().map(|s| s.to_string()))
                 .filter(|src| !pk_columns.contains(src.as_str()) && !parent_aliases.contains(src))
                 .collect();
             let parent_fk_field = m.source.parent_fields.keys().next().cloned();
@@ -739,8 +827,8 @@ fn render_delta_with_nested(
     let parent_fields: Vec<String> = parent
         .fields
         .iter()
-        .filter(|fm| fm.is_reverse() && fm.source.is_some())
-        .filter_map(|fm| fm.source.clone())
+        .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
+        .filter_map(|fm| fm.source_name().map(|s| s.to_string()))
         .filter(|src| !pk_columns.contains(src.as_str()))
         .collect();
 
@@ -760,8 +848,8 @@ fn render_delta_with_nested(
     let mut noop_parts: Vec<String> = Vec::new();
     for fm in &parent.fields {
         if fm.is_reverse() {
-            if let Some(ref src) = fm.source {
-                if !pk_columns.contains(src.as_str()) {
+            if let Some(src) = fm.source_name() {
+                if !pk_columns.contains(src) {
                     noop_parts.push(format!(
                         "p._base->>'{src}' IS NOT DISTINCT FROM p.{}::text",
                         qi(src)

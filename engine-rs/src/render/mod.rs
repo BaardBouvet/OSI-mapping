@@ -254,6 +254,7 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
     }
 
     // Scan all mappings that use this source dataset
+    let mut jsonb_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
     for mapping in &doc.mappings {
         let src_table = doc.sources.get(&mapping.source.dataset)
             .map(|s| s.table_name(&mapping.source.dataset).to_string())
@@ -264,7 +265,15 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
 
         // Field source columns
         for fm in &mapping.fields {
-            if let Some(ref src) = fm.source {
+            if let Some(ref _sp) = fm.source_path {
+                // source_path: physical column is first segment, typed JSONB.
+                if let Some(col) = fm.source_column() {
+                    if !columns.contains(&col.to_string()) {
+                        columns.push(col.to_string());
+                    }
+                    jsonb_cols.insert(col.to_string());
+                }
+            } else if let Some(ref src) = fm.source {
                 if !columns.contains(src) {
                     columns.push(src.clone());
                 }
@@ -303,7 +312,13 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         // Fallback for mappings without declared source PK metadata.
         col_defs.push("_row_id SERIAL PRIMARY KEY".to_string());
     }
-    col_defs.extend(columns.iter().map(|c| format!("{} TEXT", qi(c))));
+    col_defs.extend(columns.iter().map(|c| {
+        if jsonb_cols.contains(c) {
+            format!("{} JSONB", qi(c))
+        } else {
+            format!("{} TEXT", qi(c))
+        }
+    }));
     if !pk_columns.is_empty() {
         col_defs.push(format!("PRIMARY KEY ({})", pk_columns.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ")));
     }

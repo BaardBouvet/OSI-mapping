@@ -71,171 +71,124 @@ the JSON construction SQL. The engine treats it as an opaque value.
 This is the hardest case: the engine needs to know which sub-fields to resolve
 and which to pass through unchanged.
 
-## Proposed Design
+## Design Decision: `source_path` Property
 
-### Option A: Dot-notation in source field names (recommended)
-
-Allow `source: column.key` syntax in field mappings to access JSON sub-fields:
-
-```yaml
-fields:
-  - source: metadata.tier
-    target: tier
-  - source: metadata.language
-    target: language
-```
-
-**Forward mapping**: detect the dot, generate `src."metadata"->>'tier'` instead
-of `src."tier"`.
-
-**Reverse mapping**: group all fields that share the same JSON column prefix
-(`metadata.tier`, `metadata.language` → `metadata`), and rebuild the column:
-```sql
-jsonb_build_object('tier', resolved_tier, 'language', resolved_language) AS metadata
-```
-
-**`_base` storage**: store each sub-field individually:
-```sql
-jsonb_build_object('metadata.tier', src."metadata"->>'tier', 'metadata.language', src."metadata"->>'language')
-```
-
-**Noop detection**: compare per sub-field, same as regular fields:
-```sql
-_base->>'metadata.tier' IS NOT DISTINCT FROM resolved_tier::text
-```
-
-**Pros**:
-- Minimal schema change — no new properties, just a naming convention
-- Consistent with how `parent_fields` uses `alias: source_field` (dot = path)
-- Each sub-field participates in resolution independently (correct behavior)
-- AI agents and humans can read it naturally
-
-**Cons**:
-- Ambiguous if a source table has a column literally named `metadata.tier`
-  (unlikely in practice, but possible)
-- Only supports one level of JSON nesting (`metadata.tier` but not
-  `metadata.address.city`) without further extension
-- Reverse mapping must group by column prefix and generate `jsonb_build_object`
-
-### Option B: Explicit `json_path` property
+After evaluating three options (dot-notation in `source`, separate `source_path`
+property, expression escape hatch), we chose **`source_path`** — a new property
+on field mappings, mutually exclusive with `source`.
 
 ```yaml
 fields:
-  - source: tier
+  # Regular column
+  - source: name
+    target: name
+
+  # JSON sub-field extraction (single level)
+  - source_path: metadata.tier
     target: tier
-    json_path: metadata.tier
+
+  # Deep JSON path
+  - source_path: metadata.address.city
+    target: city
+
+  # JSON array inside object
+  - source_path: metadata.tags
+    target: tags
 ```
 
-A new property explicitly declares the JSON source location. `source` becomes
-a logical name for the extracted value.
+### Semantics
 
-**Pros**: No ambiguity with literal column names. Clear separation.
-**Cons**: More verbose. New schema property. `source` field becomes misleading
-  (it's not the actual column name).
+- **`source_path`**: dotted path where the first segment is the JSONB column and
+  remaining segments navigate into the JSON structure.
+- **`source`** and **`source_path`** are mutually exclusive. `source_path` must
+  contain at least one dot.
+- The full dotted path is the field's **logical source identity** — used as the
+  `_base` key and reverse view column alias.
+- The first segment is the **physical source column** — used for input table DDL
+  (typed JSONB) and reverse reconstruction grouping.
 
-### Option C: `source_expression` as the escape hatch
+### Why `source_path` over dot-notation in `source`
 
-```yaml
-fields:
-  - source: metadata_tier   # logical name for _base
-    target: tier
-    expression: "metadata->>'tier'"
-    reverse_expression: "jsonb_build_object('tier', tier)"
+| Criterion | `source: metadata.tier` | `source_path: metadata.tier` |
+|---|---|---|
+| Ambiguity | Breaks if column has literal dot | Zero — `source` is always a column |
+| AI failure mode | Silent misinterpretation | Forgot property → reads whole column (safe) |
+| Schema validation | Convention-based | Structural |
+| Deep paths | Same | Same |
+
+### Pipeline Mechanics
+
+**Forward view**: `source_path: metadata.tier` generates:
+```sql
+"metadata"->>'tier' AS "tier"   -- single key
+```
+`source_path: metadata.address.city` generates:
+```sql
+"metadata"->'address'->>'city' AS "city"   -- chained navigation
+```
+The last segment uses `->>'` (text extraction); intermediate segments use `->'`
+(JSONB navigation).
+
+**`_base` storage**: each sub-field stored individually:
+```sql
+jsonb_build_object('metadata.tier', "metadata"->>'tier', ...)
 ```
 
-No schema changes. Users write expressions.
+**Reverse view**: output column aliased to the full dotted path:
+```sql
+r."tier" AS "metadata.tier"
+```
+This keeps noop detection simple — `_base->>'metadata.tier'` compares directly.
 
-**Pros**: Works today. No engine changes needed.
-**Cons**: Verbose. Error-prone. Reverse expression must manually reconstruct the
-  JSON column. No automatic noop detection or grouping. Not AI-friendly.
+**Delta noop**: standard per-field comparison works unchanged:
+```sql
+_base->>'metadata.tier' IS NOT DISTINCT FROM "metadata.tier"::text
+```
 
-## Recommendation
+**Delta output**: groups dotted columns by root segment and reconstructs JSONB:
+```sql
+jsonb_build_object(
+  'tier', "metadata.tier",
+  'address', jsonb_build_object(
+    'city', "metadata.address.city",
+    'zip', "metadata.address.zip"
+  )
+) AS "metadata"
+```
 
-**Option A (dot-notation)** for the common case, with Option C as the existing
-escape hatch for complex cases.
+**Input table DDL**: root columns from `source_path` are typed JSONB (not TEXT).
 
-## Implementation Plan
+### Partial Reconstruction
 
-### Phase 1: Forward mapping (read from JSON)
+If the source JSON has 5 sub-fields but only 2 are mapped, the reverse
+`jsonb_build_object` includes only the 2 mapped ones — unmapped sub-fields are
+lost in the reverse direction. This is acceptable: mapped fields define the
+contract. A future `json_preserve: true` option could merge with the original.
 
-1. **Detect dot-notation in `source`**: In `render_forward_body`, check if a
-   field mapping's `source` contains a dot. Split on the first dot:
-   `metadata.tier` → column `metadata`, key `tier`.
+## Implementation
 
-2. **Generate JSON extraction**: Instead of `src."metadata.tier"`, generate
-   `src."metadata"->>'tier'`. For deeply nested paths (`metadata.address.city`),
-   chain operators: `src."metadata"->'address'->>'city'`.
+### Changes
 
-3. **`_base` uses the dotted name**: Store as
-   `'metadata.tier', src."metadata"->>'tier'` in `jsonb_build_object`.
+**model.rs**: Add `source_path: Option<String>` to `FieldMapping`. Add helpers:
+- `source_name()` → full dotted path (source_path) or source column name
+- `source_column()` → physical column (first segment of source_path, or source)
+- Update `effective_direction()` to treat source_path like source
 
-### Phase 2: Reverse mapping (write back to JSON)
+**forward.rs**: Add `json_path_expr()` helper. When `source_path` is set, use
+it for both the field extraction SQL and the `_base` key.
 
-4. **Group reverse fields by column prefix**: When generating the reverse view,
-   identify all fields that share a JSON column prefix. Instead of projecting
-   them as separate columns, generate:
-   ```sql
-   jsonb_build_object(
-     'tier', resolved_tier,
-     'language', resolved_language
-   ) AS metadata
-   ```
+**reverse.rs**: Use `source_name()` for the output column alias.
 
-5. **Handle mixed columns**: A source might have both regular columns (`name`)
-   and JSON sub-fields (`metadata.tier`). Regular columns project normally.
-   JSON-grouped columns produce a single `jsonb_build_object`.
+**delta.rs**: Use `source_name()` for noop detection. In delta output, detect
+`source_path` fields, group by root column, and emit `jsonb_build_object()`
+trees instead of individual dotted columns.
 
-### Phase 3: Delta / noop detection
+**mod.rs** (`render_input_table`): Use `source_column()` for column collection;
+mark source_path root columns as JSONB.
 
-6. **Per-sub-field comparison**: Noop detection already compares `_base->>'field'`
-   with the reverse-mapped value. Since `_base` stores `metadata.tier` as a key,
-   the comparison works: `_base->>'metadata.tier' IS NOT DISTINCT FROM tier::text`.
+**validate.rs**: `source_path` must contain a dot. `source` and `source_path`
+are mutually exclusive.
 
-7. **Delta output**: The delta view should output the reconstructed JSON column
-   (`metadata`), not individual sub-fields, since the ETL writes back to the
-   source table which has a single `metadata` column.
+**mapping-schema.json**: Add `source_path` to FieldMapping properties.
 
-### Phase 4: Validation
-
-8. **Schema validation**: Ensure dotted source names are valid (at least 2 segments,
-   no empty segments). Warn if the same JSON column prefix is used in some fields
-   with dots and in other fields without (could be intentional but suspicious).
-
-9. **Test updates**: Add a new example (`json-fields/` or extend `types/`) showing
-   JSON sub-field extraction and reverse reconstruction.
-
-## Open Questions
-
-1. **Deep JSON paths**: Should `metadata.address.city` be supported in Phase 1,
-   or only single-level (`metadata.tier`)? Single-level covers 90% of use cases
-   and is simpler to implement. Deep paths can be added later.
-
-2. **JSON arrays inside objects**: `metadata.tags` is a JSON array, not a scalar.
-   Should dot-notation support extracting arrays? This overlaps with `source.path`
-   but for arrays inside a JSON object rather than a JSONB column. Defer unless
-   there's a concrete use case.
-
-3. **Partial reconstruction**: If `metadata` has 5 sub-fields but only 2 are
-   mapped, the reverse `jsonb_build_object` only includes the 2 mapped ones —
-   the other 3 are lost. Options:
-   - Accept the loss (mapped fields are the contract)
-   - Merge with original: `original_metadata || jsonb_build_object('tier', ...)` —
-     this preserves unmapped fields but adds complexity
-   - Require all sub-fields to be mapped (too restrictive)
-
-   Recommendation: Phase 1 uses simple reconstruction (mapped fields only).
-   Phase 2 adds `json_preserve: true` option on the mapping to merge with the
-   original value.
-
-4. **Ambiguity with literal column names**: If a table has a column literally named
-   `metadata.tier` (some databases allow this with quoting), the dot-notation
-   would misinterpret it. The escape hatch: use an expression instead. This is
-   an edge case not worth optimizing for.
-
-## Estimated Scope
-
-- Phase 1 (forward): ~40 lines in forward.rs
-- Phase 2 (reverse): ~60 lines in reverse.rs (grouping + jsonb_build_object)
-- Phase 3 (delta): ~20 lines in delta.rs (output grouped columns)
-- Phase 4 (validation + tests): ~30 lines + 1 new example
-- Total: ~150 lines of code + 1 example
+**New example**: `json-fields/` demonstrating single-level and deep JSON paths.

@@ -4,6 +4,32 @@ use std::collections::HashMap;
 use crate::model::{Mapping, ParentFieldRef, Source, Target};
 use crate::qi;
 
+/// Generate SQL to extract a value from a JSONB column via a dotted path.
+///
+/// `source_path: "metadata.tier"` → `"metadata"->>'tier'`
+/// `source_path: "metadata.address.city"` → `"metadata"->'address'->>'city'`
+///
+/// Intermediate segments use `->` (JSONB navigation), the last uses `->>`
+/// (text extraction).
+pub fn json_path_expr(source_path: &str) -> String {
+    let segments: Vec<&str> = source_path.split('.').collect();
+    let col = qi(segments[0]);
+    let keys = &segments[1..];
+    if keys.len() == 1 {
+        format!("{col}->>'{}'", keys[0])
+    } else {
+        let mut expr = col;
+        for (i, key) in keys.iter().enumerate() {
+            if i == keys.len() - 1 {
+                expr = format!("{expr}->>'{key}'");
+            } else {
+                expr = format!("{expr}->'{key}'");
+            }
+        }
+        expr
+    }
+}
+
 /// Resolve a source field name to its SQL expression for nested array mappings.
 ///
 /// - Parent field aliases → root table column (single-segment path) or
@@ -147,6 +173,8 @@ pub fn render_forward_body(
             if let Some(fm) = fm {
                 let expr = if let Some(ref e) = fm.expression {
                     e.clone()
+                } else if let Some(ref sp) = fm.source_path {
+                    json_path_expr(sp)
                 } else if let Some(ref src) = fm.source {
                     resolve_nested_source(src, &parent_field_exprs, has_path)
                 } else {
@@ -190,6 +218,8 @@ pub fn render_forward_body(
             if let Some(ref tgt) = fm.target {
                 let expr = if let Some(ref e) = fm.expression {
                     e.clone()
+                } else if let Some(ref sp) = fm.source_path {
+                    json_path_expr(sp)
                 } else if let Some(ref src) = fm.source {
                     resolve_nested_source(src, &parent_field_exprs, has_path)
                 } else {
@@ -206,8 +236,14 @@ pub fn render_forward_body(
     {
         let mut base_parts: Vec<String> = Vec::new();
         for fm in &mapping.fields {
-            if let Some(ref src) = fm.source {
-                if fm.is_forward() || fm.is_reverse() {
+            if fm.is_forward() || fm.is_reverse() {
+                if let Some(ref sp) = fm.source_path {
+                    let resolved = json_path_expr(sp);
+                    let part = format!("'{sp}', {resolved}");
+                    if !base_parts.contains(&part) {
+                        base_parts.push(part);
+                    }
+                } else if let Some(ref src) = fm.source {
                     let resolved = resolve_nested_source(src, &parent_field_exprs, has_path);
                     let part = format!("'{src}', {resolved}");
                     if !base_parts.contains(&part) {

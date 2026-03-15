@@ -279,12 +279,18 @@
       "additionalProperties": false,
       "anyOf": [
         { "required": ["source"] },
+        { "required": ["source_path"] },
         { "required": ["target"] }
       ],
       "properties": {
         "source": {
           "type": "string",
           "description": "Source field name. Omit for forward-only computed/constant fields."
+        },
+        "source_path": {
+          "type": "string",
+          "pattern": "^[^.]+\\..+$",
+          "description": "Dotted path into a JSONB source column (e.g. 'metadata.tier' or 'config.address.city'). First segment is the column name, remaining segments navigate JSON keys. Mutually exclusive with 'source'."
         },
         "target": {
           "type": "string",

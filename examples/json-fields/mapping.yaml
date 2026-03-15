@@ -1,0 +1,91 @@
+version: "1.0"
+description: >
+  JSON sub-field extraction via source_path. CRM stores customer metadata as
+  a JSONB column; individual sub-fields map to target fields for resolution.
+  Demonstrates single-level and deep JSON paths, plus a second flat source
+  that merges via coalesce priority.
+
+sources:
+  crm:
+    primary_key: id
+  erp:
+    primary_key: cust_id
+
+targets:
+  customer:
+    fields:
+      email:
+        strategy: identity
+      tier:
+        strategy: coalesce
+      language:
+        strategy: coalesce
+      city:
+        strategy: coalesce
+
+mappings:
+  - name: crm_customers
+    source: { dataset: crm }
+    target: customer
+    fields:
+      - source: email
+        target: email
+      - source_path: metadata.tier
+        target: tier
+      - source_path: metadata.language
+        target: language
+      - source_path: metadata.address.city
+        target: city
+
+  - name: erp_customers
+    source: { dataset: erp }
+    target: customer
+    priority: 1
+    fields:
+      - source: email
+        target: email
+      - source: tier
+        target: tier
+      - source: city
+        target: city
+
+tests:
+  - description: "Single CRM source — JSON sub-fields round-trip as noop"
+    input:
+      crm:
+        - id: "C1"
+          email: "alice@example.com"
+          metadata:
+            tier: "gold"
+            language: "en"
+            address:
+              city: "Oslo"
+      erp: []
+    expected:
+      crm: {}
+
+  - description: "ERP overrides tier and city via priority — CRM gets updated"
+    input:
+      crm:
+        - id: "C1"
+          email: "alice@example.com"
+          metadata:
+            tier: "gold"
+            language: "en"
+            address:
+              city: "Oslo"
+      erp:
+        - cust_id: "E1"
+          email: "alice@example.com"
+          tier: "platinum"
+          city: "Bergen"
+    expected:
+      crm:
+        updates:
+          - id: "C1"
+            email: "alice@example.com"
+            metadata:
+              tier: "platinum"
+              language: "en"
+              address:
+                city: "Bergen"
