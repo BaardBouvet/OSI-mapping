@@ -13,7 +13,9 @@ targets:
   person:
     fields:
       email: identity
-      date_of_birth: coalesce
+      date_of_birth:
+        strategy: coalesce
+        type: date
       first_name: coalesce
       last_name: coalesce
       phone: coalesce

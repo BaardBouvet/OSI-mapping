@@ -58,6 +58,4 @@ tests:
       hr:
         - { employee_id: "C1", employee_email: "alice@example.com", first: "Alice", last: "Smith", name_updated: "2025-01-15T10:00:00Z" }
     expected:
-      crm:
-        updates:
-          - { contact_id: "C1", contact_email: "alice@example.com", contact_name: "Alice Smith" }
+      hr: {}

@@ -59,6 +59,9 @@ tests:
   - description: "Split one source into two targets by contact_type filter"
     input:
       contacts:
-        - { id: "CON1", email: "john@example.com", contact_name: "John Doe", contact_phone: "555-1000", contact_type: "person" }
-        - { id: "CON2", email: "jane@example.com", contact_name: "Jane Smith", contact_phone: "555-2000", contact_type: "person" }
-        - { id: "CON3", email: "info@acme.com", contact_name: "Acme Corp", contact_phone: "555-3000", contact_type: "company" }
+        - { id: "CON1", email: "john@example.com", contact_name: "John Doe", contact_phone: "555-1000", contact_type: "person", modified_at: "2024-01-01T10:00:00Z" }
+        - { id: "CON2", email: "jane@example.com", contact_name: "Jane Smith", contact_phone: "555-2000", contact_type: "person", modified_at: "2024-01-01T10:00:00Z" }
+        - { id: "CON3", email: "info@acme.com", contact_name: "Acme Corp", contact_phone: "555-3000", contact_type: "company", modified_at: "2024-01-01T10:00:00Z" }
+    expected:
+      contacts:
+        updates: []

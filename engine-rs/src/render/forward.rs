@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::model::{Mapping, Source, Target};
+use crate::qi;
 
 /// Render a CREATE VIEW statement for a forward mapping.
 ///
@@ -10,7 +11,7 @@ pub fn render_forward_view(
     source_meta: Option<&Source>,
     target: Option<&Target>,
 ) -> Result<String> {
-    let view_name = format!("_fwd_{}", mapping.name);
+    let view_name = qi(&format!("_fwd_{}", mapping.name));
     let body = render_forward_body(mapping, source_meta, target)?;
     Ok(format!(
         "-- Forward: {name}\nCREATE OR REPLACE VIEW {view_name} AS\n{body};\n",
@@ -26,9 +27,9 @@ pub fn render_forward_body(
     source_meta: Option<&Source>,
     target: Option<&Target>,
 ) -> Result<String> {
-    let source = source_meta
-        .map(|s| s.table_name(&mapping.source.dataset).to_string())
-        .unwrap_or_else(|| mapping.source.dataset.clone());
+    let source = qi(source_meta
+        .map(|s| s.table_name(&mapping.source.dataset))
+        .unwrap_or(&mapping.source.dataset));
 
     let mut cols: Vec<String> = Vec::new();
 
@@ -42,17 +43,18 @@ pub fn render_forward_body(
     // Cluster identity — always emitted for UNION ALL compatibility.
     if let Some(ref cf) = mapping.cluster_field {
         // cluster_field: use the source column directly, fallback to md5 singleton.
+        let qcf = qi(cf);
         let fallback = format!("md5('{}' || ':' || {})", mapping.name, src_id_expr);
         cols.push(format!(
-            "COALESCE({cf}, {fallback}) AS _cluster_id"
+            "COALESCE({qcf}, {fallback}) AS _cluster_id"
         ));
     } else if let Some(ref cm) = mapping.cluster_members {
         // cluster_members: LEFT JOIN happens in FROM clause (handled below).
         // _cluster_id comes from the join, fallback to md5 singleton.
-        let cm_cluster = &cm.cluster_id;
+        let qcm_cluster = qi(&cm.cluster_id);
         let fallback = format!("md5('{}' || ':' || {})", mapping.name, src_id_expr);
         cols.push(format!(
-            "COALESCE(_cm.{cm_cluster}, {fallback}) AS _cluster_id"
+            "COALESCE(_cm.{qcm_cluster}, {fallback}) AS _cluster_id"
         ));
     } else {
         // No cluster config: emit NULL placeholder for UNION ALL compatibility.
@@ -69,7 +71,7 @@ pub fn render_forward_body(
     cols.push(match &mapping.last_modified {
         Some(ts) => {
             if let Some(field) = ts.field_name() {
-                format!("{field} AS _last_modified")
+                format!("{} AS _last_modified", qi(field))
             } else if let Some(expr) = ts.expression() {
                 format!("({expr}) AS _last_modified")
             } else {
@@ -82,7 +84,11 @@ pub fn render_forward_body(
     // If target is known, emit ALL target fields in target-definition order
     // (NULL for fields this mapping doesn't contribute to).
     if let Some(target) = target {
-        for (fname, _fdef) in &target.fields {
+        for (fname, fdef) in &target.fields {
+            let qfname = qi(fname);
+            // Use declared type if available, fall back to text.
+            let cast_type = fdef.field_type().unwrap_or("text");
+            let null_type = fdef.field_type().unwrap_or("text");
             let fm = mapping.fields.iter().find(|fm| {
                 fm.is_forward() && fm.target.as_deref() == Some(fname.as_str())
             });
@@ -91,37 +97,37 @@ pub fn render_forward_body(
                 let expr = if let Some(ref e) = fm.expression {
                     e.clone()
                 } else if let Some(ref src) = fm.source {
-                    src.clone()
+                    qi(src)
                 } else {
                     "NULL".into()
                 };
-                // Cast to text for UNION ALL compatibility across mappings.
-                cols.push(format!("{expr}::text AS {fname}"));
+                // Cast to target field type for UNION ALL compatibility across mappings.
+                cols.push(format!("{expr}::{cast_type} AS {qfname}"));
 
                 // Per-field priority (always present, NULL when unset)
                 cols.push(match fm.priority {
-                    Some(p) => format!("{p} AS _priority_{fname}"),
-                    None => format!("NULL::int AS _priority_{fname}"),
+                    Some(p) => format!("{p} AS {}", qi(&format!("_priority_{fname}"))),
+                    None => format!("NULL::int AS {}", qi(&format!("_priority_{fname}"))),
                 });
 
                 // Per-field timestamp (always present, NULL when unset)
                 cols.push(match &fm.last_modified {
                     Some(ts) => {
                         if let Some(field) = ts.field_name() {
-                            format!("{field} AS _ts_{fname}")
+                            format!("{} AS {}", qi(field), qi(&format!("_ts_{fname}")))
                         } else if let Some(expr) = ts.expression() {
-                            format!("({expr}) AS _ts_{fname}")
+                            format!("({expr}) AS {}", qi(&format!("_ts_{fname}")))
                         } else {
-                            format!("NULL::text AS _ts_{fname}")
+                            format!("NULL::text AS {}", qi(&format!("_ts_{fname}")))
                         }
                     }
-                    None => format!("NULL::text AS _ts_{fname}"),
+                    None => format!("NULL::text AS {}", qi(&format!("_ts_{fname}"))),
                 });
             } else {
                 // Not mapped by this mapping — emit NULL placeholders
-                cols.push(format!("NULL::text AS {fname}"));
-                cols.push(format!("NULL::int AS _priority_{fname}"));
-                cols.push(format!("NULL::text AS _ts_{fname}"));
+                cols.push(format!("NULL::{null_type} AS {qfname}"));
+                cols.push(format!("NULL::int AS {}", qi(&format!("_priority_{fname}"))));
+                cols.push(format!("NULL::text AS {}", qi(&format!("_ts_{fname}"))));
             }
         }
     } else {
@@ -134,25 +140,29 @@ pub fn render_forward_body(
                 let expr = if let Some(ref e) = fm.expression {
                     e.clone()
                 } else if let Some(ref src) = fm.source {
-                    src.clone()
+                    qi(src)
                 } else {
                     continue;
                 };
-                cols.push(format!("{expr}::text AS {tgt}"));
+                cols.push(format!("{expr}::text AS {}", qi(tgt)));
             }
         }
     }
 
     // _base: JSONB snapshot of raw source columns involved in field mappings.
     // Built here (pre-expression) so it flows through identity via SELECT *.
+    // Includes reverse_only fields with source columns for noop detection.
     {
         let mut base_parts: Vec<String> = Vec::new();
         for fm in &mapping.fields {
-            if !fm.is_forward() {
-                continue;
-            }
             if let Some(ref src) = fm.source {
-                base_parts.push(format!("'{src}', {src}"));
+                if fm.is_forward() || fm.is_reverse() {
+                    let qsrc = qi(src);
+                    let part = format!("'{src}', {qsrc}");
+                    if !base_parts.contains(&part) {
+                        base_parts.push(part);
+                    }
+                }
             }
         }
         if base_parts.is_empty() {
@@ -172,10 +182,10 @@ pub fn render_forward_body(
 
     // LEFT JOIN cluster_members table when declared.
     if let Some(ref cm) = mapping.cluster_members {
-        let cm_table = cm.table_name(&mapping.name);
-        let cm_src_key = &cm.source_key;
+        let qcm_table = qi(&cm.table_name(&mapping.name));
+        let qcm_src_key = qi(&cm.source_key);
         sql.push_str(&format!(
-            "\nLEFT JOIN {cm_table} AS _cm ON _cm.{cm_src_key} = {src_id_expr}"
+            "\nLEFT JOIN {qcm_table} AS _cm ON _cm.{qcm_src_key} = {src_id_expr}"
         ));
     }
 
@@ -189,7 +199,7 @@ pub fn render_forward_body(
                 format!("_nest_{i}")
             };
             let parent = if i == 0 {
-                seg.to_string()
+                qi(seg)
             } else {
                 format!("_nest_{}.value", i - 1)
             };
@@ -239,12 +249,12 @@ mod tests {
             assert!(sql.contains("AS _mapping"), "missing _mapping");
             assert!(sql.contains("AS _priority\n") || sql.contains("AS _priority,"), "missing _priority");
             assert!(sql.contains("AS _last_modified"), "missing _last_modified");
-            assert!(sql.contains("AS email"), "missing email");
-            assert!(sql.contains("AS name"), "missing name");
-            assert!(sql.contains("AS _priority_email"), "missing _priority_email");
-            assert!(sql.contains("AS _priority_name"), "missing _priority_name");
-            assert!(sql.contains("AS _ts_email"), "missing _ts_email");
-            assert!(sql.contains("AS _ts_name"), "missing _ts_name");
+            assert!(sql.contains("AS \"email\""), "missing email");
+            assert!(sql.contains("AS \"name\""), "missing name");
+            assert!(sql.contains("AS \"_priority_email\""), "missing _priority_email");
+            assert!(sql.contains("AS \"_priority_name\""), "missing _priority_name");
+            assert!(sql.contains("AS \"_ts_email\""), "missing _ts_email");
+            assert!(sql.contains("AS \"_ts_name\""), "missing _ts_name");
         }
     }
 }

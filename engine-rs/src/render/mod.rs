@@ -124,17 +124,17 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
                 )?);
                 sql.push('\n');
             }
-            ViewNode::Delta(mapping_name) => {
-                let mapping = doc
+            ViewNode::Delta(source_name) => {
+                let source_mappings: Vec<&_> = doc
                     .mappings
                     .iter()
-                    .find(|m| &m.name == mapping_name)
-                    .expect("mapping exists in dag");
+                    .filter(|m| m.source.dataset == *source_name && m.needs_sync())
+                    .collect();
                 if annotate {
-                    sql.push_str(&annotate_delta(mapping));
+                    sql.push_str(&format!("-- Delta for source: {source_name}\n"));
                 }
-                let source_meta = doc.sources.get(&mapping.source.dataset);
-                sql.push_str(&delta::render_delta_view(mapping, source_meta)?);
+                let source_meta = doc.sources.get(source_name.as_str());
+                sql.push_str(&delta::render_delta_view(source_name, &source_mappings, source_meta)?);
                 sql.push('\n');
             }
         }
@@ -155,17 +155,18 @@ pub fn render_sql(doc: &MappingDocument, dag: &ViewDag, create_tables: bool, ann
 /// All columns are typed TEXT (the actual types depend on the source system
 /// and are not declared in the mapping YAML).
 fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
+    use crate::qi;
     // Check if this is a cluster_members table
     for mapping in &doc.mappings {
         if let Some(ref cm) = mapping.cluster_members {
             if cm.table_name(&mapping.name) == table_name {
                 return format!(
                     "-- Input table: {table_name} (cluster members)\n\
-                     CREATE TABLE IF NOT EXISTS {table_name} (\n  \
+                     CREATE TABLE IF NOT EXISTS {} (\n  \
                                              {} TEXT PRIMARY KEY,\n  \
                                              {} TEXT\n\
                      );\n",
-                    cm.source_key, cm.cluster_id
+                    qi(table_name), qi(&cm.source_key), qi(&cm.cluster_id)
                 );
             }
         }
@@ -252,14 +253,15 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         // Fallback for mappings without declared source PK metadata.
         col_defs.push("_row_id SERIAL PRIMARY KEY".to_string());
     }
-    col_defs.extend(columns.iter().map(|c| format!("{c} TEXT")));
+    col_defs.extend(columns.iter().map(|c| format!("{} TEXT", qi(c))));
     if !pk_columns.is_empty() {
-        col_defs.push(format!("PRIMARY KEY ({})", pk_columns.join(", ")));
+        col_defs.push(format!("PRIMARY KEY ({})", pk_columns.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ")));
     }
 
     format!(
         "-- Input table: {table_name}\n\
-         CREATE TABLE IF NOT EXISTS {table_name} (\n  {}\n);\n",
+         CREATE TABLE IF NOT EXISTS {} (\n  {}\n);\n",
+        qi(table_name),
         col_defs.join(",\n  ")
     )
 }
@@ -372,20 +374,6 @@ fn annotate_reverse(m: &Mapping) -> String {
     }
     if let Some(ref rf) = m.reverse_filter {
         lines.push(format!("--   reverse_filter: {rf}"));
-    }
-    lines.push(String::new());
-    lines.join("\n")
-}
-
-fn annotate_delta(m: &Mapping) -> String {
-    let mut lines = Vec::new();
-    lines.push(format!("-- [annotate] _delta_{}: change detection", m.name));
-    let noop_fields: Vec<&str> = m.fields.iter()
-        .filter(|fm| fm.is_forward() && fm.source.is_some())
-        .filter_map(|fm| fm.source.as_deref())
-        .collect();
-    if !noop_fields.is_empty() {
-        lines.push(format!("--   noop compares: {}", noop_fields.join(", ")));
     }
     lines.push(String::new());
     lines.join("\n")

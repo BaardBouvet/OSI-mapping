@@ -2,6 +2,7 @@ use anyhow::Result;
 use indexmap::IndexMap;
 
 use crate::model::{Mapping, Source, Strategy, Target};
+use crate::qi;
 
 /// Render a reverse mapping view that projects a resolved target back to source shape.
 ///
@@ -23,9 +24,9 @@ pub fn render_reverse_view(
     _all_targets: &IndexMap<String, Target>,
     source_meta: Option<&Source>,
 ) -> Result<String> {
-    let view_name = format!("_rev_{}", mapping.name);
+    let view_name = qi(&format!("_rev_{}", mapping.name));
     let id_view = format!("_id_{target_name}");
-    let resolved_view = format!("_resolved_{target_name}");
+    let resolved_view = qi(&format!("_resolved_{target_name}"));
 
     let mut select_exprs: Vec<String> = Vec::new();
     select_exprs.push("id._src_id".to_string());
@@ -72,44 +73,94 @@ pub fn render_reverse_view(
                 // Reference field: translate entity reference back to source namespace.
                 // Requires explicit fm.references to know which mapping to resolve through.
                 if let Some(ref ref_mapping_name) = fm.references {
-                    let id_ref = format!("_id_{ref_target_name}");
+                    let id_ref = qi(&format!("_id_{ref_target_name}"));
                     format!(
                         "(SELECT ref_local._src_id \
                          FROM {id_ref} ref_match \
                          JOIN {id_ref} ref_local \
                            ON ref_local._entity_id_resolved = ref_match._entity_id_resolved \
-                         WHERE ref_match._src_id = r.{tgt}::text \
+                         WHERE ref_match._src_id = r.{}::text \
                          AND ref_local._mapping = '{ref_mapping_name}' \
-                         LIMIT 1)"
+                         LIMIT 1)",
+                        qi(tgt)
                     )
                 } else {
                     // No explicit references — pass through raw value.
-                    format!("r.{tgt}")
+                    format!("r.{}", qi(tgt))
                 }
             } else {
                 match strategy {
                     Some(Strategy::Identity) | Some(Strategy::Collect) => {
-                        format!("COALESCE(id.{tgt}, r.{tgt})")
+                        let qtgt = qi(tgt);
+                        format!("COALESCE(id.{qtgt}, r.{qtgt})")
                     }
-                    _ => format!("r.{tgt}"),
+                    _ => format!("r.{}", qi(tgt)),
                 }
             }
         } else {
             continue;
         };
 
-        select_exprs.push(format!("{expr} AS {source_name}"));
+        select_exprs.push(format!("{expr} AS {}", qi(&source_name)));
     }
 
     // _base: pass through from identity view (built in forward view).
     select_exprs.push("id._base".to_string());
+
+    // Include target fields referenced by reverse_filter that aren't already projected.
+    if let Some(ref rf) = mapping.reverse_filter {
+        if let Some(tgt) = target {
+            for (field_name, _) in &tgt.fields {
+                if rf.contains(field_name.as_str()) {
+                    // Check if already projected (as a source alias).
+                    let qfn = qi(field_name);
+                    let already = select_exprs.iter().any(|e| e.ends_with(&format!(" AS {qfn}")) || e == &qfn);
+                    if !already {
+                        select_exprs.push(format!("r.{qfn}"));
+                    }
+                }
+            }
+        }
+    }
+
+    // Build the identity subquery with only the columns we need.
+    // This avoids ambiguity when reverse_expression references target field names
+    // that also exist in the identity view (which passes through all forward columns).
+    let mut id_cols: Vec<String> = vec![
+        "_src_id".to_string(),
+        "_mapping".to_string(),
+        "_entity_id_resolved".to_string(),
+        "_base".to_string(),
+    ];
+    // Add identity/collect target fields referenced via COALESCE(id.{tgt}, r.{tgt})
+    for fm in &mapping.fields {
+        if !fm.is_reverse() { continue; }
+        if let Some(ref tgt) = fm.target {
+            let field_def = target.and_then(|t| t.fields.get(tgt.as_str()));
+            let strategy = field_def.map(|f| f.strategy());
+            match strategy {
+                Some(Strategy::Identity) | Some(Strategy::Collect) => {
+                    let qtgt = qi(tgt);
+                    if !id_cols.contains(&qtgt) {
+                        id_cols.push(qtgt);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let qi_id_view = qi(&id_view);
+    let id_subquery = format!(
+        "(SELECT {cols} FROM {qi_id_view}) AS id",
+        cols = id_cols.join(", "),
+    );
 
     let sql = format!(
         "-- Reverse: {name} ({target_name} → {source})\n\
          CREATE OR REPLACE VIEW {view_name} AS\n\
          SELECT\n  {columns}\n\
          FROM {resolved_view} AS r\n\
-         LEFT JOIN {id_view} AS id\n  \
+         LEFT JOIN {id_subquery}\n  \
            ON id._entity_id_resolved = r._entity_id\n  \
            AND id._mapping = '{mapping_name}';\n",
         name = mapping.name,

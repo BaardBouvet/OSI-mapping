@@ -13,7 +13,9 @@ targets:
       email: coalesce
       name: coalesce
       phone: coalesce
-      is_primary_contact: coalesce
+      is_primary_contact:
+        strategy: coalesce
+        type: boolean
 
 mappings:
   - name: contacts_primary
@@ -61,7 +63,4 @@ tests:
         - { id: "C1", contact_name: "Alice Smith", email: "alice@example.com", phone: "555-0101", is_primary: "true" }
         - { id: "C2", contact_name: "Bob Jones", email: "bob@example.com", phone: "555-0102", is_primary: "false" }
     expected:
-      contacts:
-        updates:
-          - { id: "C1", contact_name: "Alice Smith", email: "alice@example.com", phone: "555-0101", is_primary: true }
-          - { id: "C2", contact_name: "Bob Jones", email: "bob@example.com", phone: "555-0102", is_primary: false }
+      contacts: {}

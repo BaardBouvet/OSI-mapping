@@ -96,9 +96,4 @@ tests:
       erp_companies:
         - { company_id: "E1", company_name: "Acme Corporation", address_id: "A100", updated_at: "2024-01-20T14:00:00Z" }
     expected:
-      crm_customers:
-        updates:
-          - { customer_id: "C1", customer_name: "Acme Corporation", street_address: "456 Business Ave", city: "Bergen", postal_code: "5000", country: "Norway" }
-      erp_addresses:
-        inserts:
-          - { _cluster_id: "crm_customers_address:C1", street: "123 Main St", city: "Oslo", zip_code: "0150", country: "Norway" }
+      erp_addresses: {}

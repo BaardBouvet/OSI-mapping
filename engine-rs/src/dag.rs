@@ -17,7 +17,8 @@ pub enum ViewNode {
     Analytics(String),
     /// Reverse mapping view. Named `_rev_{mapping}`. Opt-in via `sync: true`.
     Reverse(String),
-    /// Delta/changeset view. Named `_delta_{mapping}`. Opt-in via `sync: true`.
+    /// Delta/changeset view per source dataset. Named `_delta_{source}`.
+    /// Combines reverse views from all mappings sharing that source.
     Delta(String),
 }
 
@@ -136,9 +137,12 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             edges.entry(rev.clone()).or_default()
                 .push(ViewNode::Resolved(tname.to_string()));
 
-            let delta = ViewNode::Delta(mname.clone());
-            edges.entry(delta.clone()).or_default()
-                .push(rev.clone());
+            // Delta is per-source-dataset (combines all reverse views for this source).
+            let delta = ViewNode::Delta(src.clone());
+            edges.entry(delta.clone()).or_default();
+            if !edges[&delta].contains(&rev) {
+                edges.get_mut(&delta).unwrap().push(rev);
+            }
         }
     }
 

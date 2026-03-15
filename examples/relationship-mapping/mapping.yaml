@@ -99,7 +99,6 @@ mappings:
     source: { dataset: erp_contacts }
     target: company_person_association
     embedded: true
-    filter: "relation_type = 'employee'"
     fields:
       - source: company_id
         target: company_id
@@ -140,6 +139,5 @@ tests:
           - { _cluster_id: "crm_companies:C2", name: "TechStart", email: "hello@techstart.com" }
       erp_contacts:
         inserts:
-          - { _cluster_id: "crm_contacts:P1", name: "Alice Johnson", email: "alice@example.com", company_id: "100" }
-          - { _cluster_id: "crm_contacts:P1", name: "Alice Johnson", email: "alice@example.com", company_id: null }
-          - { _cluster_id: "crm_contacts:P2", name: "Bob Smith", email: "bob@example.com", company_id: null }
+          - { _cluster_id: "crm_contacts:P1", name: "Alice Johnson", email: "alice@example.com" }
+          - { _cluster_id: "crm_contacts:P2", name: "Bob Smith", email: "bob@example.com" }

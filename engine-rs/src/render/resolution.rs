@@ -2,6 +2,7 @@ use anyhow::Result;
 use indexmap::IndexMap;
 
 use crate::model::{Strategy, Target};
+use crate::qi;
 
 /// Render a resolution view that merges contributions from multiple mappings
 /// into a single golden record per entity.
@@ -21,74 +22,111 @@ pub fn render_resolution_view(
     _mappings: &[&crate::model::Mapping],
     _all_targets: &IndexMap<String, Target>,
 ) -> Result<String> {
-    let view_name = format!("_resolved_{target_name}");
-    let id_view = format!("_id_{target_name}");
+    let view_name = qi(&format!("_resolved_{target_name}"));
+    let id_view = qi(&format!("_id_{target_name}"));
+
+    let has_default_expr = target.fields.values().any(|f| f.default_expression().is_some());
 
     let mut sql = format!(
         "-- Resolution: {target_name}\n\
          CREATE OR REPLACE VIEW {view_name} AS\n"
     );
 
-    let mut select_exprs: Vec<String> = Vec::new();
-    select_exprs.push("_entity_id_resolved AS _entity_id".to_string());
+    // Build per-field aggregation expressions (inner query).
+    let mut agg_exprs: Vec<String> = Vec::new();
+    agg_exprs.push("_entity_id_resolved AS _entity_id".to_string());
+
+    // Track which fields need outer-level default_expression wrapping.
+    let mut outer_defaults: Vec<(String, String)> = Vec::new(); // (fname, default_expr)
 
     for (fname, fdef) in &target.fields {
+        let qfname = qi(fname);
         let strategy = fdef.strategy();
         let base_expr = match strategy {
-            Strategy::Identity => {
-                // Representative scalar — all values linked by this field are the
-                // same (that's what linked them), so min() picks any of them.
-                format!("min({fname})")
-            }
-            Strategy::Collect => {
-                format!(
-                    "array_agg(DISTINCT {fname}) FILTER (WHERE {fname} IS NOT NULL)"
-                )
-            }
-            Strategy::Coalesce => {
-                // Pick the first non-null value ordered by per-field priority,
-                // falling back to mapping-level priority.
-                format!(
-                    "(array_agg({fname} ORDER BY COALESCE(_priority_{fname}, _priority, 999) ASC NULLS LAST) \
-                     FILTER (WHERE {fname} IS NOT NULL))[1]"
-                )
-            }
-            Strategy::LastModified => {
-                // Pick the most recently modified non-null value.
-                format!(
-                    "(array_agg({fname} ORDER BY COALESCE(_ts_{fname}, _last_modified) DESC NULLS LAST) \
-                     FILTER (WHERE {fname} IS NOT NULL))[1]"
-                )
-            }
+            Strategy::Identity => format!("min({qfname})"),
+            Strategy::Collect => format!(
+                "array_agg(DISTINCT {qfname}) FILTER (WHERE {qfname} IS NOT NULL)"
+            ),
+            Strategy::Coalesce => format!(
+                "(array_agg({qfname} ORDER BY COALESCE({}, _priority, 999) ASC NULLS LAST) \
+                 FILTER (WHERE {qfname} IS NOT NULL))[1]",
+                qi(&format!("_priority_{fname}"))
+            ),
+            Strategy::LastModified => format!(
+                "(array_agg({qfname} ORDER BY COALESCE({}, _last_modified) DESC NULLS LAST) \
+                 FILTER (WHERE {qfname} IS NOT NULL))[1]",
+                qi(&format!("_ts_{fname}"))
+            ),
             Strategy::Expression => {
-                let default_expr = format!("max({fname})");
-                let agg_expr = fdef.expression().unwrap_or(&default_expr);
+                let default_e = format!("max({})", qfname);
+                let agg_expr = fdef.expression().unwrap_or(&default_e);
                 agg_expr.to_string()
             }
         };
 
-        // Wrap with default/default_expression fallback
-        let expr = if let Some(default_expr) = fdef.default_expression() {
-            format!("COALESCE(({base_expr}), {default_expr}) AS {fname}")
-        } else if let Some(default_val) = fdef.default_value() {
-            let val_str = match default_val {
-                serde_yaml::Value::String(s) => format!("'{s}'"),
-                serde_yaml::Value::Number(n) => n.to_string(),
-                serde_yaml::Value::Bool(b) => b.to_string(),
-                _ => "NULL".to_string(),
-            };
-            format!("COALESCE(({base_expr}), {val_str}) AS {fname}")
+        if has_default_expr {
+            // When using CTE approach: inner query does pure aggregation;
+            // defaults applied in outer query.
+            if let Some(de) = fdef.default_expression() {
+                outer_defaults.push((fname.clone(), de.to_string()));
+                agg_exprs.push(format!("{base_expr} AS {qfname}"));
+            } else if let Some(default_val) = fdef.default_value() {
+                let val_str = match default_val {
+                    serde_yaml::Value::String(s) => format!("'{s}'"),
+                    serde_yaml::Value::Number(n) => format!("'{n}'"),
+                    serde_yaml::Value::Bool(b) => format!("'{b}'"),
+                    _ => "NULL".to_string(),
+                };
+                // Literal defaults are safe inline
+                agg_exprs.push(format!("COALESCE(({base_expr}), {val_str}) AS {qfname}"));
+            } else {
+                agg_exprs.push(format!("{base_expr} AS {qfname}"));
+            }
         } else {
-            format!("{base_expr} AS {fname}")
-        };
-
-        select_exprs.push(expr);
+            // Simple single-pass: apply defaults inline (no default_expression exists)
+            let expr = if let Some(default_val) = fdef.default_value() {
+                let val_str = match default_val {
+                    serde_yaml::Value::String(s) => format!("'{s}'"),
+                    serde_yaml::Value::Number(n) => format!("'{n}'"),
+                    serde_yaml::Value::Bool(b) => format!("'{b}'"),
+                    _ => "NULL".to_string(),
+                };
+                format!("COALESCE(({base_expr}), {val_str}) AS {qfname}")
+            } else {
+                format!("{base_expr} AS {qfname}")
+            };
+            agg_exprs.push(expr);
+        }
     }
 
-    sql.push_str(&format!(
-        "SELECT\n  {columns}\nFROM {id_view}\nGROUP BY _entity_id_resolved;\n",
-        columns = select_exprs.join(",\n  "),
-    ));
+    if has_default_expr {
+        // CTE approach: aggregate first, then apply default_expressions in outer SELECT.
+        let mut outer_exprs: Vec<String> = Vec::new();
+        outer_exprs.push("_entity_id".to_string());
+        for (fname, _fdef) in &target.fields {
+            let qfname = qi(fname);
+            if let Some((_, de)) = outer_defaults.iter().find(|(n, _)| n == fname) {
+                outer_exprs.push(format!("COALESCE({qfname}, {de}) AS {qfname}"));
+            } else {
+                outer_exprs.push(qfname);
+            }
+        }
+        sql.push_str(&format!(
+            "WITH _agg AS (\n  \
+             SELECT\n    {agg_columns}\n  \
+             FROM {id_view}\n  \
+             GROUP BY _entity_id_resolved\n)\n\
+             SELECT\n  {outer_columns}\nFROM _agg;\n",
+            agg_columns = agg_exprs.join(",\n    "),
+            outer_columns = outer_exprs.join(",\n  "),
+        ));
+    } else {
+        // Simple single-pass approach.
+        sql.push_str(&format!(
+            "SELECT\n  {columns}\nFROM {id_view}\nGROUP BY _entity_id_resolved;\n",
+            columns = agg_exprs.join(",\n  "),
+        ));
+    }
 
     Ok(sql)
 }

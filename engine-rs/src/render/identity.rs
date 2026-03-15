@@ -3,6 +3,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::model::{Mapping, Source, Strategy, Target};
+use crate::qi;
 
 /// Render an identity / transitive closure view for a target entity.
 ///
@@ -25,7 +26,7 @@ pub fn render_identity_view(
     sources: &IndexMap<String, Source>,
     forward_names: &[String],  // mapping names with forward views
 ) -> Result<String> {
-    let view_name = format!("_id_{target_name}");
+    let view_name = qi(&format!("_id_{target_name}"));
 
     let target = match target {
         Some(t) => t,
@@ -60,7 +61,7 @@ pub fn render_identity_view(
     if ungrouped_identity.is_empty() && link_groups.is_empty() && !has_link_mappings && !has_cluster_id {
         // No identity fields, no links, no cluster_id — pass-through with a row-level entity_id
         let union_parts: Vec<String> = forward_names.iter()
-            .map(|name| format!("SELECT * FROM _fwd_{name}"))
+            .map(|name| format!("SELECT * FROM {}", qi(&format!("_fwd_{name}"))))
             .collect();
         let base = union_parts.join("\n  UNION ALL\n  ");
         let eid = "md5(_mapping || ':' || _src_id)";
@@ -78,7 +79,7 @@ pub fn render_identity_view(
 
     // Reference forward views and UNION ALL into _id_base.
     let union_parts: Vec<String> = forward_names.iter()
-        .map(|name| format!("SELECT * FROM _fwd_{name}"))
+        .map(|name| format!("SELECT * FROM {}", qi(&format!("_fwd_{name}"))))
         .collect();
     let base_query = union_parts.join("\n  UNION ALL\n  ");
 
@@ -101,15 +102,16 @@ pub fn render_identity_view(
     let mut match_conditions: Vec<String> = Vec::new();
 
     for field in &ungrouped_identity {
+        let qf = qi(field);
         match_conditions.push(format!(
-            "(n.{field} IS NOT NULL AND n.{field} = n2.{field})"
+            "(n.{qf} IS NOT NULL AND n.{qf} = n2.{qf})"
         ));
     }
 
     for (_group_name, fields) in &link_groups {
         let group_cond: Vec<String> = fields
             .iter()
-            .map(|f| format!("(n.{f} IS NOT NULL AND n.{f} = n2.{f})"))
+            .map(|f| { let qf = qi(f); format!("(n.{qf} IS NOT NULL AND n.{qf} = n2.{qf})") })
             .collect();
         match_conditions.push(format!("({})", group_cond.join(" AND ")));
     }
@@ -131,9 +133,9 @@ pub fn render_identity_view(
     let mut link_edge_parts: Vec<String> = Vec::new();
 
     for link_mapping in all_mappings.iter().filter(|m| m.target.name() == target_name && m.has_links()) {
-        let link_source = sources.get(&link_mapping.source.dataset)
-            .map(|s| s.table_name(&link_mapping.source.dataset).to_string())
-            .unwrap_or_else(|| link_mapping.source.dataset.clone());
+        let link_source = qi(sources.get(&link_mapping.source.dataset)
+            .map(|s| s.table_name(&link_mapping.source.dataset))
+            .unwrap_or(&link_mapping.source.dataset));
 
         // For each pair of link references, generate a JOIN that produces edges
         let links = &link_mapping.links;
@@ -163,29 +165,29 @@ pub fn render_identity_view(
 
                     // Build the src_id expression for each side
                     let a_src_id = if pairs_a.len() == 1 {
-                        format!("lt.{}::text", pairs_a[0].0)
+                        format!("lt.{}::text", qi(&pairs_a[0].0))
                     } else {
                         let mut sorted: Vec<(&str, &str)> = pairs_a.iter().map(|(l, _p)| (l.as_str(), l.as_str())).collect();
                         sorted.sort_by_key(|(_, pk)| pk.to_string());
                         let parts: Vec<String> = sorted.iter()
-                            .map(|(link_col, pk_col)| format!("'{}', lt.{}", pk_col, link_col))
+                            .map(|(link_col, pk_col)| format!("'{}', lt.{}", pk_col, qi(link_col)))
                             .collect();
                         format!("jsonb_build_object({})::text", parts.join(", "))
                     };
                     let b_src_id = if pairs_b.len() == 1 {
-                        format!("lt.{}::text", pairs_b[0].0)
+                        format!("lt.{}::text", qi(&pairs_b[0].0))
                     } else {
                         let mut sorted: Vec<(&str, &str)> = pairs_b.iter().map(|(l, _p)| (l.as_str(), l.as_str())).collect();
                         sorted.sort_by_key(|(_, pk)| pk.to_string());
                         let parts: Vec<String> = sorted.iter()
-                            .map(|(link_col, pk_col)| format!("'{}', lt.{}", pk_col, link_col))
+                            .map(|(link_col, pk_col)| format!("'{}', lt.{}", pk_col, qi(link_col)))
                             .collect();
                         format!("jsonb_build_object({})::text", parts.join(", "))
                     };
 
                     // NULL checks for link columns
-                    let null_checks_a: Vec<String> = pairs_a.iter().map(|(l, _)| format!("lt.{l} IS NOT NULL")).collect();
-                    let null_checks_b: Vec<String> = pairs_b.iter().map(|(l, _)| format!("lt.{l} IS NOT NULL")).collect();
+                    let null_checks_a: Vec<String> = pairs_a.iter().map(|(l, _)| format!("lt.{} IS NOT NULL", qi(l))).collect();
+                    let null_checks_b: Vec<String> = pairs_b.iter().map(|(l, _)| format!("lt.{} IS NOT NULL", qi(l))).collect();
                     let null_checks = [null_checks_a, null_checks_b].concat().join(" AND ");
 
                     link_edge_parts.push(format!(
@@ -227,12 +229,12 @@ pub fn render_identity_view(
                UNION\n  \
                SELECT entity_b, entity_a FROM _link_edges\n  \
                UNION\n  \
-               SELECT n._entity_id, LEAST(c._component, n2._entity_id)\n  \
+               SELECT n._entity_id, c._component\n  \
                FROM _id_closure c\n  \
-               JOIN _id_numbered n ON c._entity_id = n._entity_id\n  \
-               JOIN _id_numbered n2 ON n2._entity_id <> n._entity_id\n    \
+               JOIN _id_numbered n2 ON c._entity_id = n2._entity_id\n  \
+               JOIN _id_numbered n ON n._entity_id <> n2._entity_id\n    \
                  AND ({match_expr})\n  \
-               WHERE LEAST(c._component, n2._entity_id) < c._component\n\
+               WHERE c._component < n._entity_id\n\
              ),\n"
         ));
     } else {
@@ -241,12 +243,12 @@ pub fn render_identity_view(
                SELECT _entity_id, _entity_id AS _component\n  \
                FROM _id_numbered\n  \
                UNION\n  \
-               SELECT n._entity_id, LEAST(c._component, n2._entity_id)\n  \
+               SELECT n._entity_id, c._component\n  \
                FROM _id_closure c\n  \
-               JOIN _id_numbered n ON c._entity_id = n._entity_id\n  \
-               JOIN _id_numbered n2 ON n2._entity_id <> n._entity_id\n    \
+               JOIN _id_numbered n2 ON c._entity_id = n2._entity_id\n  \
+               JOIN _id_numbered n ON n._entity_id <> n2._entity_id\n    \
                  AND ({match_expr})\n  \
-               WHERE LEAST(c._component, n2._entity_id) < c._component\n\
+               WHERE c._component < n._entity_id\n\
              ),\n"
         ));
     }

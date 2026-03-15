@@ -64,9 +64,12 @@ impl PrimaryKey {
     }
 
     pub fn src_id_expr(&self, row_alias: Option<&str>) -> String {
-        let col_ref = |col: &str| match row_alias {
-            Some(alias) => format!("{alias}.{col}"),
-            None => col.to_string(),
+        let col_ref = |col: &str| {
+            let qc = crate::qi(col);
+            match row_alias {
+                Some(alias) => format!("{alias}.{qc}"),
+                None => qc,
+            }
         };
 
         match self {
@@ -94,23 +97,26 @@ impl PrimaryKey {
     pub fn reverse_select_exprs(&self, src_alias: &str) -> Vec<String> {
         match self {
             PrimaryKey::Single(col) => {
-                vec![format!("{src_alias}._src_id AS {col}")]
+                vec![format!("{src_alias}._src_id AS {}", crate::qi(col))]
             }
             PrimaryKey::Composite(cols) => {
                 let mut sorted: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
                 sorted.sort();
                 sorted
                     .iter()
-                    .map(|col| format!("({src_alias}._src_id::jsonb->>'{col}') AS {col}"))
+                    .map(|col| format!("({src_alias}._src_id::jsonb->>'{col}') AS {}", crate::qi(col)))
                     .collect()
             }
         }
     }
 
     pub fn src_missing_predicate(&self, row_alias: Option<&str>) -> String {
-        let col_ref = |col: &str| match row_alias {
-            Some(alias) => format!("{alias}.{col}"),
-            None => col.to_string(),
+        let col_ref = |col: &str| {
+            let qc = crate::qi(col);
+            match row_alias {
+                Some(alias) => format!("{alias}.{qc}"),
+                None => qc,
+            }
         };
 
         let cols = self.columns();
@@ -196,6 +202,15 @@ impl TargetField {
             TargetField::Full(f) => f.default_expression.as_deref(),
         }
     }
+
+    /// Optional SQL type for this field (e.g. "numeric", "boolean", "date").
+    /// When set, forward views cast to this type instead of text.
+    pub fn field_type(&self) -> Option<&str> {
+        match self {
+            TargetField::Shorthand(_) => None,
+            TargetField::Full(f) => f.field_type.as_deref(),
+        }
+    }
 }
 
 /// Full target field definition.
@@ -216,6 +231,8 @@ pub struct TargetFieldDef {
     pub link_group: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default, rename = "type")]
+    pub field_type: Option<String>,
 }
 
 /// Resolution strategy enum.
@@ -537,6 +554,9 @@ pub struct TestCase {
     pub input: IndexMap<String, Vec<serde_json::Value>>,
     #[serde(default)]
     pub expected: IndexMap<String, TestExpected>,
+    /// Expected analytics (target) view contents, keyed by target name.
+    #[serde(default)]
+    pub analytics: IndexMap<String, Vec<serde_json::Value>>,
 }
 
 /// Expected output for a single source dataset.

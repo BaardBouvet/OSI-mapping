@@ -18,9 +18,11 @@ targets:
       price:
         strategy: expression
         expression: "max(price)"
+        type: numeric
       rating:
         strategy: expression
         expression: "avg(rating)"
+        type: numeric
 
 mappings:
   - name: catalog

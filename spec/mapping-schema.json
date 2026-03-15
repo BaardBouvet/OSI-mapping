@@ -135,6 +135,10 @@
           "type": "string",
           "description": "Composite identity group name. Records from different sources are linked only when ALL fields sharing the same link_group match as a tuple. Paired with 'identity' strategy."
         },
+        "type": {
+          "type": "string",
+          "description": "SQL type for this field (e.g. 'numeric', 'boolean', 'date', 'integer'). When set, forward views cast to this type instead of text, enabling correct aggregation and type-safe expressions. Defaults to 'text' when omitted."
+        },
         "description": { "type": "string" }
       }
     },

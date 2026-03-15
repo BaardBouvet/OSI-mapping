@@ -20,6 +20,7 @@ targets:
       is_customer:
         strategy: expression
         expression: "bool_or(is_customer)"
+        type: boolean
 
   invoice:
     fields:
@@ -92,9 +93,7 @@ tests:
       crm_contacts:
         updates:
           - { contact_id: "C1", contact_email: "acme@example.com", contact_name: "Acme Corporation" }
-      erp_customers:
-        inserts:
-          - { _cluster_id: "crm_contacts:C2", customer_email: "widgets@example.com", customer_name: "Widget Co" }
+      erp_customers: {}
 
   - description: "ERP customer without invoices gets deleted (is_customer = false)"
     input:

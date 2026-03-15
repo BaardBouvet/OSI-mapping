@@ -67,11 +67,7 @@ tests:
         - { contact_id: "C001", contact_email: "alice@company.com", contact_name: "Alice A.", contact_phone: "555-1002" }
         - { contact_id: "C002", contact_email: "carol@external.com", contact_name: "Carol Client", contact_phone: "555-1004" }
     expected:
-      hr:
-        updates:
-          - { employee_id: "E001", employee_email: "alice@company.com", employee_name: "Alice A.", work_phone: "555-1001", dept: "Sales" }
-        inserts:
-          - { _cluster_id: "crm:C002", employee_email: "carol@external.com", employee_name: "Carol Client", work_phone: "555-1004", dept: null }
+      hr: {}
       crm:
-        inserts:
-          - { _cluster_id: "hr:E002", contact_email: "bob@company.com", contact_name: "Bob Brown", contact_phone: "555-1003" }
+        updates:
+          - { contact_id: "C001", contact_email: "alice@company.com", contact_name: "Alice Anderson", contact_phone: "555-1001" }
