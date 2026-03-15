@@ -13,7 +13,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [FK-REFERENCES-PLAN.md](FK-REFERENCES-PLAN.md) | Done | Explicit `references:` on field mappings for FK reverse resolution. Replaces LCP heuristic. |
 | [DEEP-NESTING-PLAN.md](DEEP-NESTING-PLAN.md) | Done | Forward + delta reconstruction at arbitrary depth (recursive tree-based CTEs). |
 | [TEST-PROGRESS-PLAN.md](TEST-PROGRESS-PLAN.md) | Done | Generic test runner — 35/35 examples passing E2E. |
-| [NESTED-TYPED-NOOP-PLAN.md](NESTED-TYPED-NOOP-PLAN.md) | Planned | Fix `_osi_text_norm` to normalize both sides of nested noop comparison for type-aware fields. |
+| [NESTED-TYPED-NOOP-PLAN.md](NESTED-TYPED-NOOP-PLAN.md) | Done | Fix `_osi_text_norm` to normalize both sides of nested noop comparison for type-aware fields. |
 | [ATOMIC-GROUPS-PLAN.md](ATOMIC-GROUPS-PLAN.md) | Done | Implement atomic resolution groups (`group:` property) using DISTINCT ON CTEs. |
 | [MAPPING-CORRECTNESS-PLAN.md](MAPPING-CORRECTNESS-PLAN.md) | Done | Audit of questionable expected data: type declarations, REGEXP_REPLACE, embedded identity. |
 | [COMPOSITE-KEY-REFS-PLAN.md](COMPOSITE-KEY-REFS-PLAN.md) | Done | PK columns mapped to reference fields use COALESCE for insert rows. |

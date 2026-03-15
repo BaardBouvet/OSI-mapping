@@ -19,6 +19,7 @@ targets:
         strategy: identity
       total:
         strategy: coalesce
+        type: numeric
 
   order_line:
     fields:
@@ -27,10 +28,12 @@ targets:
         references: purchase_order
       line_number:
         strategy: identity
+        type: numeric
       product:
         strategy: coalesce
       quantity:
         strategy: coalesce
+        type: numeric
 
 mappings:
   # Shop: parent order
@@ -116,7 +119,7 @@ tests:
       shop:
         updates:
           - order_id: "ORD-001"
-            total: "999"
+            total: 999
             lines:
-              - { line_num: "1", item: "Widget", qty: "2" }
+              - { line_num: 1, item: "Widget", qty: 2 }
 

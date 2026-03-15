@@ -33,6 +33,7 @@ targets:
         strategy: coalesce
       budget:
         strategy: coalesce
+        type: numeric
 
   employee:
     fields:
@@ -45,6 +46,7 @@ targets:
         strategy: coalesce
       salary:
         strategy: coalesce
+        type: numeric
 
   project:
     fields:
@@ -248,7 +250,7 @@ tests:
             departments:
               - dept_id: "d1"
                 dept_name: "Engineering"
-                budget: "600000"
+                budget: 600000
                 employees:
-                  - { emp_id: "e1", emp_name: "Alice", salary: "120000" }
+                  - { emp_id: "e1", emp_name: "Alice", salary: 120000 }
             projects: null

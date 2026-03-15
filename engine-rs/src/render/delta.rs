@@ -771,12 +771,12 @@ fn render_delta_with_nested(
         }
     }
     // Add nested array noop checks: compare original JSONB array with reconstructed.
-    // Use _osi_text_norm to normalize original types (integers etc.) to text
-    // so the comparison matches the always-text reconstruction pipeline.
+    // Use _osi_text_norm on BOTH sides to normalize types (integers etc.) to text
+    // so the comparison is type-agnostic even when target fields declare type: numeric.
     for rr in &root_results {
         let qcol = qi(&rr.column);
         noop_parts.push(format!(
-            "COALESCE(_osi_text_norm(p._base->'{col}')::text, '[]') IS NOT DISTINCT FROM COALESCE({alias}.{qcol}::text, '[]')",
+            "COALESCE(_osi_text_norm(p._base->'{col}')::text, '[]') IS NOT DISTINCT FROM COALESCE(_osi_text_norm({alias}.{qcol})::text, '[]')",
             col = rr.column,
             alias = rr.alias,
         ));
