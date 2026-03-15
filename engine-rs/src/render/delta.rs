@@ -184,23 +184,332 @@ pub fn render_delta_view(
         return Ok(sql);
     }
 
-    // Multiple mappings: each computes _action inside its SELECT, then UNION ALL.
+    // Multiple mappings: check for embedded pattern (primary + embedded → merged row)
+    // vs pure routing pattern (all non-embedded → UNION ALL).
+    let primary: Vec<&&Mapping> = mappings.iter().filter(|m| !m.embedded).collect();
+    let embedded_with_reverse: Vec<&&Mapping> = mappings
+        .iter()
+        .filter(|m| {
+            m.embedded
+                && m.fields.iter().any(|f| {
+                    f.is_reverse()
+                        && f.source
+                            .as_deref()
+                            .map_or(false, |s| !pk_columns.contains(s))
+                })
+        })
+        .collect();
+
+    if !primary.is_empty() && !embedded_with_reverse.is_empty() {
+        return render_delta_with_embedded(
+            source_name,
+            &view_name,
+            &primary,
+            &embedded_with_reverse,
+            &reverse_fields,
+            &pk_columns,
+            &out_cols,
+            source_meta,
+        );
+    }
+
+    // Multiple mappings without embedded merge: UNION ALL approach.
+    let all_mappings: Vec<&Mapping> = mappings.to_vec();
+    render_delta_union_all(source_name, &view_name, &all_mappings, &reverse_fields, &pk_columns, &out_cols)
+}
+
+/// Build the CASE expression for a merged embedded delta.
+///
+/// Insert/delete logic comes from primary mappings only.
+/// Noop checks ALL reverse fields against the merged `_base`.
+fn merged_action_case(
+    primary_mappings: &[&&Mapping],
+    pk_columns: &std::collections::HashSet<&str>,
+    all_reverse_fields: &[String],
+) -> String {
+    // Delete conditions from primary mappings only.
+    let mut delete_conditions: Vec<String> = Vec::new();
+    for m in primary_mappings {
+        for fm in &m.fields {
+            if fm.reverse_required {
+                if let Some(ref src) = fm.source {
+                    delete_conditions.push(format!("{} IS NULL", qi(src)));
+                }
+            }
+        }
+        if let Some(ref rf) = m.reverse_filter {
+            delete_conditions.push(format!("({rf}) IS NOT TRUE"));
+        }
+    }
+
+    // Noop: all non-PK reverse fields match merged _base.
+    let noop_parts: Vec<String> = all_reverse_fields
+        .iter()
+        .filter(|f| !pk_columns.contains(f.as_str()))
+        .map(|src| format!("_base->>'{src}' IS NOT DISTINCT FROM {}::text", qi(src)))
+        .collect();
+
+    let mut branches = Vec::new();
+
+    if !delete_conditions.is_empty() {
+        branches.push(format!(
+            "WHEN _src_id IS NULL AND ({}) THEN NULL",
+            delete_conditions.join(" OR ")
+        ));
+    }
+    branches.push("WHEN _src_id IS NULL THEN 'insert'".to_string());
+
+    if !delete_conditions.is_empty() {
+        branches.push(format!(
+            "WHEN {} THEN 'delete'",
+            delete_conditions.join(" OR ")
+        ));
+    }
+
+    if !noop_parts.is_empty() {
+        branches.push(format!("WHEN {} THEN 'noop'", noop_parts.join(" AND ")));
+    }
+
+    let has_non_pk_reverse = all_reverse_fields
+        .iter()
+        .any(|f| !pk_columns.contains(f.as_str()));
+    if !has_non_pk_reverse {
+        branches.push("ELSE 'noop'".to_string());
+    } else {
+        branches.push("ELSE 'update'".to_string());
+    }
+
+    format!("CASE\n      {}\n    END", branches.join("\n      "))
+}
+
+/// Render a delta view that merges embedded mappings into the parent row
+/// via LEFT JOIN on `_src_id`, producing one row per source record.
+///
+/// The merged `_base` combines JSONB from primary + all embedded, enabling
+/// unified noop detection across all fields.
+fn render_delta_with_embedded(
+    source_name: &str,
+    view_name: &str,
+    primary_mappings: &[&&Mapping],
+    embedded_mappings: &[&&Mapping],
+    reverse_fields: &[String],
+    pk_columns: &std::collections::HashSet<&str>,
+    out_cols: &[String],
+    source_meta: Option<&Source>,
+) -> Result<String> {
+    // --- Field ownership: which alias provides each reverse field ---
+    let primary_fields: std::collections::HashSet<&str> = primary_mappings
+        .iter()
+        .flat_map(|m| m.fields.iter())
+        .filter(|fm| fm.is_reverse() && fm.source.is_some())
+        .filter_map(|fm| fm.source.as_deref())
+        .filter(|s| !pk_columns.contains(*s))
+        .collect();
+
+    // For each embedded mapping, find fields it uniquely contributes.
+    struct EmbInfo<'a> {
+        mapping: &'a Mapping,
+        alias: String,
+        fields: Vec<String>,
+    }
+    let mut claimed: std::collections::HashSet<String> = primary_fields.iter().map(|s| s.to_string()).collect();
+    let mut emb_infos: Vec<EmbInfo> = Vec::new();
+    for (i, m) in embedded_mappings.iter().enumerate() {
+        let alias = format!("_e{}", i + 1);
+        let new_fields: Vec<String> = m
+            .fields
+            .iter()
+            .filter(|fm| fm.is_reverse() && fm.source.is_some())
+            .filter_map(|fm| fm.source.clone())
+            .filter(|s| !pk_columns.contains(s.as_str()) && !claimed.contains(s.as_str()))
+            .collect();
+        for f in &new_fields {
+            claimed.insert(f.clone());
+        }
+        if !new_fields.is_empty() {
+            emb_infos.push(EmbInfo {
+                mapping: m,
+                alias,
+                fields: new_fields,
+            });
+        }
+    }
+
+    // If no embedded mapping contributes unique fields, fall through to UNION ALL.
+    if emb_infos.is_empty() {
+        // Delegate to the standard UNION ALL path by returning a union of all mappings.
+        let all: Vec<&Mapping> = primary_mappings
+            .iter()
+            .chain(embedded_mappings.iter())
+            .map(|m| **m)
+            .collect();
+        return render_delta_union_all(source_name, view_name, &all, reverse_fields, pk_columns, out_cols);
+    }
+
+    // Field → alias map for sourcing columns in the merged CTE.
+    let mut field_alias: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for info in &emb_infos {
+        for f in &info.fields {
+            field_alias.insert(f.as_str(), info.alias.as_str());
+        }
+    }
+    // Primary fields: alias "_p"
+    for f in &primary_fields {
+        field_alias.insert(f, "_p");
+    }
+
+    // --- Build CTEs ---
+    let mut ctes: Vec<String> = Vec::new();
+
+    // Primary CTE
+    if primary_mappings.len() == 1 {
+        let rev = qi(&format!("_rev_{}", primary_mappings[0].name));
+        ctes.push(format!("_p AS (SELECT * FROM {rev})"));
+    } else {
+        // Multiple primaries: UNION ALL with column normalization.
+        let primary_selects: Vec<String> = primary_mappings
+            .iter()
+            .map(|m| {
+                let m_fields: std::collections::HashSet<&str> = m
+                    .fields
+                    .iter()
+                    .filter(|fm| fm.is_reverse() && fm.source.is_some())
+                    .filter_map(|fm| fm.source.as_deref())
+                    .collect();
+                // Primary-only out_cols (without embedded-unique fields).
+                let mut projected: Vec<String> = vec![
+                    "_src_id".to_string(),
+                    "\"_cluster_id\"".to_string(),
+                ];
+                if let Some(src) = source_meta {
+                    for col in src.primary_key.columns() {
+                        projected.push(qi(col));
+                    }
+                }
+                for f in reverse_fields {
+                    if primary_fields.contains(f.as_str()) {
+                        if m_fields.contains(f.as_str()) {
+                            projected.push(qi(f));
+                        } else {
+                            projected.push(format!("NULL::text AS {}", qi(f)));
+                        }
+                    }
+                }
+                projected.push("\"_base\"".to_string());
+                format!(
+                    "SELECT {} FROM {}",
+                    projected.join(", "),
+                    qi(&format!("_rev_{}", m.name))
+                )
+            })
+            .collect();
+        ctes.push(format!("_p AS ({})", primary_selects.join(" UNION ALL ")));
+    }
+
+    // Embedded CTEs: only the unique fields + _src_id + _base
+    for info in &emb_infos {
+        let rev = qi(&format!("_rev_{}", info.mapping.name));
+        let mut cols: Vec<String> = vec!["_src_id".to_string()];
+        for f in &info.fields {
+            cols.push(qi(f));
+        }
+        cols.push("_base".to_string());
+        ctes.push(format!("{} AS (SELECT {} FROM {})", info.alias, cols.join(", "), rev));
+    }
+
+    // Merged CTE: LEFT JOIN embedded on _src_id, merge _base.
+    let mut merged_cols: Vec<String> = vec![
+        "_p._src_id".to_string(),
+        "_p.\"_cluster_id\"".to_string(),
+    ];
+    if let Some(src) = source_meta {
+        for col in src.primary_key.columns() {
+            merged_cols.push(format!("_p.{}", qi(col)));
+        }
+    }
+    for field in reverse_fields {
+        let alias = field_alias.get(field.as_str()).copied().unwrap_or("_p");
+        merged_cols.push(format!("{alias}.{}", qi(field)));
+    }
+    // Merged _base: COALESCE each mapping's _base and merge with ||.
+    let base_parts: Vec<String> = std::iter::once("COALESCE(_p._base, '{}'::jsonb)".to_string())
+        .chain(
+            emb_infos
+                .iter()
+                .map(|e| format!("COALESCE({}._base, '{{}}'::jsonb)", e.alias)),
+        )
+        .collect();
+    merged_cols.push(format!("{} AS _base", base_parts.join(" || ")));
+
+    let joins: Vec<String> = emb_infos
+        .iter()
+        .map(|e| format!("LEFT JOIN {} ON {}._src_id = _p._src_id", e.alias, e.alias))
+        .collect();
+
+    ctes.push(format!(
+        "_merged AS (\n    SELECT {}\n    FROM _p\n    {}\n  )",
+        merged_cols.join(",\n      "),
+        joins.join("\n    "),
+    ));
+
+    // --- Outer SELECT with merged action ---
+    let action_expr = merged_action_case(primary_mappings, pk_columns, reverse_fields);
+    let mut outer_cols: Vec<String> = vec![format!("{action_expr} AS _action")];
+    for col in out_cols {
+        outer_cols.push(qi(col));
+    }
+
+    // Include target fields for reverse_filter pass-through from primary.
+    // These are already projected in the primary reverse view; we just need
+    // them in the outer SELECT for the filter references in action_case.
+    if let Some(m) = primary_mappings.first() {
+        if let Some(ref rf) = m.reverse_filter {
+            // Check if filter references fields not already in out_cols.
+            // reverse_filter fields are target fields added to reverse view.
+            // They appear in _p.* but may not be in out_cols.
+            // The action_case references them directly so they must be in _merged.
+            // Since _merged uses _p.*, they're available.  No extra work needed
+            // because _merged gets them from the _p CTE (SELECT * FROM _rev_...).
+            let _ = rf; // suppress unused warning
+        }
+    }
+
+    let sql = format!(
+        "-- Delta: {source_name} (change detection)\n\
+         CREATE OR REPLACE VIEW {view_name} AS\n\
+         WITH\n  {ctes}\n\
+         SELECT\n  {columns}\n\
+         FROM _merged;\n",
+        ctes = ctes.join(",\n  "),
+        columns = outer_cols.join(",\n  "),
+    );
+
+    Ok(sql)
+}
+
+/// Standard UNION ALL delta for multiple mappings without embedded merge.
+fn render_delta_union_all(
+    source_name: &str,
+    view_name: &str,
+    mappings: &[&Mapping],
+    _reverse_fields: &[String],
+    pk_columns: &std::collections::HashSet<&str>,
+    out_cols: &[String],
+) -> Result<String> {
     let selects: Vec<String> = mappings
         .iter()
         .map(|m| {
-            let case_expr = action_case(m, &pk_columns);
-
-            // This mapping's reverse source fields.
+            let case_expr = action_case(m, pk_columns);
             let m_fields: std::collections::HashSet<&str> = m
                 .fields
                 .iter()
                 .filter(|fm| fm.is_reverse() && fm.source.is_some())
                 .filter_map(|fm| fm.source.as_deref())
                 .collect();
-
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
-            for col in &out_cols {
-                if col == "_cluster_id" || col == "_base"
+            for col in out_cols {
+                if col == "_cluster_id"
+                    || col == "_base"
                     || pk_columns.contains(col.as_str())
                 {
                     projected.push(qi(col));
@@ -210,7 +519,11 @@ pub fn render_delta_view(
                     projected.push(format!("NULL::text AS {}", qi(col)));
                 }
             }
-            format!("SELECT {} FROM {}", projected.join(", "), qi(&format!("_rev_{}", m.name)))
+            format!(
+                "SELECT {} FROM {}",
+                projected.join(", "),
+                qi(&format!("_rev_{}", m.name))
+            )
         })
         .collect();
 

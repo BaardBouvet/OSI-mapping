@@ -51,14 +51,16 @@ After bulk-fixing 13 examples' expected data to reach 35/35 passing, a review of
 ### 6. embedded-multiple: two rows with null columns
 
 **Problem:** Two update rows for CRM, each with most columns null.  
-**Analysis:** Correct by design. The delta view uses UNION ALL of separate embedded mappings (crm_customer, crm_billing, crm_shipping). Each mapping's reverse view only projects its own fields; other columns are padded with `NULL::text`. Row 1 = billing address update, Row 2 = customer name update. This is the expected representation for a source with multiple embedded mappings — the consumer merges them by PK.  
-**Status:** No fix needed (by design).
+**Root cause:** Delta view used UNION ALL of separate embedded mappings. Each mapping's reverse view only projected its own fields; other columns were padded with `NULL::text`.  
+**Fix:** Implemented embedded merge in `delta.rs` — embedded reverse views are now LEFT JOINed on `_src_id` to the primary reverse view, producing one merged row per source record with all fields populated. The `_base` JSONB is merged via `||` so noop detection covers all fields in one check. Updated expected data to one merged row.  
+**Status:** Done.
 
 ### 7. embedded-vs-many-to-many: domain is null
 
 **Problem:** CRM update row shows `domain: null` instead of `"acme.com"`.  
-**Analysis:** Correct by design. The update is from the embedded contacts mapping (`crm_embedded_contacts`), which has `NULL::text AS "domain"` in the UNION ALL. The non-embedded customer mapping (`crm_customers`) produces a noop (domain unchanged at "acme.com"). Same pattern as #6.  
-**Status:** No fix needed (by design).
+**Root cause:** Same UNION ALL pattern as #6. The embedded contacts mapping produced its own row with `NULL::text AS "domain"`, while the non-embedded customer mapping produced a noop.  
+**Fix:** Same embedded merge fix as #6. The domain value now comes from the primary mapping's reverse view, merged into the same row as the embedded contact fields. Updated expected data from `domain: null` to `domain: "acme.com"`.  
+**Status:** Done.
 
 ### 8. merge-generated-ids: id columns not numeric
 
