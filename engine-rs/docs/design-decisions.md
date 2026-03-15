@@ -151,6 +151,28 @@ The validator runs checks in order, where each pass assumes prior passes succeed
 
 The engine builds a dependency graph and topologically sorts it. Views are emitted in dependency order so that each `CREATE OR REPLACE VIEW` statement finds its dependencies already defined. The DAG is also used for `dot` output visualization.
 
+## Delta: Embedded Merge via LEFT JOIN
+
+When a source has a primary mapping plus embedded mappings with reverse fields, the delta view merges them into a single row per source record using CTEs and LEFT JOINs on `_src_id`:
+
+```sql
+WITH
+  _p AS (SELECT * FROM _rev_primary),
+  _e1 AS (SELECT _src_id, field1, field2, _base FROM _rev_embedded1),
+  _merged AS (
+    SELECT _p.*, _e1.field1, _e1.field2,
+           _p._base || _e1._base AS _base
+    FROM _p LEFT JOIN _e1 ON _e1._src_id = _p._src_id
+  )
+SELECT <merged_action> AS _action, ... FROM _merged
+```
+
+**Why not UNION ALL:** The earlier approach emitted one partial row per mapping, each with NULLs for columns from other mappings. This forced the consumer to reassemble partial rows by PK — fragile and error-prone. The merged approach produces one complete row with all fields populated.
+
+**`_base` merge:** JSONB `||` combines the base snapshots from all mappings, so noop detection covers all fields in one check.
+
+**Insert/delete logic:** Only the primary mapping determines insert/delete classification. Embedded mappings contribute field values but not lifecycle events.
+
 ## Test Harness Design
 
 Integration tests use testcontainers to spin up a real PostgreSQL instance. Each test case:

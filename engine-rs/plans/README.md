@@ -14,10 +14,10 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [DEEP-NESTING-PLAN.md](DEEP-NESTING-PLAN.md) | Done | Forward + delta reconstruction at arbitrary depth (recursive tree-based CTEs). |
 | [TEST-PROGRESS-PLAN.md](TEST-PROGRESS-PLAN.md) | Done | Generic test runner — 35/35 examples passing E2E. |
 | [NESTED-TYPED-NOOP-PLAN.md](NESTED-TYPED-NOOP-PLAN.md) | Planned | Fix `_osi_text_norm` to normalize both sides of nested noop comparison for type-aware fields. |
-| [ATOMIC-GROUPS-PLAN.md](ATOMIC-GROUPS-PLAN.md) | Planned | Implement atomic resolution groups (`group:` property) using DISTINCT ON CTEs. |
+| [ATOMIC-GROUPS-PLAN.md](ATOMIC-GROUPS-PLAN.md) | Done | Implement atomic resolution groups (`group:` property) using DISTINCT ON CTEs. |
 | [MAPPING-CORRECTNESS-PLAN.md](MAPPING-CORRECTNESS-PLAN.md) | Done | Audit of questionable expected data: type declarations, REGEXP_REPLACE, embedded identity. |
 | [COMPOSITE-KEY-REFS-PLAN.md](COMPOSITE-KEY-REFS-PLAN.md) | Done | PK columns mapped to reference fields use COALESCE for insert rows. |
-| [VIEW-CONSOLIDATION-PLAN.md](VIEW-CONSOLIDATION-PLAN.md) | Partial | Changes 1-3 reverted for debuggability; change 4 (naming) kept. |
+| [VIEW-CONSOLIDATION-PLAN.md](VIEW-CONSOLIDATION-PLAN.md) | Done | Changes 1-3 rejected for debuggability; change 4 (naming) kept. |
 | [REFERENCE-HEURISTIC-PLAN.md](REFERENCE-HEURISTIC-PLAN.md) | Superseded | LCP heuristic — replaced by [FK-REFERENCES-PLAN](FK-REFERENCES-PLAN.md). |
 | [NAMING-PLAN.md](NAMING-PLAN.md) | Design | Recommends renaming to `osi-compiler` with binary `osic`. |
 | [SOURCE-TYPES-PLAN.md](SOURCE-TYPES-PLAN.md) | Done | Source `fields:` with `type:` for PK casting; target field `type:` covers forward view. |
