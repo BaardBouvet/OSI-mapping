@@ -23,6 +23,11 @@ pub struct Source {
     #[serde(default)]
     pub table: Option<String>,
     pub primary_key: PrimaryKey,
+    /// Optional column type declarations (e.g., `{ cid: integer }`).
+    /// Used to cast PK columns in the reverse view when no target field type
+    /// can be inferred.
+    #[serde(default)]
+    pub types: IndexMap<String, String>,
 }
 
 /// Primary key representation: single column or composite key.

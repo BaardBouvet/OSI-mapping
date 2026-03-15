@@ -324,7 +324,7 @@ async fn execute_all_examples() {
             eprintln!("  ✗ {name}: {err}");
         }
     }
-    // Don't assert — this is an informational test to track progress
+    assert!(failed.is_empty(), "{} example(s) failed", failed.len());
 }
 
 async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {

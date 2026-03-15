@@ -70,8 +70,9 @@ After bulk-fixing 13 examples' expected data to reach 35/35 passing, a review of
 ### 9. value-groups: cid as string
 
 **Problem:** Expected data has `cid: "1"` instead of numeric `1`.  
-**Analysis:** Correct. `cid` is the source primary key, and source PKs are always cast to `::text` in the forward view (`pk::text AS _src_id`). The delta view's PK column comes from the identity view which carries this text representation.  
-**Status:** No fix needed.
+**Root cause:** `cid` is the source PK but doesn't map to any target field, so there's no target `type:` to infer from. `_src_id` is always text.  
+**Fix:** Added `types:` map to `Source` model (`types: { cid: integer }`). The `typed_pk_select_exprs` helper now checks source-level `types:` as fallback when no target field type exists. Updated JSON schema. Updated expected data from `cid: "1"` to `cid: 1`.  
+**Status:** Done.
 
 ### 10. Validate default value vs field type (new validation)
 

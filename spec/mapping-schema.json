@@ -64,6 +64,11 @@
             { "type": "string" },
             { "type": "array", "items": { "type": "string" }, "minItems": 1 }
           ]
+        },
+        "types": {
+          "type": "object",
+          "description": "Optional column type declarations (e.g., { cid: integer }). Used to cast PK columns in the reverse view.",
+          "additionalProperties": { "type": "string" }
         }
       }
     },

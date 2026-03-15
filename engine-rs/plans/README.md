@@ -20,7 +20,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [VIEW-CONSOLIDATION-PLAN.md](VIEW-CONSOLIDATION-PLAN.md) | Partial | Changes 1-3 reverted for debuggability; change 4 (naming) kept. |
 | [REFERENCE-HEURISTIC-PLAN.md](REFERENCE-HEURISTIC-PLAN.md) | Superseded | LCP heuristic — replaced by [FK-REFERENCES-PLAN](FK-REFERENCES-PLAN.md). |
 | [NAMING-PLAN.md](NAMING-PLAN.md) | Design | Recommends renaming to `osi-compiler` with binary `osic`. |
-| [SOURCE-TYPES-PLAN.md](SOURCE-TYPES-PLAN.md) | Superseded | Replaced by target field `type:` property (simpler, already implemented). |
+| [SOURCE-TYPES-PLAN.md](SOURCE-TYPES-PLAN.md) | Partial | Source `types:` map for PK casting; target field `type:` covers forward view. |
 | [SOURCE-GROUPING-PLAN.md](SOURCE-GROUPING-PLAN.md) | Design | Visual grouping for related datasets in DOT output. |
 | [SOURCE-REMOVAL-OPTIONS.md](SOURCE-REMOVAL-OPTIONS.md) | Design | Cluster split risk when mappings removed; mitigation strategy needed. |
 | [JSON-FIELDS-PLAN.md](JSON-FIELDS-PLAN.md) | Design | JSON sub-field extraction/writing for structured source columns. |

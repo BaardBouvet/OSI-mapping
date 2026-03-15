@@ -6,26 +6,31 @@ use crate::qi;
 
 /// Build SELECT expressions for PK columns in the reverse view.
 ///
-/// For each PK column, if it maps (via the mapping's field list) to a typed
-/// identity field on the target, cast from `_src_id` (always text) to the
-/// declared type.  Otherwise, emit the default text extraction.
+/// Type resolution order for each PK column:
+/// 1. Target field `type:` — if the PK column maps to a typed identity field
+/// 2. Source `types:` map — explicit column type on the source definition
+/// 3. Default — plain text (no cast)
 fn typed_pk_select_exprs(
     pk: &PrimaryKey,
     src_alias: &str,
     mapping: &Mapping,
     target: Option<&Target>,
+    source_meta: Option<&Source>,
 ) -> Vec<String> {
-    // Build pk_col → target_field_type map from field mappings.
+    // Resolve the type for a PK column.
     let type_for_pk = |pk_col: &str| -> Option<&str> {
-        let fm = mapping.fields.iter().find(|f| f.source.as_deref() == Some(pk_col))?;
-        let tgt_name = fm.target.as_deref()?;
-        let tgt = target?;
-        let fdef = tgt.fields.get(tgt_name)?;
-        if fdef.strategy() == Strategy::Identity {
-            fdef.field_type.as_deref()
-        } else {
-            None
-        }
+        // 1. Check if PK maps to a typed identity field on the target.
+        let from_target = mapping.fields.iter()
+            .find(|f| f.source.as_deref() == Some(pk_col))
+            .and_then(|fm| fm.target.as_deref())
+            .and_then(|tgt_name| target?.fields.get(tgt_name))
+            .and_then(|fdef| {
+                if fdef.strategy() == Strategy::Identity { fdef.field_type.as_deref() } else { None }
+            });
+        if from_target.is_some() { return from_target; }
+
+        // 2. Check source-level types map.
+        source_meta.and_then(|s| s.types.get(pk_col).map(|t| t.as_str()))
     };
 
     match pk {
@@ -86,7 +91,7 @@ pub fn render_reverse_view(
             // For each PK column, check if it maps to a typed identity field.
             // If so, cast from _src_id (text) to the declared type.
             let pk_exprs = typed_pk_select_exprs(
-                &src.primary_key, "id", mapping, target,
+                &src.primary_key, "id", mapping, target, source_meta,
             );
             select_exprs.extend(pk_exprs);
             src.primary_key.columns().into_iter().collect()

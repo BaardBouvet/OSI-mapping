@@ -1,6 +1,6 @@
 # Source Column Types Plan
 
-**Status:** Proposed
+**Status:** Partial (source-level `types:` map implemented for PK casting; target field `type:` covers forward view casting)
 
 ## Problem
 
