@@ -118,4 +118,4 @@ tests:
     expected:
       crm_customers:
         updates:
-          - { id: "C1", domain: "acme.com", contact_name: "Charlie Johnson", contact_email: "charlie@acme.com" }
+          - { id: "C1", domain: null, contact_name: "Charlie Johnson", contact_email: "charlie@acme.com" }

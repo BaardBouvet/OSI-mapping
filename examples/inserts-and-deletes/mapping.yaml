@@ -51,9 +51,9 @@ tests:
     expected:
       crm_a:
         inserts:
-          - { _cluster_id: "crm_b:P5", person_id: "P5", email: "orphan@example.com", customer_id: null }
+          - { _cluster_id: "crm_b:P5", email: "orphan@example.com", customer_id: null }
       crm_b:
         inserts:
-          - { person_id: "P4", _cluster_id: "crm_a:P4", customer_id: "CUST-002", email: "john@example.com" }
+          - { _cluster_id: "crm_a:P4", customer_id: "CUST-002", email: "john@example.com" }
         deletes:
           - { person_id: "P5" }

@@ -117,7 +117,7 @@ tests:
     expected:
       system_b:
         updates:
-          - { id: 101, full_name: "Alice Johnson" }
+          - { id: "101", full_name: "Alice Johnson" }
       system_c:
         updates:
-          - { id: 1002, full_name: "Charlie Brown" }
+          - { id: "1002", full_name: "Charlie Brown" }

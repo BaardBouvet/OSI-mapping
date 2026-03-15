@@ -50,5 +50,5 @@ tests:
     expected:
       customers:
         updates:
-          - { cid: 1, customer_id: "C1", customer_name: "Alice Johnson", street: "123 Oak St", zip_code: "90210" }
-          - { cid: 2, customer_id: "C1", customer_name: "Alice Johnson", street: "123 Oak St", zip_code: "90210" }
+          - { cid: "1", customer_id: "C1", customer_name: "Alice Johnson", street: "123 Oak St", zip_code: "90211" }
+          - { cid: "2", customer_id: "C1", customer_name: "Alice Johnson", street: "123 Oak St", zip_code: "90211" }

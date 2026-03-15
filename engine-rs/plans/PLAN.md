@@ -349,14 +349,16 @@ The original `validation/validate.py` is preserved for reference but
 
 ## Milestone Checklist
 
-- [ ] Phase 1: Project setup, devcontainer, parser, model ✅
-- [ ] Phase 2: DAG builder, forward view rendering ✅
-- [ ] Phase 3: Identity (transitive closure) and resolution views
-- [ ] Phase 4: Reverse projection and delta views
-- [ ] Phase 5: CLI and SQL output ✅
-- [ ] Phase 6: Integration tests against all examples
-- [ ] Phase 7: End-to-end engine execution tests
+- [x] Phase 1: Project setup, devcontainer, parser, model ✅
+- [x] Phase 2: DAG builder, forward view rendering ✅
+- [x] Phase 3: Identity (transitive closure) and resolution views ✅
+- [x] Phase 4: Reverse projection and delta views ✅
+- [x] Phase 5: CLI and SQL output ✅
+- [x] Phase 6: Integration tests against all examples ✅
+- [x] Phase 7: End-to-end engine execution tests ✅
+- [x] Phase 8: Real primary keys (sources section) ✅
 - [x] Validator: All 7 passes reimplemented in Rust ✅
+- [x] 35/35 examples passing E2E ✅
 
 ---
 

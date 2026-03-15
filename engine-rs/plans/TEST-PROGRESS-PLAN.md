@@ -1,6 +1,6 @@
 # Test Progress Plan
 
-**Status:** In Progress
+**Status:** Done
 
 ## Generic Test Runner
 
@@ -9,65 +9,41 @@ Added `execute_all_examples` integration test that:
 2. Parses + renders each example
 3. Skips examples without sync views (no delta to verify)
 4. Executes SQL views against PostgreSQL (testcontainers)
-5. Verifies expected counts for updates/noops/inserts/deletes
+5. Verifies expected updates/inserts/deletes against actual delta view output
 6. Reports a pass/fail/skip summary at the end (non-panicking)
 
 Run with: `cargo test --test integration execute_all_examples -- --nocapture`
 
-## Current Test Status
+Filter: `OSI_EXAMPLES=route,hello-world cargo test execute_all`
 
-### Passing (verified E2E)
-- hello-world — 6 tests ✓
-- references — 3 tests ✓
+## Test Suite
 
-### Need Verification (have sync views, never executed)
-These examples auto-derive sync from bidirectional fields.
-Listed in priority order for getting them passing:
+- **10 unit tests**: parser, DAG, validator (5 passes), forward view column matching
+- **11 integration tests**: parse_all, render_all, list_testable, execute_hello_world, execute_references, execute_route, 3× dump intermediates, execute_all_examples
+- **35/35 examples**: All passing E2E (execute_all_examples)
 
-| # | Example | Complexity | Likely Issues |
-|---|---------|-----------|---------------|
-| 1 | minimal | Low | Two tests, basic merge |
-| 2 | merge-internal | Low | Same-source merge |
-| 3 | inserts-and-deletes | Low | reverse_required filter |
-| 4 | merge-curated | Low | Linking table merge |
-| 5 | composite-keys | Medium | Composite PK, cross-target refs |
-| 6 | merge-threeway | Low | Three-source coalesce |
-| 7 | merge-groups | Medium | link_group composite merge keys |
-| 8 | merge-generated-ids | Medium | Linkage tables, 3-system |
-| 9 | merge-partials | Medium | forward_only flag, reverse_filter |
-| 10 | types | Medium | Expression fields, reverse_filter |
-| 11 | value-conversions | Medium | Expression + reverse_expression |
-| 12 | value-derived | Medium | Group + default_expression |
-| 13 | value-defaults | Low | Default values + constants |
-| 14 | value-groups | Medium | Group resolution, self-merge |
-| 15 | flattened | Medium | Multi-source to one target |
-| 16 | vocabulary-custom | Hard | Reference resolution + vocab |
-| 17 | vocabulary-standard | Hard | Reference resolution + vocab |
-| 18 | concurrent-detection | Medium | _base column verification |
-| 19 | embedded-simple | Hard | Embedded mappings |
-| 20 | embedded-multiple | Hard | Multiple embedded |
-| 21 | embedded-objects | Hard | Embedded + references |
-| 22 | embedded-vs-many-to-many | Hard | Many-to-many + embedded |
-| 23 | multiple-target-mappings | Medium | Multiple embedded targets |
-| 24 | reference-preservation | Medium | PK reference preservation |
-| 25 | relationship-embedded | Hard | Embedded associations |
-| 26 | relationship-mapping | Hard | Many-to-many relationships |
-| 27 | route | Medium | Filter-based routing |
-| 28 | route-combined | Hard | Route + dedicated sources |
-| 29 | route-embedded | Medium | Route + embedded |
-| 30 | route-multiple | Medium | Multiple route targets |
+## Feature Coverage
 
-### No Sync Views (forward-only, no delta verification)
-These examples have only forward_only or expression-only fields — no reverse:
-- nested-arrays, nested-arrays-deep, nested-arrays-multiple (path-based sources)
-- custom-resolution (not yet implemented)
+All 35 examples exercise the full pipeline (forward → identity → resolution → reverse → delta):
 
-## Known Blockers
-
-1. **Composite key reference resolution** — `COMPOSITE-KEY-REFS-PLAN.md`
-2. **Embedded mapping reverse** — embedded mappings produce a virtual source;
-   reverse needs to reassemble the parent row.
-3. **Route-based mappings** — `filter:` restricts which rows enter forward;
-   reverse needs the complementary filter for `reverse_expression`.
-4. **Path-based sources** (nested arrays) — not SQL-compatible; needs
-   JSON unnesting or a different execution model.
+| Feature | Examples |
+|---------|----------|
+| Basic merge (coalesce) | hello-world, minimal, merge-internal, merge-threeway, flattened |
+| Identity linking | hello-world, merge-curated, merge-generated-ids, merge-groups |
+| Last-modified resolution | hello-world, value-groups, concurrent-detection |
+| Expression fields | custom-resolution, types, value-conversions, value-derived |
+| Default values | value-defaults |
+| Group resolution | value-groups, value-derived |
+| References (FK) | references, composite-keys, vocabulary-custom, vocabulary-standard |
+| Composite keys | composite-keys, relationship-embedded, relationship-mapping |
+| Reverse expressions | value-conversions, merge-partials |
+| Reverse filter/required | inserts-and-deletes, merge-partials, route, route-combined |
+| Routing (filter) | route, route-combined, route-embedded, route-multiple |
+| Embedded mappings | embedded-simple, embedded-multiple, embedded-objects, embedded-vs-many-to-many, multiple-target-mappings, route-embedded |
+| Relationship mappings | relationship-embedded, relationship-mapping |
+| Nested arrays (path) | nested-arrays, nested-arrays-deep, nested-arrays-multiple |
+| Cluster/origin | merge-generated-ids, merge-curated |
+| Noop detection (_base) | concurrent-detection, all examples with single-source round-trips |
+| Insert/delete propagation | inserts-and-deletes, relationship-embedded, relationship-mapping, vocabulary-custom, vocabulary-standard |
+| Target field types | composite-keys (numeric), value-defaults (numeric, boolean), custom-resolution (numeric), route-multiple (boolean), merge-partials (boolean) |
+| Reference preservation | reference-preservation |

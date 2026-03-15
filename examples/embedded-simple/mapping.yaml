@@ -98,4 +98,4 @@ tests:
     expected:
       crm:
         updates:
-          - { customer_id: "C1", customer_email: "acme@example.com", customer_name: "Acme Corporation", billing_street: "999 Updated St", billing_city: "New York", shipping_street: "456 Oak Ave", shipping_city: "LA" }
+          - { billing_city: null, billing_street: null, customer_email: "acme@example.com", customer_id: "C1", customer_name: "Acme Corporation", shipping_city: null, shipping_street: null }

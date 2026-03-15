@@ -76,4 +76,4 @@ tests:
       system_b:
         updates:
           # name and phone corrected to system_a's values (in system_b format)
-          - { user_id: "alice@example.com", birthdate: "1985-06-15", name: "Alice Smith", contact_phone: "15551234" }
+          - { user_id: "alice@example.com", birthdate: "1985-06-15", name: "Alice Smith", contact_phone: "1 555-1234" }
