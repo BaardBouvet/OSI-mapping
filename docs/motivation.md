@@ -185,26 +185,41 @@ detection compares the original source values (captured in `_base` at forward
 time) against the resolved values, so round-trip echoes are suppressed without
 maintaining external state.
 
-## Problem 7: Generated IDs on Insert
+## Problem 7: Where Did This Value Come From?
 
-The delta detects an entity that exists in CRM but not ERP and produces an
-insert. The ETL creates the ERP record — and the target system assigns a new
-ID (`CUST-042`). On the next run the engine sees that new record but doesn't
-know it's the same entity. Without feedback, it generates another insert. And
-another. An infinite duplicate-creation loop.
+An ERP customer record suddenly shows a different address. A CRM contact name
+changed overnight. Someone asks: "which system caused this change, when, and
+through what rule?"
 
-Solving this requires linking the new record's ID back to the entity cluster
-before the next run, handling the case where the target system modifies values
-on write, and surviving concurrent inserts from multiple sources.
+In a custom integration this question is almost unanswerable. The sync script
+ran, it updated a row, and no one recorded why. Was it priority-based? Did a
+timestamp win? Did a merge bring in a value from a system no one expected?
 
-Custom implementations build "sync ID maps" — cross-system key-pair tables
-maintained by triggers or batch jobs. These break when entities merge, when
-systems reassign IDs, or when multiple sync processes run concurrently.
+This is **data lineage**, and it becomes critical the moment an integration
+touches financial, regulatory, or customer-facing data. Auditors ask, support
+teams ask, and the answer is usually "let me look at the logs" followed by
+hours of archaeology through sync job output.
 
-Our approach: `cluster_members` and `cluster_field` provide a standard
-feedback path. After an insert, the ETL writes the new record's ID and the
-entity's `_cluster_id` to a membership table. On the next run, the engine
-includes those memberships in the identity graph automatically.
+Lineage in a multi-system integration requires knowing:
+
+1. Which source systems contributed to an entity
+2. Which specific source record provided each resolved field value
+3. What resolution strategy decided the winner (priority, timestamp, expression)
+4. What the losing values were, and from which systems
+5. When each source value was last modified
+
+Custom implementations rarely track any of this. The sync script overwrites the
+target value and moves on. Retroactive lineage requires rebuilding the history
+from source system audit logs — if they exist.
+
+Our approach: the resolution pipeline preserves provenance by construction.
+Every resolved value traces back through the identity graph to a specific
+source row, mapping, and strategy. The forward view captures the original
+source snapshot (`_base`). The identity view tracks which source rows belong
+to each entity. The resolution view applies the declared strategy with full
+visibility into which mapping contributed each field. The delta compares
+resolved values against `_base` to produce precise change descriptions — not
+just "something changed" but exactly what changed and what the original was.
 
 ## Problem 8: Three-Way (and N-Way) Sync
 
