@@ -29,8 +29,10 @@ fn typed_pk_select_exprs(
             });
         if from_target.is_some() { return from_target; }
 
-        // 2. Check source-level types map.
-        source_meta.and_then(|s| s.types.get(pk_col).map(|t| t.as_str()))
+        // 2. Check source-level fields type declaration.
+        source_meta
+            .and_then(|s| s.fields.get(pk_col))
+            .and_then(|f| f.field_type.as_deref())
     };
 
     match pk {

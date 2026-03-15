@@ -65,10 +65,22 @@
             { "type": "array", "items": { "type": "string" }, "minItems": 1 }
           ]
         },
-        "types": {
+        "fields": {
           "type": "object",
-          "description": "Optional column type declarations (e.g., { cid: integer }). Used to cast PK columns in the reverse view.",
-          "additionalProperties": { "type": "string" }
+          "description": "Optional per-column metadata for source columns.",
+          "additionalProperties": { "$ref": "#/$defs/SourceField" }
+        }
+      }
+    },
+
+    "SourceField": {
+      "type": "object",
+      "description": "Per-column metadata for a source field.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "SQL type for this column (e.g., 'integer', 'numeric'). Used to cast PK columns in the reverse view."
         }
       }
     },

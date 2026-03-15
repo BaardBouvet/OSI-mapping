@@ -23,11 +23,19 @@ pub struct Source {
     #[serde(default)]
     pub table: Option<String>,
     pub primary_key: PrimaryKey,
-    /// Optional column type declarations (e.g., `{ cid: integer }`).
+    /// Optional per-column metadata (e.g., type declarations).
+    #[serde(default)]
+    pub fields: IndexMap<String, SourceFieldDef>,
+}
+
+/// Per-column metadata on a source dataset.
+#[derive(Debug, Deserialize)]
+pub struct SourceFieldDef {
+    /// SQL type for this column (e.g., "integer", "numeric").
     /// Used to cast PK columns in the reverse view when no target field type
     /// can be inferred.
-    #[serde(default)]
-    pub types: IndexMap<String, String>,
+    #[serde(default, rename = "type")]
+    pub field_type: Option<String>,
 }
 
 /// Primary key representation: single column or composite key.

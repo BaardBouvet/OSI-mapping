@@ -6,8 +6,9 @@ description: >
 sources:
   customers:
     primary_key: cid
-    types:
-      cid: integer
+    fields:
+      cid:
+        type: integer
 
 targets:
   customer:
