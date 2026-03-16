@@ -1,40 +1,212 @@
-# Naming
+# Project and binary naming
 
 **Status:** Design
 
-## Problem
+Supersedes the original binary-naming discussion (engine → compiler) by broadening scope to the full project name. The "OSI" prefix no longer makes sense — this plan covers both the project identity and the CLI binary name.
 
-"Engine" implies runtime execution. This tool **compiles** YAML into SQL — it
-doesn't run pipelines, move data, or manage state.
+## Why Rename
 
-## Options
+The current name "OSI Mapping" refers to "Open Semantic Interchange," which is no longer what the project is about. The name:
+- Collides with the OSI networking model (Open Systems Interconnection) in every Google search
+- Doesn't describe what the project actually does
+- Sounds like a standards body, not a tool
+- Has no name recognition to protect
 
-| Name | Crate | Binary | Pros | Cons |
-|------|-------|--------|------|------|
-| `osi-engine` | `osi-engine` | `osi-engine` | Current name, familiar in data tooling | Misleading — no runtime behavior |
-| `osi-compiler` | `osi-compiler` | `osic` | Accurate (YAML → SQL), familiar pattern (`rustc`, `gcc`) | Might imply the SQL needs further compilation |
-| `osi-codegen` | `osi-codegen` | `osi-codegen` | Clear purpose (generates code/SQL) | Wordy, "codegen" is overloaded in Rust ecosystem |
-| `osi-render` | `osi-render` | `osi-render` | Matches the internal verb (`render_sql`) | Too generic |
-| `osic` | `osic` | `osic` | Short, memorable, mirrors `rustc` | Not self-documenting |
+## What the Project Actually Is
+
+A declarative schema (YAML) that compiles to a DAG of SQL views for multi-source data integration — handling identity linking, per-field conflict resolution, bidirectional reverse mapping, cross-system FK translation, and delta computation. One file describes the full picture; the engine renders it to PostgreSQL views.
+
+The core metaphor: **multiple streams of data converge into a single truth, then diverge back to their sources.**
+
+## Naming Criteria
+
+1. **Memorable and pronounceable** — you should be able to say it in conversation
+2. **Evocative** — should hint at merging, resolution, or data unification
+3. **Short** — ideally ≤10 characters, works as a CLI command
+4. **Available** — on crates.io (must), GitHub (should), PyPI (nice to have)
+5. **Not confusable** — shouldn't collide with well-known tools in the data/dev space
+6. **Works as a verb or noun** — "run crossfold" / "the crossfold schema"
+
+## Availability Key
+
+| Symbol | Meaning |
+|--------|---------|
+| ✅ | Available (not found) |
+| ⚠️ | Taken but stale/tiny/unrelated |
+| ❌ | Taken by active/significant project |
+
+---
+
+## Tier 1: Recommended
+
+### 1. Crossfold
+
+**Tagline:** *Cross-system data, folded into truth.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ✅ Available |
+| GitHub | ⚠️ 10 results, all ML cross-validation (different domain) |
+| PyPI | ⚠️ Cloudflare blocked check, likely available |
+
+**Why it works:**
+- "Cross" evokes cross-system integration — the core problem domain
+- "Fold" evokes folding/reducing multiple values into one — exactly what resolution does
+- Functional programming connotation: a fold/reduce operation across sources
+- Unique in the data tooling space — no collisions
+- Good CLI feel: `crossfold render mapping.yaml`, `crossfold validate`
+- 9 characters, two syllables, easy to spell and say
+
+**Risks:** Could be confused with k-fold cross-validation in ML contexts, but context would always disambiguate.
+
+### 2. Viewfold
+
+**Tagline:** *Fold your data into views.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ✅ Available |
+| GitHub | ✅ Not found |
+| PyPI | ⚠️ Cloudflare blocked check, likely available |
+
+**Why it works:**
+- Literally describes the output: SQL views created by folding data together
+- Very transparent — someone hearing the name can guess what it does
+- 8 characters, two syllables
+- Good CLI feel: `viewfold render mapping.yaml`
+
+**Risks:** More "descriptive" than "memorable." Less brandable than Crossfold.
+
+### 3. Resolvr
+
+**Tagline:** *Declarative conflict resolution for multi-source data.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ✅ Available |
+| GitHub | ⚠️ Mixed results, no dominant project |
+| PyPI | ⚠️ Taken (DNS pentest tool, completely unrelated) |
+
+**Why it works:**
+- Direct reference to conflict resolution — the core differentiator
+- Modern -r spelling (like Flickr, Tumblr) is distinctive
+- 7 characters, two syllables
+- Good CLI feel: `resolvr render mapping.yaml`
+
+**Risks:** "Resolv" also evokes DNS resolution (resolv.conf). The PyPI name is taken by an unrelated pentest tool (could use `resolvr-data` on PyPI if ever needed).
+
+---
+
+## Tier 2: Strong Alternatives
+
+### 4. Goldmeld
+
+**Tagline:** *Meld your sources into golden records.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ✅ Available |
+| GitHub | ✅ Not found |
+
+**Why it works:** Direct reference to "golden record" (MDM concept) and "meld" (merge). Very on-the-nose for anyone in the MDM/data quality space. 8 characters.
+
+**Risks:** "Meld" is a well-known diff tool (meldmerge.org) and a recently active crates.io project. The compound avoids direct collision but may still cause some confusion. Feels a bit literal — less brandable.
+
+### 5. Fieldmeld
+
+**Tagline:** *Field-level data merging, declared.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ✅ Available |
+| GitHub | ✅ Not found |
+
+**Why it works:** Emphasizes the per-field nature of the resolution (not row-level, not table-level — *field*-level). Descriptive and precise. 9 characters.
+
+**Risks:** Same "meld" association as Goldmeld. Sounds a bit corporate/enterprise.
+
+### 6. Syncfold
+
+**Tagline:** *Fold multiple sources into synchronized truth.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ✅ Available |
+| GitHub | ✅ Not found |
+
+**Why it works:** Evokes bidirectional sync (a key feature) and fold/reduce. 8 characters.
+
+**Risks:** "Sync" implies runtime synchronization, but the tool generates views, not a sync daemon. Could set wrong expectations.
+
+---
+
+## Tier 3: Considered and Rejected
+
+| Name | Why rejected |
+|------|-------------|
+| **Conflux** | Heavily taken — Conflux Chain blockchain (786 GitHub repos, crates.io taken) |
+| **Meld** | Taken on crates.io (active AI context tool) + famous `meld` diff tool |
+| **Arbiter** | Taken on crates.io (multi-agent framework, 32K downloads) |
+| **Fugue** | Taken on crates.io (binary analysis framework, 17K downloads) |
+| **Tessera** | Taken on crates.io (3D tiles). Beautiful metaphor (mosaic tiles) but not available |
+| **Crucible** | Taken on crates.io + Oxide Computer has a storage project called Crucible |
+| **Alloy** | Massively taken (Ethereum library, 5M+ downloads) |
+| **Amalgam** | Taken on crates.io (config generator) |
+| **Ingot** | Taken on crates.io (Oxide's packet parser, 108K downloads) |
+| **Accord** | Taken on crates.io (validation library, 12K downloads) |
+| **Keel** | Taken on crates.io (Kubernetes client). Beautiful metaphor (ship's structural backbone) but stale squatted |
+| **Quorum** | Taken on crates.io (very new, 11 downloads). Also too associated with consensus protocols |
+| **Canon** | Too overloaded (printers, cameras, religion, literature) |
+| **Datameld** | Available but feels like a B2B SaaS name from 2012 |
+| **Entmeld** | Available but sounds like "ant meld" when spoken aloud |
+
+---
 
 ## Recommendation
 
-**`osi-compiler`** with binary name **`osic`**.
+**Crossfold** is the strongest choice. It:
 
-- The core job is compilation: parse a declarative spec, validate it, and emit
-  an artifact (SQL).
-- `osic render`, `osic validate`, `osic dot` reads naturally.
-- The directory stays `engine-rs` → rename to `compiler-rs` (or just `osic-rs`).
+1. Is available everywhere that matters (crates.io, GitHub namespace)
+2. Evokes the core concept (cross-system + fold/reduce)
+3. Is short, memorable, and unique in the data tooling space
+4. Works naturally as a CLI command and brand name
+5. Has no significant collisions
+6. Would make a strong GitHub org name (`crossfold/crossfold` or `crossfold/engine`)
+7. Has a natural tagline: *"Cross-system data, folded into truth"*
 
-## Changes Required
+**Runner-up: Viewfold** if you want something more transparently descriptive ("it folds data into views").
 
-1. Rename directory: `engine-rs/` → `osic-rs/` (or `compiler-rs/`)
-2. `Cargo.toml`: `name = "osic"`, add `[[bin]] name = "osic"`
-3. Update all docs: `engine` → `compiler` references
-4. Update GitHub workflow/CI if any
-5. SQL comment header: `-- Generated by osic — OSI mapping compiler`
-6. The crate's public API name changes (`osi_engine::` → `osic::`)
+**Runner-up: Resolvr** if you want to emphasize the conflict resolution angle.
 
-## Status: Proposed
+---
 
-No urgency — cosmetic rename. Can be done whenever convenient.
+## Rename Scope (if approved)
+
+What would need to change:
+
+| Item | Current | New |
+|------|---------|-----|
+| GitHub repo | `osi-mapping` | `crossfold` |
+| Root README title | "Integration Mapping Schema" | "Crossfold" |
+| Engine crate name | `osi-engine` (in Cargo.toml) | `crossfold` or `crossfold-engine` |
+| Engine binary | `osi-engine` | `crossfold` |
+| Docs references | "OSI Mapping" / "Integration Mapping Schema" | "Crossfold" |
+| Validation script | references to "osi" | references to "crossfold" |
+| Internal code | any `osi_` prefixes | `crossfold_` prefixes |
+| Schema version | Could stay `1.0` — the schema itself is independent of the tool name |
+
+The mapping YAML format itself has no name dependency — `version: "1.0"` doesn't reference "OSI" anywhere. The rename is primarily the tool/project name, not the schema format.
+
+## Binary naming (from original plan)
+
+Separate from the project name, the binary should reflect that the tool is a **compiler** (YAML → SQL), not a runtime engine.
+
+Once a project name is chosen, the binary should follow the `{name}c` convention (like `rustc`, `gcc`):
+
+| Project name | Binary | Crate | Feels like |
+|-------------|--------|-------|------------|
+| crossfold | `crossfold` | `crossfold` | `crossfold render`, `crossfold validate` |
+| viewfold | `viewfold` | `viewfold` | `viewfold render` |
+| resolvr | `resolvr` | `resolvr` | `resolvr render` |
+
+For short project names, the bare name works fine as the binary. The `-c` suffix pattern (`crossfoldc`) is unnecessary when the name itself is short enough. The CLI subcommands (`render`, `validate`, `dot`) already clarify the tool's role.
