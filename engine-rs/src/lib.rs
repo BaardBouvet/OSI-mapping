@@ -1,6 +1,7 @@
 pub mod model;
 pub mod parser;
 pub mod validate;
+pub mod validate_expr;
 pub mod dag;
 pub mod render;
 pub mod error;

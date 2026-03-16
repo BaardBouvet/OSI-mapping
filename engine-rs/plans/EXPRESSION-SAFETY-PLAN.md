@@ -1,6 +1,6 @@
 # Expression safety
 
-**Status:** Planned
+**Status:** Phase 1 done
 
 Validate that user-provided expressions are safe column-level SQL snippets.
 Prevent leaking internal view names and coupling mappings to engine internals.

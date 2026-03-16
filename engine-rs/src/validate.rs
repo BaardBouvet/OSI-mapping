@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{MappingDocument, Strategy};
+use crate::validate_expr::{validate_expression, ExprContext};
 
 /// A validation diagnostic — either an error or a warning.
 #[derive(Debug, Clone)]
@@ -665,15 +666,17 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
     for (tname, tdef) in &doc.targets {
         for (fname, fdef) in &tdef.fields {
             if let Some(expr) = fdef.expression() {
-                check_sql_expr(
+                check_expr(
                     expr,
+                    ExprContext::TargetExpression,
                     &format!("target '{tname}.{fname}' expression"),
                     result,
                 );
             }
             if let Some(expr) = fdef.default_expression() {
-                check_sql_expr(
+                check_expr(
                     expr,
+                    ExprContext::DefaultExpression,
                     &format!("target '{tname}.{fname}' default_expression"),
                     result,
                 );
@@ -684,14 +687,31 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
     // Check mapping-level expressions
     for m in &doc.mappings {
         if let Some(ref filter) = m.filter {
-            check_sql_expr(filter, &format!("mapping '{}' filter", m.name), result);
+            check_expr(
+                filter,
+                ExprContext::Filter,
+                &format!("mapping '{}' filter", m.name),
+                result,
+            );
         }
         if let Some(ref filter) = m.reverse_filter {
-            check_sql_expr(
+            check_expr(
                 filter,
+                ExprContext::ReverseFilter,
                 &format!("mapping '{}' reverse_filter", m.name),
                 result,
             );
+        }
+
+        if let Some(ref lm) = m.last_modified {
+            if let Some(expr) = lm.expression() {
+                check_expr(
+                    expr,
+                    ExprContext::LastModifiedExpression,
+                    &format!("mapping '{}' last_modified.expression", m.name),
+                    result,
+                );
+            }
         }
 
         for fm in &m.fields {
@@ -702,15 +722,17 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
                 .unwrap_or("?");
 
             if let Some(ref expr) = fm.expression {
-                check_sql_expr(
+                check_expr(
                     expr,
+                    ExprContext::ForwardExpression,
                     &format!("mapping '{}' field '{label}' expression", m.name),
                     result,
                 );
             }
             if let Some(ref expr) = fm.reverse_expression {
-                check_sql_expr(
+                check_expr(
                     expr,
+                    ExprContext::ReverseExpression,
                     &format!("mapping '{}' field '{label}' reverse_expression", m.name),
                     result,
                 );
@@ -719,61 +741,19 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
     }
 }
 
-/// Basic SQL expression syntax check: balanced parentheses and quotes.
-fn check_sql_expr(expr: &str, location: &str, result: &mut ValidationResult) {
-    let mut paren_depth: i32 = 0;
-    let mut in_single_quote = false;
-    let chars: Vec<char> = expr.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-
-    while i < len {
-        let ch = chars[i];
-        if in_single_quote {
-            if ch == '\'' {
-                // Check for escaped quote ('')
-                if i + 1 < len && chars[i + 1] == '\'' {
-                    i += 2; // skip the escaped quote
-                    continue;
-                }
-                in_single_quote = false;
-            }
-        } else {
-            match ch {
-                '\'' => in_single_quote = true,
-                '(' => paren_depth += 1,
-                ')' => {
-                    paren_depth -= 1;
-                    if paren_depth < 0 {
-                        result.error(
-                            "SQL",
-                            format!("{location}: unmatched closing parenthesis"),
-                        );
-                        return;
-                    }
-                }
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-
-    if paren_depth != 0 {
-        result.error(
-            "SQL",
-            format!("{location}: unbalanced parentheses (depth {paren_depth})"),
-        );
-    }
-
-    if in_single_quote {
-        result.error(
-            "SQL",
-            format!("{location}: unterminated string literal"),
-        );
-    }
-
+/// Validate expression safety and syntax, reporting errors as diagnostics.
+fn check_expr(
+    expr: &str,
+    context: ExprContext,
+    location: &str,
+    result: &mut ValidationResult,
+) {
     if expr.trim().is_empty() {
         result.error("SQL", format!("{location}: empty expression"));
+        return;
+    }
+    if let Err(msg) = validate_expression(expr, context) {
+        result.error("SQL", format!("{location}: {msg}"));
     }
 }
 
