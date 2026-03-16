@@ -89,9 +89,8 @@ mappings:
 
   # ERP denormalized — embedded person from same row
   - name: erp_companies_person
-    source: { dataset: erp_companies }
+    parent: erp_companies
     target: person
-    embedded: true
     last_modified: modified_at
     fields:
       - source: contact_name
@@ -101,9 +100,8 @@ mappings:
 
   # ERP denormalized — embedded association (employee only)
   - name: erp_companies_assoc
-    source: { dataset: erp_companies }
+    parent: erp_companies
     target: company_person_association
-    embedded: true
     reverse_filter: "relation_type = 'employee'"
     fields:
       - source: id

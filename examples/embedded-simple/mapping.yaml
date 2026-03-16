@@ -49,9 +49,8 @@ mappings:
         last_modified: updated_at
 
   - name: crm_billing
-    source: { dataset: crm }
+    parent: crm_customers
     target: billing_address
-    embedded: true
     fields:
       - source: customer_email
         target: customer_ref
@@ -63,9 +62,8 @@ mappings:
         last_modified: updated_at
 
   - name: crm_shipping
-    source: { dataset: crm }
+    parent: crm_customers
     target: shipping_address
-    embedded: true
     fields:
       - source: customer_email
         target: customer_ref
@@ -87,9 +85,8 @@ mappings:
         last_modified: modified_at
 
   - name: billing_addresses
-    source: { dataset: billing }
+    parent: billing_accounts
     target: billing_address
-    embedded: true
     fields:
       - source: account_email
         target: customer_ref

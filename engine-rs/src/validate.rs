@@ -106,6 +106,9 @@ pub fn validate(doc: &MappingDocument) -> ValidationResult {
     // Pass 9: Default value compatibility with field type
     pass_default_type_compat(doc, &mut result);
 
+    // Pass 10: Parent mapping rules
+    pass_parent_mapping(doc, &mut result);
+
     result
 }
 
@@ -921,6 +924,62 @@ fn pass_default_type_compat(doc: &MappingDocument, result: &mut ValidationResult
                 }
             }
             // For text/date/etc, any default is acceptable (string representation)
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Pass 10 — Parent mapping rules
+// ──────────────────────────────────────────────────────────────────────
+
+fn pass_parent_mapping(doc: &MappingDocument, result: &mut ValidationResult) {
+    let mapping_names: HashSet<&str> = doc.mappings.iter().map(|m| m.name.as_str()).collect();
+
+    for m in &doc.mappings {
+        // 10a: parent must reference an existing mapping name
+        if let Some(ref parent_name) = m.parent {
+            if !mapping_names.contains(parent_name.as_str()) {
+                result.error(
+                    "Parent",
+                    format!(
+                        "mapping '{}': parent '{}' not found in mappings",
+                        m.name, parent_name
+                    ),
+                );
+            }
+        }
+
+        // 10b: array and array_path are mutually exclusive
+        if m.array.is_some() && m.array_path.is_some() {
+            result.error(
+                "Parent",
+                format!(
+                    "mapping '{}': 'array' and 'array_path' are mutually exclusive",
+                    m.name
+                ),
+            );
+        }
+
+        // 10c: array/array_path requires parent
+        if (m.array.is_some() || m.array_path.is_some()) && m.parent.is_none() {
+            result.error(
+                "Parent",
+                format!(
+                    "mapping '{}': 'array'/'array_path' requires 'parent'",
+                    m.name
+                ),
+            );
+        }
+
+        // 10d: mapping-level parent_fields requires parent
+        if !m.parent_fields.is_empty() && m.parent.is_none() && m.source.parent_fields.is_empty() {
+            result.error(
+                "Parent",
+                format!(
+                    "mapping '{}': 'parent_fields' at mapping level requires 'parent'",
+                    m.name
+                ),
+            );
         }
     }
 }

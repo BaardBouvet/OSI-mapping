@@ -53,11 +53,10 @@ mappings:
         target: name
 
   - name: source_children
-    source:
-      dataset: source
-      path: children
-      parent_fields:
-        parent_id: id
+    parent: source_parents
+    array: children
+    parent_fields:
+      parent_id: id
     target: child
     fields:
       - source: child_id
@@ -69,11 +68,10 @@ mappings:
         target: value
 
   - name: source_grandchildren
-    source:
-      dataset: source
-      path: children.grandchildren
-      parent_fields:
-        parent_child_id: child_id
+    parent: source_children
+    array: grandchildren
+    parent_fields:
+      parent_child_id: child_id
     target: grandchild
     fields:
       - source: grandchild_id

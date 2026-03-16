@@ -234,10 +234,21 @@ pub struct Mapping {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
     pub source: SourceRef,
     pub target: TargetRef,
+    /// Name of the parent mapping. Child inherits source from parent.
     #[serde(default)]
-    pub embedded: bool,
+    pub parent: Option<String>,
+    /// JSONB array column to expand into rows (single segment). Requires parent.
+    #[serde(default)]
+    pub array: Option<String>,
+    /// Dotted path to a JSONB array to expand. Requires parent.
+    #[serde(default)]
+    pub array_path: Option<String>,
+    /// Map of local field aliases to parent column names. Promoted from source.
+    #[serde(default)]
+    pub parent_fields: IndexMap<String, ParentFieldRef>,
     #[serde(default)]
     pub priority: Option<i64>,
     #[serde(default)]
@@ -290,6 +301,21 @@ impl Mapping {
     /// Whether this mapping is linkage-only (links but no fields).
     pub fn is_linkage_only(&self) -> bool {
         self.has_links() && !self.has_fields()
+    }
+
+    /// Whether this mapping is a child of another mapping.
+    pub fn is_child(&self) -> bool {
+        self.parent.is_some()
+    }
+
+    /// Whether this mapping expands a nested array.
+    pub fn is_nested(&self) -> bool {
+        self.array.is_some() || self.array_path.is_some()
+    }
+
+    /// The effective array path (from `array` or `array_path`).
+    pub fn effective_array(&self) -> Option<&str> {
+        self.array.as_deref().or(self.array_path.as_deref())
     }
 }
 
@@ -395,8 +421,9 @@ impl ClusterMembers {
 }
 
 /// Source dataset reference.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct SourceRef {
+    #[serde(default)]
     pub dataset: String,
     #[serde(default)]
     pub path: Option<String>,
@@ -547,7 +574,7 @@ impl TimestampRef {
 }
 
 /// Parent field reference for nested arrays.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum ParentFieldRef {
     Simple(String),

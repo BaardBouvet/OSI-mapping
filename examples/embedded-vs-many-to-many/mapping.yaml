@@ -46,9 +46,8 @@ mappings:
         target: domain
 
   - name: crm_embedded_contacts
-    source: { dataset: crm_customers }
+    parent: crm_customers
     target: contact
-    embedded: true
     fields:
       - source: contact_name
         target: name
@@ -57,9 +56,8 @@ mappings:
         target: email
 
   - name: crm_embedded_associations
-    source: { dataset: crm_customers }
+    parent: crm_customers
     target: customer_contact
-    embedded: true
     reverse_filter: "relation_type = 'primary'"
     fields:
       - source: id

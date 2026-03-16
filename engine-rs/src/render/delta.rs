@@ -196,8 +196,8 @@ fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) 
 
     let mut branches = Vec::new();
 
-    if mapping.embedded {
-        // Embedded mappings extract data from a shared source table.
+    if mapping.is_child() && !mapping.is_nested() {
+        // Child mappings extract data from a shared source table.
         // They should not produce insert rows (can't insert partial records).
         branches.push("WHEN _src_id IS NULL THEN NULL".to_string());
     } else {
@@ -320,13 +320,13 @@ pub fn render_delta_view(
         return Ok(sql);
     }
 
-    // Multiple mappings: check for embedded pattern (primary + embedded → merged row)
-    // vs pure routing pattern (all non-embedded → UNION ALL).
-    let primary: Vec<&&Mapping> = mappings.iter().filter(|m| !m.embedded).collect();
-    let embedded_with_reverse: Vec<&&Mapping> = mappings
+    // Multiple mappings: check for child pattern (primary + child → merged row)
+    // vs pure routing pattern (all non-child → UNION ALL).
+    let primary: Vec<&&Mapping> = mappings.iter().filter(|m| !m.is_child()).collect();
+    let children_with_reverse: Vec<&&Mapping> = mappings
         .iter()
         .filter(|m| {
-            m.embedded
+            m.is_child() && !m.is_nested()
                 && m.fields.iter().any(|f| {
                     f.is_reverse()
                         && f.source_name()
@@ -335,12 +335,12 @@ pub fn render_delta_view(
         })
         .collect();
 
-    if !primary.is_empty() && !embedded_with_reverse.is_empty() {
-        return render_delta_with_embedded(
+    if !primary.is_empty() && !children_with_reverse.is_empty() {
+        return render_delta_with_children(
             source_name,
             &view_name,
             &primary,
-            &embedded_with_reverse,
+            &children_with_reverse,
             &reverse_fields,
             &pk_columns,
             &out_cols,
@@ -348,12 +348,12 @@ pub fn render_delta_view(
         );
     }
 
-    // Multiple mappings without embedded merge: UNION ALL approach.
+    // Multiple mappings without child merge: UNION ALL approach.
     let all_mappings: Vec<&Mapping> = mappings.to_vec();
     render_delta_union_all(source_name, &view_name, &all_mappings, &reverse_fields, &pk_columns, &out_cols)
 }
 
-/// Build the CASE expression for a merged embedded delta.
+/// Build the CASE expression for a merged child delta.
 ///
 /// Insert/delete logic comes from primary mappings only.
 /// Noop checks ALL reverse fields against the merged `_base`.
@@ -417,16 +417,16 @@ fn merged_action_case(
     format!("CASE\n      {}\n    END", branches.join("\n      "))
 }
 
-/// Render a delta view that merges embedded mappings into the parent row
+/// Render a delta view that merges child mappings into the parent row
 /// via LEFT JOIN on `_src_id`, producing one row per source record.
 ///
-/// The merged `_base` combines JSONB from primary + all embedded, enabling
+/// The merged `_base` combines JSONB from primary + all children, enabling
 /// unified noop detection across all fields.
-fn render_delta_with_embedded(
+fn render_delta_with_children(
     source_name: &str,
     view_name: &str,
     primary_mappings: &[&&Mapping],
-    embedded_mappings: &[&&Mapping],
+    child_mappings: &[&&Mapping],
     reverse_fields: &[String],
     pk_columns: &std::collections::HashSet<&str>,
     out_cols: &[String],
@@ -441,15 +441,15 @@ fn render_delta_with_embedded(
         .filter(|s| !pk_columns.contains(*s))
         .collect();
 
-    // For each embedded mapping, find fields it uniquely contributes.
-    struct EmbInfo<'a> {
+    // For each child mapping, find fields it uniquely contributes.
+    struct ChildInfo<'a> {
         mapping: &'a Mapping,
         alias: String,
         fields: Vec<String>,
     }
     let mut claimed: std::collections::HashSet<String> = primary_fields.iter().map(|s| s.to_string()).collect();
-    let mut emb_infos: Vec<EmbInfo> = Vec::new();
-    for (i, m) in embedded_mappings.iter().enumerate() {
+    let mut child_infos: Vec<ChildInfo> = Vec::new();
+    for (i, m) in child_mappings.iter().enumerate() {
         let alias = format!("_e{}", i + 1);
         let new_fields: Vec<String> = m
             .fields
@@ -462,7 +462,7 @@ fn render_delta_with_embedded(
             claimed.insert(f.clone());
         }
         if !new_fields.is_empty() {
-            emb_infos.push(EmbInfo {
+            child_infos.push(ChildInfo {
                 mapping: m,
                 alias,
                 fields: new_fields,
@@ -470,12 +470,12 @@ fn render_delta_with_embedded(
         }
     }
 
-    // If no embedded mapping contributes unique fields, fall through to UNION ALL.
-    if emb_infos.is_empty() {
+    // If no child mapping contributes unique fields, fall through to UNION ALL.
+    if child_infos.is_empty() {
         // Delegate to the standard UNION ALL path by returning a union of all mappings.
         let all: Vec<&Mapping> = primary_mappings
             .iter()
-            .chain(embedded_mappings.iter())
+            .chain(child_mappings.iter())
             .map(|m| **m)
             .collect();
         return render_delta_union_all(source_name, view_name, &all, reverse_fields, pk_columns, out_cols);
@@ -483,7 +483,7 @@ fn render_delta_with_embedded(
 
     // Field → alias map for sourcing columns in the merged CTE.
     let mut field_alias: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-    for info in &emb_infos {
+    for info in &child_infos {
         for f in &info.fields {
             field_alias.insert(f.as_str(), info.alias.as_str());
         }
@@ -511,7 +511,7 @@ fn render_delta_with_embedded(
                     .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
                     .filter_map(|fm| fm.source_name())
                     .collect();
-                // Primary-only out_cols (without embedded-unique fields).
+                // Primary-only out_cols (without child-unique fields).
                 let mut projected: Vec<String> = vec![
                     "_src_id".to_string(),
                     "\"_cluster_id\"".to_string(),
@@ -541,8 +541,8 @@ fn render_delta_with_embedded(
         ctes.push(format!("_p AS ({})", primary_selects.join(" UNION ALL ")));
     }
 
-    // Embedded CTEs: only the unique fields + _src_id + _base
-    for info in &emb_infos {
+    // Child CTEs: only the unique fields + _src_id + _base
+    for info in &child_infos {
         let rev = qi(&format!("_rev_{}", info.mapping.name));
         let mut cols: Vec<String> = vec!["_src_id".to_string()];
         for f in &info.fields {
@@ -552,7 +552,7 @@ fn render_delta_with_embedded(
         ctes.push(format!("{} AS (SELECT {} FROM {})", info.alias, cols.join(", "), rev));
     }
 
-    // Merged CTE: LEFT JOIN embedded on _src_id, merge _base.
+    // Merged CTE: LEFT JOIN children on _src_id, merge _base.
     let mut merged_cols: Vec<String> = vec![
         "_p._src_id".to_string(),
         "_p.\"_cluster_id\"".to_string(),
@@ -569,14 +569,14 @@ fn render_delta_with_embedded(
     // Merged _base: COALESCE each mapping's _base and merge with ||.
     let base_parts: Vec<String> = std::iter::once("COALESCE(_p._base, '{}'::jsonb)".to_string())
         .chain(
-            emb_infos
+            child_infos
                 .iter()
                 .map(|e| format!("COALESCE({}._base, '{{}}'::jsonb)", e.alias)),
         )
         .collect();
     merged_cols.push(format!("{} AS _base", base_parts.join(" || ")));
 
-    let joins: Vec<String> = emb_infos
+    let joins: Vec<String> = child_infos
         .iter()
         .map(|e| format!("LEFT JOIN {} ON {}._src_id = _p._src_id", e.alias, e.alias))
         .collect();
@@ -590,7 +590,7 @@ fn render_delta_with_embedded(
     // --- Outer SELECT with merged action ---
     let all_mappings_for_output: Vec<&Mapping> = primary_mappings
         .iter()
-        .chain(embedded_mappings.iter())
+        .chain(child_mappings.iter())
         .map(|m| **m)
         .collect();
     let action_expr = merged_action_case(primary_mappings, pk_columns, reverse_fields);
@@ -625,7 +625,7 @@ fn render_delta_with_embedded(
     Ok(sql)
 }
 
-/// Standard UNION ALL delta for multiple mappings without embedded merge.
+/// Standard UNION ALL delta for multiple mappings without child merge.
 fn render_delta_union_all(
     source_name: &str,
     view_name: &str,
@@ -921,7 +921,7 @@ fn render_delta_with_nested(
     }
 
     let mut case_branches = Vec::new();
-    if parent.embedded {
+    if parent.is_child() && !parent.is_nested() {
         case_branches.push("WHEN p._src_id IS NULL THEN NULL".to_string());
     } else {
         case_branches.push("WHEN p._src_id IS NULL THEN 'insert'".to_string());

@@ -46,13 +46,12 @@ mappings:
       - source: total
         target: total
 
-  # Shop: nested line items extracted via source.path
+  # Shop: nested line items extracted from JSONB array
   - name: shop_lines
-    source:
-      dataset: shop
-      path: lines
-      parent_fields:
-        parent_order_id: order_id
+    parent: shop_orders
+    array: lines
+    parent_fields:
+      parent_order_id: order_id
     target: order_line
     fields:
       - source: parent_order_id

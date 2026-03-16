@@ -100,9 +100,8 @@ mappings:
         target: email
 
   - name: erp_contacts_assoc
-    source: { dataset: erp_contacts }
+    parent: erp_contacts_person
     target: company_person_association
-    embedded: true
     fields:
       - source: company_id
         target: company_id

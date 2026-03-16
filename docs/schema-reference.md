@@ -346,10 +346,13 @@ Maps fields from one source dataset to one target entity.
 |---|---|---|---|
 | `name` | string | **yes** | Unique identifier (`^[a-z][a-z0-9_]*$`) |
 | `description` | string | no | Human-readable description |
-| `source` | [SourceRef](#sourceref) | **yes** | Source dataset reference |
+| `source` | [SourceRef](#sourceref) | * | Source dataset reference (required unless `parent` is set) |
 | `target` | string / [DatasetRef](#datasetref) | **yes** | Target entity name or external dataset |
+| `parent` | string | * | Name of parent mapping — inherits source (mutually exclusive with `source`) |
+| `array` | string | no | JSONB array column to expand into rows (requires `parent`) |
+| `array_path` | string | no | Dotted path to a JSONB array (requires `parent`, mutually exclusive with `array`) |
+| `parent_fields` | object | no | Map of local field aliases to parent column names (used with `array`/`array_path`) |
 | `fields` | array of [FieldMapping](#fieldmapping) | **yes** | Field-level mappings |
-| `embedded` | boolean | no | Extract sub-entity from same source row (default: false) |
 | `priority` | integer | no | Mapping-level coalesce priority (lower wins) |
 | `last_modified` | [TimestampRef](#timestampref) | no | Mapping-level timestamp for last_modified resolution |
 | `filter` | string | no | Forward filter: SQL WHERE condition |
@@ -374,9 +377,11 @@ mappings:
         target: name
 ```
 
-### `embedded`
+### `parent`
 
-Marks a mapping as extracting a sub-entity from the same source row as a parent mapping. The embedded entity shares the parent's source identity.
+Explicitly names the parent mapping. The child inherits `source` from the parent and must not specify its own `source`. Without `array`/`array_path`, the child is an embedded sub-entity (flat columns from the same row). With `array`/`array_path`, the child expands a JSONB array.
+
+**Embedded sub-entity:**
 
 ```yaml
   - name: order_header
@@ -385,9 +390,8 @@ Marks a mapping as extracting a sub-entity from the same source row as a parent 
     fields: [...]
 
   - name: order_address
-    source: { dataset: orders }
+    parent: order_header
     target: shipping_address
-    embedded: true
     fields:
       - source: ship_street
         target: street
@@ -395,7 +399,46 @@ Marks a mapping as extracting a sub-entity from the same source row as a parent 
         target: city
 ```
 
-**Examples:** [embedded-simple](../examples/embedded-simple/), [embedded-objects](../examples/embedded-objects/), [embedded-multiple](../examples/embedded-multiple/), [route-embedded](../examples/route-embedded/)
+**Nested array expansion:**
+
+```yaml
+  - name: shop_orders
+    source: { dataset: shop }
+    target: order
+    fields: [...]
+
+  - name: order_lines
+    parent: shop_orders
+    array: lines
+    parent_fields:
+      parent_order_id: order_id
+    target: order_line
+    fields:
+      - source: parent_order_id
+        target: order_ref
+      - source: line_num
+        target: line_number
+```
+
+**Deep nesting** — each level references the previous as parent:
+
+```yaml
+  - name: source_children
+    parent: source_parents
+    array: children
+    parent_fields: { parent_id: id }
+    target: child
+    fields: [...]
+
+  - name: source_grandchildren
+    parent: source_children
+    array: grandchildren
+    parent_fields: { parent_child_id: child_id }
+    target: grandchild
+    fields: [...]
+```
+
+**Examples:** [embedded-simple](../examples/embedded-simple/), [embedded-objects](../examples/embedded-objects/), [embedded-multiple](../examples/embedded-multiple/), [route-embedded](../examples/route-embedded/), [nested-arrays](../examples/nested-arrays/), [nested-arrays-deep](../examples/nested-arrays-deep/), [nested-arrays-multiple](../examples/nested-arrays-multiple/)
 
 ### `filter` / `reverse_filter`
 
@@ -700,43 +743,18 @@ Overrides the mapping-level timestamp for a specific field. Useful when differen
 
 ## SourceRef
 
-Reference to a source dataset, with optional nested array extraction.
+Reference to a source dataset. For nested array extraction, use `parent` + `array`/`array_path` at the mapping level instead (see [`parent`](#parent)).
 
 | Property | Type | Required | Description |
 |---|---|---|---|
 | `dataset` | string | **yes** | Source dataset/table name |
-| `path` | string | no | Dot-delimited path to a nested array |
-| `parent_fields` | object | no | Import ancestor fields into scope (keys are aliases) |
+| `path` | string | no | Internal: populated from `array`/`array_path` by the parser |
+| `parent_fields` | object | no | Internal: populated from mapping-level `parent_fields` by the parser |
 
 ### Simple dataset
 
 ```yaml
 source: { dataset: crm }
-```
-
-### Nested array with parent fields
-
-When `path` is set, the mapping iterates over each item in the nested array. Use `parent_fields` to bring ancestor-level fields into scope.
-
-```yaml
-source:
-  dataset: orders
-  path: lines
-  parent_fields:
-    order_id: order_id
-```
-
-For deep nesting, use dot notation in `path` and object form in `parent_fields`:
-
-```yaml
-source:
-  dataset: orders
-  path: lines.sub_items
-  parent_fields:
-    order_id: order_id               # from root
-    line_id:                          # from intermediate level
-      path: lines
-      field: line_id
 ```
 
 **Examples:** [nested-arrays](../examples/nested-arrays/), [nested-arrays-deep](../examples/nested-arrays-deep/), [nested-arrays-multiple](../examples/nested-arrays-multiple/)

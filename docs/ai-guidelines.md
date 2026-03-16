@@ -226,9 +226,8 @@ mappings:
     fields: [...]
 
   - name: order_address
-    source: { dataset: orders }
+    parent: order_header
     target: shipping_address
-    embedded: true
     fields: [...]
 ```
 
@@ -236,12 +235,16 @@ mappings:
 
 ```yaml
 mappings:
+  - name: shop_orders
+    source: { dataset: orders }
+    target: order
+    fields: [...]
+
   - name: order_lines
-    source:
-      dataset: orders
-      path: lines              # Iterate over lines[]
-      parent_fields:
-        order_id: order_id     # Import parent field
+    parent: shop_orders
+    array: lines
+    parent_fields:
+      order_id: order_id     # Import parent field
     target: order_line
     fields:
       - source: order_id
@@ -376,6 +379,6 @@ default_expression: "current_timestamp"
 3. **Bare array in expected** — Always use `{ updates: [...], inserts: [...], deletes: [...] }`
 4. **Duplicate mapping names** — Each mapping must have a unique `name`
 5. **Duplicate field targets** — Don't map two source fields to the same target field in one mapping
-6. **Forgetting `embedded: true`** — Sub-entities from the same source row need this flag
+6. **Forgetting `parent:`** — Sub-entities from the same source row need `parent:` referencing their parent mapping
 7. **Missing `parent_fields`** — Nested arrays usually need parent-level fields imported
 8. **Splitting entities into separate files** — All entities for an integration go in one file. Separate files break cross-entity references and prevent holistic resolution

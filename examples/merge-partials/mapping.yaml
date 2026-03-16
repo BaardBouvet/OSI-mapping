@@ -46,9 +46,8 @@ mappings:
         last_modified: updated_at
 
   - name: crm_invoices_org
-    source: { dataset: crm_invoices }
+    parent: crm_invoices
     target: organization
-    embedded: true
     fields:
       - source: customer_email
         target: email

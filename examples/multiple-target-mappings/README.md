@@ -8,5 +8,5 @@ to a separate `address` target.
 
 1. `customer` target holds customer identity
 2. Two embedded mappings (`billing_address`, `shipping_address`) both target the same `address` definition
-3. `embedded: true` means address records have no independent identity — they belong to their parent customer
+3. `parent:` means address records have no independent identity — they belong to their parent customer
 4. Different source field prefixes (`billing_*`, `shipping_*`) map to the same target field names

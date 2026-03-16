@@ -85,11 +85,10 @@ mappings:
         target: country
 
   - name: source_departments
-    source:
-      dataset: source
-      path: departments
-      parent_fields:
-        org_id: id
+    parent: source_orgs
+    array: departments
+    parent_fields:
+      org_id: id
     target: department
     fields:
       - source: dept_id
@@ -103,11 +102,10 @@ mappings:
         target: budget
 
   - name: source_employees
-    source:
-      dataset: source
-      path: departments.employees
-      parent_fields:
-        parent_dept_id: dept_id
+    parent: source_departments
+    array: employees
+    parent_fields:
+      parent_dept_id: dept_id
     target: employee
     fields:
       - source: emp_id
@@ -121,11 +119,10 @@ mappings:
         target: salary
 
   - name: source_projects
-    source:
-      dataset: source
-      path: projects
-      parent_fields:
-        org_id: id
+    parent: source_orgs
+    array: projects
+    parent_fields:
+      org_id: id
     target: project
     fields:
       - source: proj_id
@@ -139,11 +136,10 @@ mappings:
         target: status
 
   - name: source_tasks
-    source:
-      dataset: source
-      path: projects.tasks
-      parent_fields:
-        parent_proj_id: proj_id
+    parent: source_projects
+    array: tasks
+    parent_fields:
+      parent_proj_id: proj_id
     target: task
     fields:
       - source: task_id

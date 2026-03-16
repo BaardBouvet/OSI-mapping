@@ -156,7 +156,7 @@
     "Mapping": {
       "type": "object",
       "description": "Maps fields from one source dataset to one target entity.",
-      "required": ["name", "source", "target"],
+      "required": ["name", "target"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -167,7 +167,7 @@
         "description": { "type": "string" },
         "source": {
           "$ref": "#/$defs/SourceRef",
-          "description": "The source dataset to map from."
+          "description": "The source dataset to map from. Required for root mappings; omit when parent is set."
         },
         "target": {
           "description": "Target entity. String = reference to a key in 'targets'. Object = external dataset reference.",
@@ -176,10 +176,23 @@
             { "$ref": "#/$defs/DatasetRef", "description": "External target dataset reference." }
           ]
         },
-        "embedded": {
-          "type": "boolean",
-          "default": false,
-          "description": "When true, this mapping extracts a sub-entity from the same source row as a parent mapping. The embedded entity shares the parent's source identity."
+        "parent": {
+          "type": "string",
+          "description": "Name of the parent mapping. Inherits source from parent. Mutually exclusive with source."
+        },
+        "array": {
+          "type": "string",
+          "description": "JSONB array column to expand into rows. Single segment name. Requires parent."
+        },
+        "array_path": {
+          "type": "string",
+          "pattern": "^[^.]+\\..+$",
+          "description": "Dotted path to a JSONB array to expand. Requires parent. Use for paths into nested JSON structure."
+        },
+        "parent_fields": {
+          "type": "object",
+          "description": "Map of local field aliases to parent column names. Used with array/array_path to import ancestor-level fields.",
+          "additionalProperties": { "$ref": "#/$defs/ParentFieldRef" }
         },
         "priority": {
           "type": "integer",
@@ -227,6 +240,10 @@
       "anyOf": [
         { "required": ["fields"] },
         { "required": ["links"] }
+      ],
+      "oneOf": [
+        { "required": ["source"] },
+        { "required": ["parent"] }
       ]
     },
 

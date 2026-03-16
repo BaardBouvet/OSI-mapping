@@ -42,9 +42,8 @@ mappings:
         target: name
 
   - name: crm_customers_address
-    source: { dataset: crm_customers }
+    parent: crm_customers_company
     target: address
-    embedded: true
     fields:
       - source: street_address
         target: street

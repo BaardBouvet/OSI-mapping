@@ -37,9 +37,8 @@ mappings:
         target: name
 
   - name: customers_billing
-    source: { dataset: customers }
+    parent: customers
     target: address
-    embedded: true
     fields:
       - source: billing_street
         target: street
@@ -51,9 +50,8 @@ mappings:
         target: zip
 
   - name: customers_shipping
-    source: { dataset: customers }
+    parent: customers
     target: address
-    embedded: true
     fields:
       - source: shipping_street
         target: street

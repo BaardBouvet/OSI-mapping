@@ -25,7 +25,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [SOURCE-REMOVAL-OPTIONS.md](SOURCE-REMOVAL-OPTIONS.md) | Design | Cluster split risk when mappings removed; mitigation strategy needed. |
 | [JSON-FIELDS-PLAN.md](JSON-FIELDS-PLAN.md) | Done | `source_path` property for JSONB sub-field extraction with deep path support. |
 | [COMPOSITE-TYPES-PLAN.md](COMPOSITE-TYPES-PLAN.md) | Proposed | Replace JSONB with PostgreSQL composite types for typed nested array output. |
-| [PARENT-MAPPING-PLAN.md](PARENT-MAPPING-PLAN.md) | Planned | Unify `embedded` + `source.path` under `parent:` with `array`/`array_path` for nested arrays. |
+| [PARENT-MAPPING-PLAN.md](PARENT-MAPPING-PLAN.md) | Done | Unify `embedded` + `source.path` under `parent:` with `array`/`array_path` for nested arrays. |
 | [HIERARCHY-MERGE-PLAN.md](HIERARCHY-MERGE-PLAN.md) | Planned | Example: merge 2-level and 3-level project hierarchies across systems. |
 | [DEPTH-MISMATCH-PLAN.md](DEPTH-MISMATCH-PLAN.md) | Planned | Example: merge when one system has a deeper intermediate level than the other. |
 | [MISSING-BOTTOM-PLAN.md](MISSING-BOTTOM-PLAN.md) | Planned | Example: merge when one system lacks the deepest level; `sql:` aggregation pattern. |
@@ -42,3 +42,4 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [TYPE-HIERARCHY-PLAN.md](TYPE-HIERARCHY-PLAN.md) | Design | `hierarchy:` on target fields for IS-A type relationships; `type_matches` helper in reverse_filter. |
 | [TARGET-PATH-PLAN.md](TARGET-PATH-PLAN.md) | Design | Analysis of `target_path` (dotted notation on targets) — recommends output formatting over pipeline changes. |
 | [COMPUTED-FIELDS-PLAN.md](COMPUTED-FIELDS-PLAN.md) | Design | `computed:` on targets for cross-target aggregation and recursive self-traversal in analytics views. |
+| [ROADMAP.md](ROADMAP.md) | Planned | Phases 0–4 sequencing the remaining plans toward a 1.0 release. |

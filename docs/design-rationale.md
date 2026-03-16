@@ -36,15 +36,16 @@ This document explains the key design decisions behind the Integration Mapping S
 
 **Why:** Different fields from the same source may have different trustworthiness. CRM might be authoritative for customer names but not for addresses. Per-field priority captures this. Lower numbers win, making the priority intuitive to read.
 
-## Flat Nesting (source.path + parent_fields)
+## Parent Mappings (sub-entities and nested arrays)
 
-**Decision:** Nested array mapping uses flat `source.path` and `source.parent_fields` on the mapping, rather than recursive nested blocks inside field definitions.
+**Decision:** Child mappings reference their parent explicitly via `parent: <mapping_name>`. Without `array`/`array_path`, the child is an embedded sub-entity (flat columns from same row). With `array`/`array_path`, the child expands a JSONB array into rows.
 
 **Alternatives considered:**
 - Recursive `nested` block inside FieldMapping — caused schema recursion, broke `oneOf` constraints, made SQL expressions context-dependent
 - Separate mapping entries with implicit parent context — ambiguous about which fields were available
+- Implicit same-source discovery — nothing in the YAML linked child → parent; ambiguous when two mappings share a source
 
-**Why:** Flat nesting keeps every mapping as a regular top-level entry. SQL expressions work the same at any depth. Features like filters, routing, and embedding apply uniformly. No schema recursion means simpler validation and tooling.
+**Why:** Explicit `parent:` eliminates implicit coupling. The child inherits source from its parent, so there is no redundant `source:` block. The presence of `array`/`array_path` unambiguously distinguishes nested array expansion from embedded sub-entities. Deep nesting is a chain of `parent:` references with single-segment `array` names — no compound dotted paths needed.
 
 ## Expressions as Plain SQL Strings
 
@@ -53,12 +54,6 @@ This document explains the key design decisions behind the Integration Mapping S
 **Why:** SQL is universally understood by engineers, database tooling, and AI agents. Using `${field}` or `{{ field }}` style templates would require a custom parser and create ambiguity about escaping and evaluation context. SQL expressions reference field names directly as column identifiers.
 
 **Dialect support:** Currently single-dialect (ANSI SQL). Multi-dialect support is deferred — when needed, it would follow a convention-level dialects dictionary rather than per-expression objects.
-
-## Embedded Entities
-
-**Decision:** Sub-entities extracted from the same source row are marked with `embedded: true` on the mapping.
-
-**Why:** Many APIs return denormalized data (an order with an embedded shipping address). The schema needs to express "these fields come from the same row but belong to a different target entity." The `embedded` flag is simpler than nested mapping definitions and reuses the same mapping structure.
 
 ## Bidirectional by Default
 
