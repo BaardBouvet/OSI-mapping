@@ -42,6 +42,8 @@ Use these examples together with `../docs/annotated-example.md` and `../docs/sch
 | [`nested-arrays`](nested-arrays/README.md) | Array-of-objects field mapping |
 | [`nested-arrays-deep`](nested-arrays-deep/README.md) | Deeply nested array structures |
 | [`nested-arrays-multiple`](nested-arrays-multiple/README.md) | Multiple nested arrays |
+| [`null-propagation`](null-propagation/README.md) | Propagating intentional NULLs via sentinel pattern |
+| [`propagated-delete`](propagated-delete/README.md) | GDPR-style deletion propagation via bool_or + reverse_filter |
 | [`reference-preservation`](reference-preservation/README.md) | Preserving foreign-key references |
 | [`references`](references/README.md) | Foreign-key references between targets |
 | [`relationship-embedded`](relationship-embedded/README.md) | Embedded relationship mapping |

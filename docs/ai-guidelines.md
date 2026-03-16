@@ -110,6 +110,7 @@ price:
 | `last_modified` | Most recent value wins | `last_modified` on the mapping or field |
 | `expression` | Compute via SQL | `expression` on the target field |
 | `collect` | Gather all values, no resolution | — |
+| `bool_or` | True if any source is true (boolean flags) | — |
 
 **Every target must have at least one `identity` field.** This is how records from different sources are matched.
 

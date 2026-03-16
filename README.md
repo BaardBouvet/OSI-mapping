@@ -44,6 +44,7 @@ Each target field declares a resolution strategy that determines how conflicts b
 | `last_modified` | Most recently changed value wins | Mapping-level `last_modified` timestamp field |
 | `expression` | SQL expression computes the value | `expression` on field mappings |
 | `collect` | Gather all values (no conflict resolution) | — |
+| `bool_or` | True if any source is true | — |
 
 ## Key Features
 

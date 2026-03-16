@@ -18,7 +18,7 @@ This document explains the key design decisions behind the Integration Mapping S
 
 ## Resolution Strategy on Target Fields
 
-**Decision:** Resolution strategies (`identity`, `coalesce`, `last_modified`, `expression`, `collect`) are declared on target fields, not on mappings or field mappings.
+**Decision:** Resolution strategies (`identity`, `coalesce`, `last_modified`, `expression`, `collect`, `bool_or`) are declared on target fields, not on mappings or field mappings.
 
 **Why:** Resolution is a property of the target model — "how do we decide what the canonical name is?" is a question about the shared entity, not about any particular source. Placing it on the target makes the resolution rule visible in one place regardless of how many sources contribute.
 

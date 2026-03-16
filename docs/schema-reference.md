@@ -123,7 +123,7 @@ fields:
   tags: collect
 ```
 
-Allowed values: `identity`, `coalesce`, `last_modified`, `collect`.
+Allowed values: `identity`, `coalesce`, `last_modified`, `collect`, `bool_or`.
 
 ### Object form
 
@@ -204,6 +204,19 @@ Gathers all contributed values without conflict resolution. No additional config
 ```yaml
 tags: collect
 ```
+
+#### `bool_or`
+
+Resolves to `true` if **any** contributing source has a truthy value . Useful for boolean flags that propagate across sources — e.g., a deletion flag where any system marking the record deleted makes the resolved value `true`.
+
+```yaml
+is_deleted:
+  strategy: bool_or
+```
+
+The underlying SQL aggregation is `bool_or((field)::boolean)`. Source values are cast to boolean before aggregation.
+
+**Examples:** [propagated-delete](../examples/propagated-delete/)
 
 ### `references`
 
