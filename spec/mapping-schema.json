@@ -113,8 +113,8 @@
       "properties": {
         "strategy": {
           "type": "string",
-          "enum": ["identity", "collect", "coalesce", "last_modified", "expression"],
-          "description": "Resolution strategy. 'identity' = collect values + entity linking (transitive closure). 'collect' = aggregate all values. 'coalesce' = priority-based pick. 'last_modified' = recency-based pick. 'expression' = custom SQL aggregation."
+          "enum": ["identity", "collect", "coalesce", "last_modified", "expression", "bool_or"],
+          "description": "Resolution strategy. 'identity' = collect values + entity linking (transitive closure). 'collect' = aggregate all values. 'coalesce' = priority-based pick. 'last_modified' = recency-based pick. 'expression' = custom SQL aggregation. 'bool_or' = true if any source is true."
         },
         "expression": {
           "$ref": "#/$defs/Expression",

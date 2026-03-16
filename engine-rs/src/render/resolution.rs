@@ -177,6 +177,9 @@ pub fn render_resolution_view(
                 let agg_expr = fdef.expression().unwrap_or(&default_e);
                 agg_expr.to_string()
             }
+            Strategy::BoolOr => format!(
+                "bool_or(({qfname})::boolean)"
+            ),
         };
 
         if has_default_expr {

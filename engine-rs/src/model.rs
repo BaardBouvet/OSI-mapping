@@ -225,6 +225,7 @@ pub enum Strategy {
     Coalesce,
     LastModified,
     Expression,
+    BoolOr,
 }
 
 /// A source-to-target mapping.

@@ -29,3 +29,5 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [HIERARCHY-MERGE-PLAN.md](HIERARCHY-MERGE-PLAN.md) | Planned | Example: merge 2-level and 3-level project hierarchies across systems. |
 | [DEPTH-MISMATCH-PLAN.md](DEPTH-MISMATCH-PLAN.md) | Planned | Example: merge when one system has a deeper intermediate level than the other. |
 | [MISSING-BOTTOM-PLAN.md](MISSING-BOTTOM-PLAN.md) | Planned | Example: merge when one system lacks the deepest level; `sql:` aggregation pattern. |
+| [POSITIONAL-ARRAY-PLAN.md](POSITIONAL-ARRAY-PLAN.md) | Planned | Support `_index` for nested arrays without natural identity; uses `WITH ORDINALITY`. |
+| [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Pattern | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
