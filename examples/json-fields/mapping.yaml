@@ -27,6 +27,8 @@ targets:
         strategy: coalesce
       primary_phone:
         strategy: coalesce
+      contact_type:
+        strategy: coalesce
 
 mappings:
   - name: crm_customers
@@ -45,6 +47,8 @@ mappings:
         target: api_endpoint
       - source_path: contacts[0].phone
         target: primary_phone
+      - source_path: contacts[0].type
+        target: contact_type
 
   - name: erp_customers
     source: { dataset: erp }
@@ -111,3 +115,4 @@ tests:
               "api.endpoint": "https://api.example.com/v1"
             contacts:
               - phone: "+4712345678"
+                type: "mobile"
