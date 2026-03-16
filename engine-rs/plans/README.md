@@ -25,3 +25,4 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [SOURCE-REMOVAL-OPTIONS.md](SOURCE-REMOVAL-OPTIONS.md) | Design | Cluster split risk when mappings removed; mitigation strategy needed. |
 | [JSON-FIELDS-PLAN.md](JSON-FIELDS-PLAN.md) | Done | `source_path` property for JSONB sub-field extraction with deep path support. |
 | [COMPOSITE-TYPES-PLAN.md](COMPOSITE-TYPES-PLAN.md) | Proposed | Replace JSONB with PostgreSQL composite types for typed nested array output. |
+| [PARENT-MAPPING-PLAN.md](PARENT-MAPPING-PLAN.md) | Planned | Unify `embedded` + `source.path` under `parent:` with `array`/`array_path` for nested arrays. |
