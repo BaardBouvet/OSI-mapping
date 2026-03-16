@@ -2,8 +2,9 @@ version: "1.0"
 description: >
   JSON sub-field extraction via source_path. CRM stores customer metadata as
   a JSONB column; individual sub-fields map to target fields for resolution.
-  Demonstrates single-level and deep JSON paths, plus a second flat source
-  that merges via coalesce priority.
+  Demonstrates single-level, deep JSON paths, bracket-quoted keys for dotted
+  JSON property names, array index access, plus a second flat source that
+  merges via coalesce priority.
 
 sources:
   crm:
@@ -22,6 +23,10 @@ targets:
         strategy: coalesce
       city:
         strategy: coalesce
+      api_endpoint:
+        strategy: coalesce
+      primary_phone:
+        strategy: coalesce
 
 mappings:
   - name: crm_customers
@@ -36,6 +41,10 @@ mappings:
         target: language
       - source_path: metadata.address.city
         target: city
+      - source_path: "metadata.['api.endpoint']"
+        target: api_endpoint
+      - source_path: contacts[0].phone
+        target: primary_phone
 
   - name: erp_customers
     source: { dataset: erp }
@@ -50,7 +59,7 @@ mappings:
         target: city
 
 tests:
-  - description: "Single CRM source — JSON sub-fields round-trip as noop"
+  - description: "Single CRM source — JSON sub-fields round-trip as noop (includes bracket key and array index)"
     input:
       crm:
         - id: "C1"
@@ -60,6 +69,12 @@ tests:
             language: "en"
             address:
               city: "Oslo"
+            "api.endpoint": "https://api.example.com/v1"
+          contacts:
+            - phone: "+4712345678"
+              type: "mobile"
+            - phone: "+4798765432"
+              type: "work"
       erp: []
     expected:
       crm: {}
@@ -74,6 +89,10 @@ tests:
             language: "en"
             address:
               city: "Oslo"
+            "api.endpoint": "https://api.example.com/v1"
+          contacts:
+            - phone: "+4712345678"
+              type: "mobile"
       erp:
         - cust_id: "E1"
           email: "alice@example.com"
@@ -89,3 +108,6 @@ tests:
               language: "en"
               address:
                 city: "Bergen"
+              "api.endpoint": "https://api.example.com/v1"
+            contacts:
+              - phone: "+4712345678"

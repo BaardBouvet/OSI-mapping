@@ -2,30 +2,116 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use crate::model::{Mapping, ParentFieldRef, Source, Target};
-use crate::qi;
+use crate::{qi, sql_escape};
 
-/// Generate SQL to extract a value from a JSONB column via a dotted path.
+/// A parsed segment from a `source_path` expression.
+#[derive(Debug, Clone)]
+pub(crate) enum PathSegment {
+    /// JSON object key: `->>'key'` (leaf) or `->'key'` (intermediate)
+    Key(String),
+    /// JSON array index: `->>N` (leaf) or `->N` (intermediate)
+    Index(i64),
+}
+
+/// Parse a `source_path` string into typed segments.
 ///
-/// `source_path: "metadata.tier"` → `"metadata"->>'tier'`
-/// `source_path: "metadata.address.city"` → `"metadata"->'address'->>'city'`
-///
-/// Intermediate segments use `->` (JSONB navigation), the last uses `->>`
-/// (text extraction).
-pub fn json_path_expr(source_path: &str) -> String {
-    let segments: Vec<&str> = source_path.split('.').collect();
-    let col = qi(segments[0]);
-    let keys = &segments[1..];
-    if keys.len() == 1 {
-        format!("{col}->>'{}'", keys[0])
-    } else {
-        let mut expr = col;
-        for (i, key) in keys.iter().enumerate() {
-            if i == keys.len() - 1 {
-                expr = format!("{expr}->>'{key}'");
+/// Handles:
+/// - Dot-separated keys: `metadata.tier` → \[Key("metadata"), Key("tier")\]
+/// - Bracket-quoted keys: `config.['api.endpoint']` → \[Key("config"), Key("api.endpoint")\]
+/// - Array indices: `contacts[0].email` → \[Key("contacts"), Index(0), Key("email")\]
+/// - Combined: `data.['x.y'][2].z` → \[Key("data"), Key("x.y"), Index(2), Key("z")\]
+pub(crate) fn parse_path_segments(path: &str) -> Vec<PathSegment> {
+    let mut segments = Vec::new();
+    let chars: Vec<char> = path.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Skip leading dot separator.
+        if chars[i] == '.' {
+            i += 1;
+            continue;
+        }
+
+        if chars[i] == '[' {
+            // Bracket expression: ['key'] or [N].
+            let close = chars[i..].iter().position(|&c| c == ']')
+                .map(|p| i + p)
+                .unwrap_or(chars.len());
+            let inner: String = chars[i + 1..close].iter().collect();
+            i = close + 1;
+
+            // Strip single quotes: ['key'] → key
+            let inner = inner.strip_prefix('\'').and_then(|s| s.strip_suffix('\''))
+                .unwrap_or(&inner);
+
+            if let Ok(n) = inner.parse::<i64>() {
+                segments.push(PathSegment::Index(n));
             } else {
-                expr = format!("{expr}->'{key}'");
+                segments.push(PathSegment::Key(inner.to_string()));
+            }
+        } else {
+            // Bare key — read until next `.` or `[`.
+            let start = i;
+            while i < chars.len() && chars[i] != '.' && chars[i] != '[' {
+                i += 1;
+            }
+            let key: String = chars[start..i].iter().collect();
+            if !key.is_empty() {
+                segments.push(PathSegment::Key(key));
             }
         }
+    }
+
+    segments
+}
+
+/// Build the SQL operator+operand for one `PathSegment`.
+fn segment_sql(seg: &PathSegment, is_last: bool) -> String {
+    let arrow = if is_last { "->>" } else { "->" };
+    match seg {
+        PathSegment::Key(k) => format!("{arrow}'{k}'"),
+        PathSegment::Index(n) => format!("{arrow}{n}"),
+    }
+}
+
+/// Generate SQL to extract a value from a JSONB column/expression via a path.
+///
+/// Root context (`base` is None):
+///   `"metadata.tier"` → `"metadata"->>'tier'`
+///   `"contacts[0].email"` → `"contacts"->0->>'email'`
+///
+/// Nested context (`base` is Some, e.g. `"item.value"`):
+///   `"meta.tier"` → `(item.value->'meta'->>'tier')`
+///   All segments are JSON navigation (no column quoting on the first).
+pub fn json_path_expr(source_path: &str) -> String {
+    json_path_expr_with_base(source_path, None)
+}
+
+fn json_path_expr_with_base(source_path: &str, base: Option<&str>) -> String {
+    let segments = parse_path_segments(source_path);
+
+    let (root, keys) = if let Some(b) = base {
+        (b.to_string(), &segments[..])
+    } else {
+        match &segments[0] {
+            PathSegment::Key(k) => (qi(k), &segments[1..]),
+            PathSegment::Index(n) => (qi(&n.to_string()), &segments[1..]),
+        }
+    };
+
+    if keys.is_empty() {
+        return root;
+    }
+
+    let mut expr = root;
+    for (i, seg) in keys.iter().enumerate() {
+        let is_last = i == keys.len() - 1;
+        expr = format!("{expr}{}", segment_sql(seg, is_last));
+    }
+
+    if base.is_some() {
+        format!("({expr})")
+    } else {
         expr
     }
 }
@@ -174,7 +260,12 @@ pub fn render_forward_body(
                 let expr = if let Some(ref e) = fm.expression {
                     e.clone()
                 } else if let Some(ref sp) = fm.source_path {
-                    json_path_expr(sp)
+                    if has_path {
+                        // Nested context: all segments are JSON keys under item.value
+                        json_path_expr_with_base(sp, Some("item.value"))
+                    } else {
+                        json_path_expr(sp)
+                    }
                 } else if let Some(ref src) = fm.source {
                     resolve_nested_source(src, &parent_field_exprs, has_path)
                 } else {
@@ -219,7 +310,11 @@ pub fn render_forward_body(
                 let expr = if let Some(ref e) = fm.expression {
                     e.clone()
                 } else if let Some(ref sp) = fm.source_path {
-                    json_path_expr(sp)
+                    if has_path {
+                        json_path_expr_with_base(sp, Some("item.value"))
+                    } else {
+                        json_path_expr(sp)
+                    }
                 } else if let Some(ref src) = fm.source {
                     resolve_nested_source(src, &parent_field_exprs, has_path)
                 } else {
@@ -238,8 +333,12 @@ pub fn render_forward_body(
         for fm in &mapping.fields {
             if fm.is_forward() || fm.is_reverse() {
                 if let Some(ref sp) = fm.source_path {
-                    let resolved = json_path_expr(sp);
-                    let part = format!("'{sp}', {resolved}");
+                    let resolved = if has_path {
+                        json_path_expr_with_base(sp, Some("item.value"))
+                    } else {
+                        json_path_expr(sp)
+                    };
+                    let part = format!("'{}', {resolved}", sql_escape(sp));
                     if !base_parts.contains(&part) {
                         base_parts.push(part);
                     }

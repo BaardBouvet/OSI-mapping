@@ -1,92 +1,142 @@
 use anyhow::Result;
 use indexmap::IndexMap;
+use std::collections::BTreeMap;
 
 use crate::model::{Mapping, Source};
-use crate::qi;
+use crate::{qi, sql_escape};
+use super::forward::{PathSegment, parse_path_segments};
+
+/// A tree node for rebuilding nested JSONB from extracted fields.
+enum JsonNode {
+    /// Leaf: reference a delta column by its full source_name.
+    Leaf(String),
+    /// Object branch: build `jsonb_build_object('k1', ..., 'k2', ...)`.
+    Object(IndexMap<String, JsonNode>),
+    /// Array branch: build `jsonb_build_array(elem0, elem1, ...)`.
+    /// Gaps between indices are filled with NULL.
+    Array(BTreeMap<i64, JsonNode>),
+}
+
+impl JsonNode {
+    fn to_sql(&self) -> String {
+        match self {
+            JsonNode::Leaf(col) => qi(col),
+            JsonNode::Object(map) => {
+                let parts: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| format!("'{}', {}", sql_escape(k), v.to_sql()))
+                    .collect();
+                format!("jsonb_build_object({})", parts.join(", "))
+            }
+            JsonNode::Array(map) => {
+                if map.is_empty() {
+                    return "jsonb_build_array()".to_string();
+                }
+                let max_idx = *map.keys().next_back().unwrap();
+                let mut elems = Vec::new();
+                for i in 0..=max_idx {
+                    if let Some(node) = map.get(&i) {
+                        elems.push(node.to_sql());
+                    } else {
+                        elems.push("NULL".to_string());
+                    }
+                }
+                format!("jsonb_build_array({})", elems.join(", "))
+            }
+        }
+    }
+
+    /// Insert a value at the given path of key segments.
+    fn insert(&mut self, keys: &[PathSegment], full_name: String) {
+        if keys.is_empty() {
+            *self = JsonNode::Leaf(full_name);
+            return;
+        }
+        match &keys[0] {
+            PathSegment::Key(k) => {
+                let map = match self {
+                    JsonNode::Object(m) => m,
+                    _ => {
+                        *self = JsonNode::Object(IndexMap::new());
+                        match self { JsonNode::Object(m) => m, _ => unreachable!() }
+                    }
+                };
+                let child = map.entry(k.clone()).or_insert_with(|| JsonNode::Object(IndexMap::new()));
+                child.insert(&keys[1..], full_name);
+            }
+            PathSegment::Index(n) => {
+                let arr = match self {
+                    JsonNode::Array(a) => a,
+                    _ => {
+                        *self = JsonNode::Array(BTreeMap::new());
+                        match self { JsonNode::Array(a) => a, _ => unreachable!() }
+                    }
+                };
+                let child = arr.entry(*n).or_insert_with(|| JsonNode::Object(IndexMap::new()));
+                child.insert(&keys[1..], full_name);
+            }
+        }
+    }
+}
 
 /// Build `jsonb_build_object(...)` expressions that reconstruct JSONB columns
 /// from individual `source_path` fields in the delta output.
 ///
 /// Takes the list of output columns and the mappings, detects `source_path`
-/// fields, groups them by root column, and returns modified SELECT expressions
-/// with JSONB reconstruction replacing individual dotted columns.
+/// fields, groups them by physical root column, and returns modified SELECT
+/// expressions with JSONB reconstruction replacing individual path columns.
 fn delta_output_exprs(
     out_cols: &[String],
     mappings: &[&Mapping],
 ) -> Vec<String> {
-    // Collect source_path info: root_col → [(json_keys, full_dotted_name)]
-    let mut json_groups: IndexMap<String, Vec<(Vec<String>, String)>> = IndexMap::new();
+    // Collect source_path info: physical_root → JsonNode tree.
+    let mut json_trees: IndexMap<String, JsonNode> = IndexMap::new();
+    // Track which source_names belong to which root.
+    let mut root_for_name: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
     for m in mappings {
         for fm in &m.fields {
             if let Some(ref sp) = fm.source_path {
                 if fm.is_reverse() {
-                    let segments: Vec<&str> = sp.split('.').collect();
-                    let root = segments[0].to_string();
-                    let keys: Vec<String> = segments[1..].iter().map(|s| s.to_string()).collect();
-                    let entry = json_groups.entry(root).or_default();
-                    if !entry.iter().any(|(_, p)| p == sp) {
-                        entry.push((keys, sp.clone()));
-                    }
+                    let segments = parse_path_segments(sp);
+                    let root = match &segments[0] {
+                        PathSegment::Key(k) => k.clone(),
+                        PathSegment::Index(n) => n.to_string(),
+                    };
+                    let full_name = fm.source_name().unwrap().to_string();
+                    let sub_keys = &segments[1..];
+
+                    let tree = json_trees
+                        .entry(root.clone())
+                        .or_insert_with(|| JsonNode::Object(IndexMap::new()));
+                    tree.insert(sub_keys, full_name.clone());
+                    root_for_name.insert(full_name, root);
                 }
             }
         }
     }
 
-    if json_groups.is_empty() {
-        // No source_path fields — return columns as-is.
+    if json_trees.is_empty() {
         return out_cols.iter().map(|c| qi(c)).collect();
     }
 
-    let json_roots: std::collections::HashSet<&str> =
-        json_groups.keys().map(|s| s.as_str()).collect();
     let mut exprs = Vec::new();
     let mut emitted_roots: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for col in out_cols {
-        // Check if this is a dotted source_path column.
-        let root = col.split('.').next().unwrap();
-        if col.contains('.') && json_roots.contains(root) {
+        if let Some(root) = root_for_name.get(col.as_str()) {
+            // This column is a source_path sub-field — emit the reconstructed tree once.
             if !emitted_roots.contains(root) {
-                emitted_roots.insert(root.to_string());
-                let group = &json_groups[root];
-                let obj_expr = build_jsonb_tree(group);
-                exprs.push(format!("{obj_expr} AS {}", qi(root)));
+                emitted_roots.insert(root.clone());
+                let tree = &json_trees[root];
+                exprs.push(format!("{} AS {}", tree.to_sql(), qi(root)));
             }
-            // Skip individual dotted columns (already emitted via group).
         } else {
             exprs.push(qi(col));
         }
     }
 
     exprs
-}
-
-/// Recursively build a nested `jsonb_build_object(...)` from a list of
-/// (json_key_segments, full_dotted_column_name) pairs.
-fn build_jsonb_tree(fields: &[(Vec<String>, String)]) -> String {
-    // Group by first key segment.
-    let mut groups: IndexMap<String, Vec<(Vec<String>, String)>> = IndexMap::new();
-    for (keys, full_path) in fields {
-        let first = &keys[0];
-        let rest: Vec<String> = keys[1..].to_vec();
-        groups
-            .entry(first.clone())
-            .or_default()
-            .push((rest, full_path.clone()));
-    }
-
-    let mut parts = Vec::new();
-    for (key, sub_fields) in &groups {
-        if sub_fields.len() == 1 && sub_fields[0].0.is_empty() {
-            // Leaf: reference the column directly.
-            parts.push(format!("'{key}', {}", qi(&sub_fields[0].1)));
-        } else {
-            // Branch: recurse to build nested object.
-            parts.push(format!("'{key}', {}", build_jsonb_tree(sub_fields)));
-        }
-    }
-
-    format!("jsonb_build_object({})", parts.join(", "))
 }
 
 /// A node in the nesting tree for delta re-assembly.
@@ -140,7 +190,7 @@ fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) 
             if pk_columns.contains(src) {
                 return None;
             }
-            Some(format!("_base->>'{src}' IS NOT DISTINCT FROM {}::text", qi(src)))
+            Some(format!("_base->>'{}' IS NOT DISTINCT FROM {}::text", sql_escape(src), qi(src)))
         })
         .collect();
 
@@ -331,7 +381,7 @@ fn merged_action_case(
     let noop_parts: Vec<String> = all_reverse_fields
         .iter()
         .filter(|f| !pk_columns.contains(f.as_str()))
-        .map(|src| format!("_base->>'{src}' IS NOT DISTINCT FROM {}::text", qi(src)))
+        .map(|src| format!("_base->>'{}' IS NOT DISTINCT FROM {}::text", sql_escape(src), qi(src)))
         .collect();
 
     let mut branches = Vec::new();
@@ -851,8 +901,8 @@ fn render_delta_with_nested(
             if let Some(src) = fm.source_name() {
                 if !pk_columns.contains(src) {
                     noop_parts.push(format!(
-                        "p._base->>'{src}' IS NOT DISTINCT FROM p.{}::text",
-                        qi(src)
+                        "p._base->>'{}' IS NOT DISTINCT FROM p.{}::text",
+                        sql_escape(src), qi(src)
                     ));
                 }
             }

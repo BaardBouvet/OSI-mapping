@@ -289,8 +289,8 @@
         },
         "source_path": {
           "type": "string",
-          "pattern": "^[^.]+\\..+$",
-          "description": "Dotted path into a JSONB source column (e.g. 'metadata.tier' or 'config.address.city'). First segment is the column name, remaining segments navigate JSON keys. Mutually exclusive with 'source'."
+          "pattern": "^[^.\\[]+([.\\[].*)+$",
+          "description": "Path into a JSONB source column (e.g. 'metadata.tier', 'config.['api.key']', 'contacts[0].email'). First bare segment is the column name, remaining segments navigate JSON keys or array indices. Mutually exclusive with 'source'."
         },
         "target": {
           "type": "string",

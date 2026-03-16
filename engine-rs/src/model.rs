@@ -493,11 +493,14 @@ impl FieldMapping {
     }
 
     /// Physical source column in the source table.
-    /// For `source_path`, this is the first segment (the JSONB column).
+    /// For `source_path`, this is the first segment (the JSONB column),
+    /// stripping any bracket suffix (e.g. `contacts[0].email` → `contacts`).
     /// For `source`, this is the column name itself.
     pub fn source_column(&self) -> Option<&str> {
         if let Some(ref sp) = self.source_path {
-            sp.split('.').next()
+            let first = sp.split('.').next().unwrap_or(sp);
+            // Strip bracket suffix: "contacts[0]" → "contacts"
+            Some(first.split('[').next().unwrap_or(first))
         } else {
             self.source.as_deref()
         }

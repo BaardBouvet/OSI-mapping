@@ -10,3 +10,9 @@ pub mod error;
 pub fn qi(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
+
+/// Escape a string for use inside a SQL single-quoted literal.
+/// Doubles any embedded single quotes: `it's` → `it''s`.
+pub fn sql_escape(s: &str) -> String {
+    s.replace('\'', "''")
+}

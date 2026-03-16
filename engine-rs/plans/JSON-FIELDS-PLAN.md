@@ -165,30 +165,127 @@ If the source JSON has 5 sub-fields but only 2 are mapped, the reverse
 lost in the reverse direction. This is acceptable: mapped fields define the
 contract. A future `json_preserve: true` option could merge with the original.
 
+### Nested Array Interaction
+
+`source_path` is context-aware. In a mapping with `source.path` (nested arrays),
+all segments are treated as JSON keys under the nested item (`item.value`):
+
+```yaml
+# Source: data.items = [{"meta": {"tier": "gold"}, "qty": 2}]
+- name: items
+  source:
+    dataset: source
+    path: items
+  target: line_item
+  fields:
+    - source_path: meta.tier    # → (item.value->'meta'->>'tier')
+      target: tier
+```
+
+In root-level mappings (no `source.path`), the first segment is the JSONB column
+name: `source_path: metadata.tier` → `"metadata"->>'tier'`.
+
+### Extended Path Syntax: Brackets and Array Indices
+
+`source_path` supports a subset of JSONPath-style bracket notation. Segments
+are separated by `.` unless inside `[...]` brackets.
+
+#### Segment types
+
+| Syntax | Meaning | SQL |
+|---|---|---|
+| `.key` | Property access | `->>'key'` (leaf) or `->'key'` (intermediate) |
+| `.['key.name']` | Property with dots/special chars | `->>'key.name'` |
+| `[N]` | Array index (integer) | `->>N` (leaf) or `->N` (intermediate) |
+
+Single quotes inside brackets are canonical JSONPath style. No shorthand forms.
+
+#### Examples
+
+```yaml
+# Standard property access (unchanged):
+- source_path: metadata.tier
+# → "metadata"->>'tier'
+
+# Dotted JSON key — use bracket notation:
+- source_path: "config.['api.endpoint']"
+# → "config"->>'api.endpoint'
+
+# Deep path with dotted key:
+- source_path: "config.['app.settings'].timeout"
+# → "config"->'app.settings'->>'timeout'
+
+# Array index — extract from a JSON array:
+- source_path: contacts[0].email
+# → "contacts"->0->>'email'
+
+# Array index as leaf:
+- source_path: tags[0]
+# → "tags"->>0
+```
+
+#### Parsing algorithm
+
+```
+parse_source_path("config.['api.endpoint'].items[0].name")
+→ segments: [
+    PathSegment::Key("config"),
+    PathSegment::Key("api.endpoint"),
+    PathSegment::Key("items"),
+    PathSegment::Index(0),
+    PathSegment::Key("name"),
+  ]
+```
+
+Split on `.` respecting `[...]` brackets. A `[N]` suffix on any segment is
+split into its own `Index` segment. Bracket-quoted keys strip `['` and `']`.
+
+#### SQL generation
+
+For each segment, emit `->` (intermediate) or `->>` (leaf):
+- `Key(k)` → `->>'k'` or `->'k'`
+- `Index(n)` → `->>n` or `->n`
+
+In root context (no `source.path`), the first segment is always a quoted
+column name: `qi("config")` → `"config"`. In nested context (`source.path`),
+the base is `item.value` and all segments are JSON navigation operators.
+
 ## Implementation
 
-### Changes
+### Changes (Done)
 
-**model.rs**: Add `source_path: Option<String>` to `FieldMapping`. Add helpers:
+**model.rs**: Added `source_path: Option<String>` to `FieldMapping`. Helpers:
 - `source_name()` → full dotted path (source_path) or source column name
-- `source_column()` → physical column (first segment of source_path, or source)
-- Update `effective_direction()` to treat source_path like source
+- `source_column()` → physical column (first segment of source_path, or source);
+  strips bracket suffixes (e.g. `contacts[0].email` → `contacts`)
+- Updated `effective_direction()` to treat source_path like source
 
-**forward.rs**: Add `json_path_expr()` helper. When `source_path` is set, use
-it for both the field extraction SQL and the `_base` key.
+**forward.rs**: Added `PathSegment` enum (`Key(String)`, `Index(i64)`) and
+`parse_path_segments()` bracket-aware parser. `json_path_expr()` /
+`json_path_expr_with_base()` use the parser to generate PostgreSQL JSONB
+navigation. Context-aware: uses `item.value` base in nested array mappings,
+quoted column in root mappings. Single quotes in `_base` keys are escaped via
+`sql_escape()`.
 
-**reverse.rs**: Use `source_name()` for the output column alias.
+**lib.rs**: Added `sql_escape()` helper for single-quote doubling in SQL literals.
 
-**delta.rs**: Use `source_name()` for noop detection. In delta output, detect
-`source_path` fields, group by root column, and emit `jsonb_build_object()`
-trees instead of individual dotted columns.
+**reverse.rs**: Uses `source_name()` for the output column alias.
 
-**mod.rs** (`render_input_table`): Use `source_column()` for column collection;
-mark source_path root columns as JSONB.
+**delta.rs**: Uses `source_name()` for noop detection with `sql_escape()` for
+keys containing single quotes. `JsonNode` tree (with `Leaf`, `Object`, `Array`
+variants) and `delta_output_exprs()` use `parse_path_segments()` for correct
+grouping. Object paths reconstruct via `jsonb_build_object()`, array index
+paths reconstruct via `jsonb_build_array()` (gaps filled with NULL). Array
+index fields work bidirectionally.
 
-**validate.rs**: `source_path` must contain a dot. `source` and `source_path`
-are mutually exclusive.
+**mod.rs** (`render_input_table`): Uses `source_column()` for column collection;
+marks source_path root columns as JSONB.
 
-**mapping-schema.json**: Add `source_path` to FieldMapping properties.
+**validate.rs**: `source_path` must navigate into a column (dot or bracket after
+root). `source` and `source_path` are mutually exclusive.
 
-**New example**: `json-fields/` demonstrating single-level and deep JSON paths.
+**mapping-schema.json**: Added `source_path` with bracket-aware pattern.
+
+**New example**: `json-fields/` — CRM JSONB metadata + flat ERP. Demonstrates:
+single-level and deep paths, bracket-quoted keys (`['api.endpoint']`), array
+index access (`contacts[0].phone` as forward_only), and priority-based merge.

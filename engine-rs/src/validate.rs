@@ -181,13 +181,15 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
                     ),
                 );
             }
-            // source_path must contain at least one dot
+            // source_path must navigate into the column (dot or bracket after root)
             if let Some(ref sp) = fm.source_path {
-                if !sp.contains('.') {
+                let has_dot = sp.contains('.');
+                let has_bracket_after_root = sp.find('[').map_or(false, |pos| pos > 0);
+                if !has_dot && !has_bracket_after_root {
                     result.error(
                         "Schema",
                         format!(
-                            "mapping '{}' field[{}]: source_path '{}' must contain at least one dot (column.key)",
+                            "mapping '{}' field[{}]: source_path '{}' must navigate into a column (e.g. column.key or column[0])",
                             mapping.name, i, sp
                         ),
                     );
