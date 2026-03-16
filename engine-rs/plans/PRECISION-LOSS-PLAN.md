@@ -1,4 +1,6 @@
-# PRECISION-LOSS-PLAN
+# Precision loss
+
+**Status:** Planned
 
 Handle lossy transformations between systems: numeric precision reduction,
 string truncation, case folding, date format degradation, and other situations

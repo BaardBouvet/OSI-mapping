@@ -1,4 +1,6 @@
-# Diamond Avoidance Plan
+# Diamond avoidance
+
+**Status:** Done
 
 ## The Problem
 

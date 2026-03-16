@@ -1,4 +1,4 @@
-# Test Progress Plan
+# Test progress
 
 **Status:** Done
 

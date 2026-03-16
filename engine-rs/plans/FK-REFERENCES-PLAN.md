@@ -1,6 +1,7 @@
-# FK References Plan — Option A: Field-Level `references`
+# FK references
 
-**Status:** Done  
+**Status:** Done
+
 **Replaces:** LCP heuristic in `find_same_system_mapping()` (removed)
 
 ## Problem

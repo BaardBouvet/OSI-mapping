@@ -1,6 +1,6 @@
-# Source Column Types Plan
+# Source column types
 
-**Status:** Done (source `fields:` with `type:` property for PK casting; target field `type:` covers forward view casting)
+**Status:** Done
 
 ## Problem
 

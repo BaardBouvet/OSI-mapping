@@ -1,4 +1,6 @@
-# Analytics View Plan
+# Analytics view
+
+**Status:** Done
 
 ## Goal
 

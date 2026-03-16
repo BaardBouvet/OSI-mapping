@@ -1,6 +1,7 @@
-# Composite Types Plan
+# Composite types
 
-**Status:** Proposed  
+**Status:** Proposed
+
 **Goal:** Replace raw JSONB columns with PostgreSQL composite types for nested array data, giving consumers typed, navigable structures while keeping JSON for the internal wire format.
 
 ---

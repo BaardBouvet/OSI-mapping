@@ -1,4 +1,6 @@
-# Deep Nesting (2+ Levels) — Delta Reconstruction Plan
+# Deep nesting
+
+**Status:** Done
 
 ## Current State
 

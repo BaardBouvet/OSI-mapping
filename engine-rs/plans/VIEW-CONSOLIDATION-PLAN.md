@@ -1,6 +1,6 @@
-# View Consolidation Plan
+# View consolidation
 
-## Status: Partially Superseded
+**Status:** Done
 
 Changes 1-3 were implemented but then reverted in favor of debuggability
 (same argument as FORWARD-VIEWS-PLAN). Change 4 remains in effect.

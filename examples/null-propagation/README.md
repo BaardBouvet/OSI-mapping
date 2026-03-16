@@ -56,5 +56,5 @@ phone:
 
 ## See also
 
-- [NULL-WINS-PLAN](../../engine-rs/plans/NULL-WINS-PLAN.md) — engine-level solution with `null_wins` property (eliminates sentinel workaround)
+- The engine may add a `null_wins` property in the future to eliminate the sentinel workaround
 - [propagated-delete](../propagated-delete/) — similar pattern using `bool_or` + `reverse_filter` for deletion signals

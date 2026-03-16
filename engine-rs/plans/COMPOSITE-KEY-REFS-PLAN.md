@@ -1,4 +1,6 @@
-# Composite Key Reference Resolution Plan
+# Composite key references
+
+**Status:** Done
 
 ## Problem
 

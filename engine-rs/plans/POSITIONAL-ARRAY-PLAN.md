@@ -1,4 +1,6 @@
-# POSITIONAL-ARRAY-PLAN
+# Positional arrays
+
+**Status:** Planned
 
 Support nested arrays where elements have no natural identity fields. Identity
 is derived from the parent's identity + the element's array index position.

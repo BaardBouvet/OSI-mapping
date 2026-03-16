@@ -1,4 +1,6 @@
-# PARENT-MAPPING-PLAN
+# Parent mapping
+
+**Status:** Planned
 
 Unify `embedded: true` and `source.path` nested arrays under a single `parent:`
 property. Replace implicit same-source discovery with explicit parent references.

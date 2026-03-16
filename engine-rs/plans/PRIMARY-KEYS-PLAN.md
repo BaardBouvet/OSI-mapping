@@ -1,4 +1,6 @@
-# Real Primary Keys — Design Plan
+# Primary keys
+
+**Status:** Done
 
 > **Abstract**: Replaces the synthetic `_row_id` with real source primary keys
 > throughout the view pipeline. Introduces a `sources:` section in the mapping

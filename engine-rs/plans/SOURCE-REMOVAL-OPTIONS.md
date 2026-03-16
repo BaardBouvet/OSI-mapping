@@ -1,4 +1,6 @@
-# Source Removal and Cluster Splits
+# Source removal and cluster splits
+
+**Status:** Design
 
 > What happens when a mapping is removed from a target — can this cause
 > clusters to split because a transitive link disappears?

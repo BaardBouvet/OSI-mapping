@@ -1,4 +1,6 @@
-# ANALYTICS-PROVENANCE-PLAN
+# Analytics provenance
+
+**Status:** Planned
 
 Extend the analytics view to optionally include source provenance, so
 consumers can correlate golden records with the raw source data that

@@ -1,4 +1,6 @@
-# EXPRESSION-SAFETY-PLAN
+# Expression safety
+
+**Status:** Planned
 
 Validate that user-provided expressions are safe column-level SQL snippets.
 Prevent leaking internal view names and coupling mappings to engine internals.

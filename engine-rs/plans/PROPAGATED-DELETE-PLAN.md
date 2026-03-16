@@ -1,4 +1,6 @@
-# PROPAGATED-DELETE-PLAN
+# Propagated delete
+
+**Status:** Pattern
 
 Support GDPR-style deletion propagation using regular target fields and
 existing reverse mechanics — no special columns, no new engine concepts.

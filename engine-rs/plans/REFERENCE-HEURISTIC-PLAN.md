@@ -1,6 +1,6 @@
-# Reference Resolution Heuristic — LCP Plan
+# Reference heuristic (LCP)
 
-**Status:** Superseded — Replaced by [FK-REFERENCES-PLAN.md](FK-REFERENCES-PLAN.md)
+**Status:** Superseded
 
 ## The Problem
 

@@ -1,4 +1,6 @@
-# TARGET-ARRAYS-PLAN
+# Target arrays
+
+**Status:** Planned
 
 Support array-typed fields directly on a target, so that a one-to-many
 relationship can live on the parent target instead of requiring a separate

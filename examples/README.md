@@ -32,6 +32,7 @@ Use these examples together with `../docs/annotated-example.md` and `../docs/sch
 | [`embedded-vs-many-to-many`](embedded-vs-many-to-many/README.md) | Embedded vs. reference-based relationships |
 | [`flattened`](flattened/README.md) | Flattened source structure into normalized target |
 | [`inserts-and-deletes`](inserts-and-deletes/README.md) | Handling new and removed records |
+| [`json-fields`](json-fields/README.md) | Extracting sub-fields from JSONB source columns via `source_path` |
 | [`merge-curated`](merge-curated/README.md) | Curated merge with manual overrides |
 | [`merge-generated-ids`](merge-generated-ids/README.md) | Merge with system-generated identifiers |
 | [`merge-groups`](merge-groups/README.md) | Group-based atomic resolution |

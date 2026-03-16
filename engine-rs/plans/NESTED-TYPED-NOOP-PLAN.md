@@ -1,4 +1,6 @@
-# Typed Fields in Nested Array Noop Detection
+# Nested typed noop detection
+
+**Status:** Done
 
 ## Problem
 

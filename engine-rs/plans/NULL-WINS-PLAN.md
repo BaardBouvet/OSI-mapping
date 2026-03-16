@@ -1,4 +1,6 @@
-# NULL-WINS-PLAN
+# Null wins
+
+**Status:** Maybe
 
 Allow NULL values from authoritative sources to win resolution and propagate
 as the golden record value — overriding non-NULL contributions from other

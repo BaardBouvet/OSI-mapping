@@ -1,4 +1,6 @@
-# Naming Plan
+# Naming
+
+**Status:** Design
 
 ## Problem
 

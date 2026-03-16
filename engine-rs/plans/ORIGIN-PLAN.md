@@ -1,4 +1,6 @@
-# Origin & Insert Feedback — Design Plan
+# Origin and insert feedback
+
+**Status:** Done
 
 > **Abstract**: Defines how the engine tracks entity identity across sources and
 > how ETL pipelines feed back generated IDs to prevent duplicate inserts.

@@ -1,10 +1,6 @@
-# Atomic Resolution Groups Plan
+# Atomic resolution groups
 
-**Status:** Planned  
-**Priority:** High  
-**Effort:** ~2-3 hours
-
----
+**Status:** Done
 
 ## Problem
 

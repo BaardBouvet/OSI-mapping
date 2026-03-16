@@ -1,6 +1,7 @@
-# Mapping Correctness Fixes Plan
+# Mapping correctness
 
-**Status:** Done  
+**Status:** Done
+
 **Scope:** Audit and fix questionable expected data and missing type declarations across examples, plus engine fixes for typed identity fields.
 
 ---

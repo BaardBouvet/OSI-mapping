@@ -1,4 +1,6 @@
-# Source Grouping Plan
+# Source grouping
+
+**Status:** Design
 
 ## Problem
 

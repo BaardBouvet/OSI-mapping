@@ -1,4 +1,6 @@
-# MISSING-BOTTOM-PLAN
+# Missing bottom level example
+
+**Status:** Planned
 
 Demonstrate merging when one system has a deeper leaf level that the other lacks:
 Warehouse A tracks Order → Item → Shipment (3 levels), Warehouse B tracks

@@ -1,6 +1,6 @@
-# Forward Views — Separate vs Inlined CTEs
+# Forward views
 
-## Status: Done (Option A implemented)
+**Status:** Done
 
 ## Problem
 
