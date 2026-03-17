@@ -239,9 +239,15 @@ fn mixed_order_targets(doc: &MappingDocument) -> HashSet<String> {
         for fm in &m.fields {
             if let Some(ref tgt) = fm.target {
                 if fm.order {
-                    generated.entry(tname.clone()).or_default().insert(tgt.clone());
+                    generated
+                        .entry(tname.clone())
+                        .or_default()
+                        .insert(tgt.clone());
                 } else if fm.source.is_some() || fm.source_path.is_some() {
-                    external.entry(tname.clone()).or_default().insert(tgt.clone());
+                    external
+                        .entry(tname.clone())
+                        .or_default()
+                        .insert(tgt.clone());
                 }
             }
         }
@@ -409,10 +415,10 @@ mod tests {
         assert!(dag.edges.contains_key(&ViewNode::Delta("erp".into())));
     }
 
-        #[test]
-        fn mixed_order_target_adds_ordered_node() {
-            let doc = parser::parse_str(
-                r#"
+    #[test]
+    fn mixed_order_target_adds_ordered_node() {
+        let doc = parser::parse_str(
+            r#"
     version: "1.0"
     sources:
       a: { primary_key: id }
@@ -441,17 +447,17 @@ mod tests {
           - { source: instruction, target: instruction }
           - { source: sort_key, target: step_order }
     "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-            let dag = build_dag(&doc);
-            let ordered = ViewNode::Ordered("step".into());
-            assert!(dag.edges.contains_key(&ordered));
+        let dag = build_dag(&doc);
+        let ordered = ViewNode::Ordered("step".into());
+        assert!(dag.edges.contains_key(&ordered));
 
-            let rev = ViewNode::Reverse("a_steps".into());
-            assert!(
-                dag.edges[&rev].contains(&ordered),
-                "reverse view should depend on ordered layer for mixed targets"
-            );
-        }
+        let rev = ViewNode::Reverse("a_steps".into());
+        assert!(
+            dag.edges[&rev].contains(&ordered),
+            "reverse view should depend on ordered layer for mixed targets"
+        );
+    }
 }

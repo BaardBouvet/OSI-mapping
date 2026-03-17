@@ -39,6 +39,19 @@ jobs:
           workspaces: engine-rs
       - run: cargo test --test integration
 
+  proptests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine-rs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine-rs
+      - run: cargo test --features proptests --test proptest_structural
+
   coverage:
     runs-on: ubuntu-latest
     defaults:

@@ -86,9 +86,9 @@ pub fn render_ordered_view(
             continue;
         }
         let used_as_parent_ref = mappings.iter().any(|m| {
-            m.fields.iter().any(|fm| {
-                fm.target.as_deref() == Some(fname.as_str()) && fm.references.is_some()
-            })
+            m.fields
+                .iter()
+                .any(|fm| fm.target.as_deref() == Some(fname.as_str()) && fm.references.is_some())
         });
         if used_as_parent_ref {
             partition_fields.push(fname.clone());

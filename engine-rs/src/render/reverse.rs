@@ -96,8 +96,8 @@ pub fn render_reverse_view(
 ) -> Result<String> {
     let view_name = qi(&format!("_rev_{}", mapping.name));
     let id_view = format!("_id_{target_name}");
-    let has_mixed_order = !ordered::mixed_order_fields_for_target(all_mappings, target_name)
-        .is_empty();
+    let has_mixed_order =
+        !ordered::mixed_order_fields_for_target(all_mappings, target_name).is_empty();
     let resolved_view = if has_mixed_order {
         qi(&format!("_ordered_{target_name}"))
     } else {
