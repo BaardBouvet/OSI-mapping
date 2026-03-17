@@ -1,7 +1,8 @@
 # OSI Mapping Reference Engine
 
-[![CI](https://github.com/osi-project/osi-mapping/actions/workflows/ci.yml/badge.svg)](https://github.com/osi-project/osi-mapping/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/osi-project/osi-mapping/graph/badge.svg)](https://codecov.io/gh/osi-project/osi-mapping)
+[![CI](https://github.com/BaardBouvet/OSI-mapping/actions/workflows/ci.yml/badge.svg)](https://github.com/BaardBouvet/OSI-mapping/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/BaardBouvet/OSI-mapping/graph/badge.svg)](https://codecov.io/gh/BaardBouvet/OSI-mapping)
+[![Roadmap](https://img.shields.io/badge/roadmap-engine--rs-blue)](ROADMAP.md)
 
 A reference implementation that compiles OSI mapping YAML files into a **DAG of PostgreSQL views**, implementing the full forward → resolution → reverse pipeline.
 
