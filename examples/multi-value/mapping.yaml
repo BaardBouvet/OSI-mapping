@@ -9,7 +9,7 @@ sources:
   crm:
     primary_key: id
   contact_center:
-    primary_key: email
+    primary_key: cid
 
 targets:
   contact:
@@ -88,7 +88,8 @@ tests:
       crm:
         - { id: "C1", email: "alice@example.com", name: "Alice", phone: "555-1000" }
       contact_center:
-        - email: "alice@example.com"
+        - cid: "CC1"
+          email: "alice@example.com"
           phones:
             - { number: "555-2000" }
             - { number: "555-2001" }
@@ -96,7 +97,8 @@ tests:
       crm: {}
       contact_center:
         updates:
-          - email: "alice@example.com"
+          - cid: "CC1"
+            email: "alice@example.com"
             phones:
               - { number: "555-1000" }
               - { number: "555-2000" }
@@ -107,7 +109,8 @@ tests:
       crm:
         - { id: "C1", email: "bob@example.com", name: "Bob", phone: null }
       contact_center:
-        - email: "bob@example.com"
+        - cid: "CC2"
+          email: "bob@example.com"
           phones:
             - { number: "555-3000" }
     expected:
@@ -120,7 +123,8 @@ tests:
       crm:
         - { id: "C1", email: "carol@example.com", name: "Carol", phone: "555-4000" }
       contact_center:
-        - email: "dave@other.com"
+        - cid: "CC3"
+          email: "dave@other.com"
           phones:
             - { number: "555-9000" }
     expected:

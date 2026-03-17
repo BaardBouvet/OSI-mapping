@@ -165,20 +165,29 @@ pub fn render_reverse_view(
                     }
                     let match_clause = match_parts.join(" OR ");
 
-                    // For parent_fields references in nested sources, the _src_id
-                    // is the root document's PK — not the array item's identity.
-                    // Return the identity field value instead.
+                    // For parent_fields references in nested sources the
+                    // return value must match what the delta CTE joins on:
+                    //  • Root referenced mapping  → _src_id (= PK as text);
+                    //    the delta root join uses p.{pk}::text.
+                    //  • Nested referenced mapping → identity field;
+                    //    the delta intermediate join uses the first item_field
+                    //    (= identity column) at that nesting level.
                     let is_parent_field = mapping.source.parent_fields.contains_key(&source_name);
+                    let ref_mapping = all_mappings.iter().find(|m| m.name == *ref_mapping_name);
                     let return_expr = match &fm.references_field {
                         Some(rf) => format!("ref_local.{}", qi(rf)),
-                        None if is_parent_field && identity_fields.len() == 1 => {
-                            format!("ref_local.{}", qi(identity_fields[0]))
+                        None if is_parent_field => {
+                            let ref_is_nested = ref_mapping.map_or(false, |m| m.is_child());
+                            if ref_is_nested && identity_fields.len() == 1 {
+                                format!("ref_local.{}", qi(identity_fields[0]))
+                            } else {
+                                "ref_local._src_id".to_string()
+                            }
                         }
                         None => {
                             // Auto-detect: if the referenced mapping has a single PK
                             // that maps to a typed identity field, return that field
                             // (preserves the declared type) instead of _src_id (always text).
-                            let ref_mapping = all_mappings.iter().find(|m| m.name == *ref_mapping_name);
                             let typed_identity = ref_mapping.and_then(|rm| {
                                 let ref_source = all_sources.get(&rm.source.dataset)?;
                                 match &ref_source.primary_key {
