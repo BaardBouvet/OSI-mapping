@@ -124,7 +124,7 @@ fn render_all_examples() {
         match osi_engine::parser::parse_file(&mapping_path) {
             Ok(doc) => {
                 let dag = osi_engine::dag::build_dag(&doc);
-                match osi_engine::render::render_sql(&doc, &dag, false, false) {
+                match osi_engine::render::render_sql(&doc, &dag, false, false, false) {
                     Ok(sql) => {
                         assert!(!sql.is_empty(), "{name}: empty SQL output");
                         assert!(
@@ -231,7 +231,7 @@ async fn execute_all_examples() {
             }
         };
         let dag = osi_engine::dag::build_dag(&doc);
-        let sql = match osi_engine::render::render_sql(&doc, &dag, false, false) {
+        let sql = match osi_engine::render::render_sql(&doc, &dag, false, false, false) {
             Ok(s) => s,
             Err(e) => {
                 let msg = format!("render: {e}");
@@ -354,7 +354,7 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
     validate_expected_types(&doc, example_name);
 
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false, false)
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false, false)
         .unwrap_or_else(|e| panic!("render {example_name}: {e}"));
 
     for (test_idx, test) in doc.tests.iter().enumerate() {
@@ -1690,7 +1690,7 @@ async fn dump_hello_world_intermediates() {
     let mapping_path = examples_dir().join("hello-world/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false, false).expect("render");
 
     load_test_data(&client, &doc.tests[0].input).await;
     ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
@@ -1722,7 +1722,7 @@ async fn dump_inserts_and_deletes_intermediates() {
     let mapping_path = examples_dir().join("inserts-and-deletes/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false, false).expect("render");
 
     eprintln!("\n=== Generated SQL ===\n{sql}");
 
@@ -1755,7 +1755,7 @@ async fn dump_composite_keys_intermediates() {
     let mapping_path = examples_dir().join("composite-keys/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false, false).expect("render");
 
     eprintln!("\n=== Generated SQL ===\n{sql}");
 
@@ -1798,7 +1798,7 @@ async fn dump_relationship_embedded_intermediates() {
     let mapping_path = examples_dir().join("relationship-embedded/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false, false).expect("render");
 
     load_test_data(&client, &doc.tests[0].input).await;
     ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
@@ -1819,7 +1819,7 @@ async fn dump_references_intermediates() {
     let mapping_path = examples_dir().join("references/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
-    let sql = osi_engine::render::render_sql(&doc, &dag, false, false).expect("render");
+    let sql = osi_engine::render::render_sql(&doc, &dag, false, false, false).expect("render");
 
     eprintln!("\n=== Generated SQL ===\n{sql}");
 

@@ -10,6 +10,37 @@ use anyhow::Result;
 use crate::dag::{ViewDag, ViewNode};
 use crate::model::MappingDocument;
 
+/// Replace `CREATE OR REPLACE VIEW` with `CREATE MATERIALIZED VIEW IF NOT EXISTS`
+/// in the generated SQL for a single view.
+fn materialize_view_sql(view_sql: &str) -> String {
+    view_sql.replace(
+        "CREATE OR REPLACE VIEW",
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS",
+    )
+}
+
+/// Emit a `CREATE UNIQUE INDEX IF NOT EXISTS` statement for a view.
+///
+/// `nulls_not_distinct` should be true when the key may contain NULL columns
+/// (reverse and delta views where insert rows have NULL PKs).
+fn emit_unique_index(view_name: &str, columns: &[&str], nulls_not_distinct: bool) -> String {
+    let qi_view = crate::qi(view_name);
+    let idx_name = crate::qi(&format!("idx_{view_name}"));
+    let cols = columns
+        .iter()
+        .map(|c| crate::qi(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let nulls_clause = if nulls_not_distinct {
+        "\n  NULLS NOT DISTINCT"
+    } else {
+        ""
+    };
+    format!(
+        "CREATE UNIQUE INDEX IF NOT EXISTS {idx_name}\n  ON {qi_view} ({cols}){nulls_clause};\n"
+    )
+}
+
 /// Render the complete SQL script for a mapping document.
 ///
 /// When `create_tables` is true, emits `CREATE TABLE` statements for all
@@ -18,11 +49,16 @@ use crate::model::MappingDocument;
 ///
 /// When `annotate` is true, emits inline comments before each view showing
 /// which user-defined expressions, filters, and strategies drove the SQL.
+///
+/// When `materialize` is true, emits `CREATE MATERIALIZED VIEW IF NOT EXISTS`
+/// instead of `CREATE OR REPLACE VIEW`, adds unique indexes per view, and
+/// appends a `REFRESH MATERIALIZED VIEW CONCURRENTLY` script.
 pub fn render_sql(
     doc: &MappingDocument,
     dag: &ViewDag,
     create_tables: bool,
     annotate: bool,
+    materialize: bool,
 ) -> Result<String> {
     let mut sql = String::new();
 
@@ -60,6 +96,9 @@ pub fn render_sql(
         );
     }
 
+    // Track materialized view names for the refresh script.
+    let mut mat_view_names: Vec<String> = Vec::new();
+
     for node in &dag.order {
         match node {
             ViewNode::Source(table_name) => {
@@ -80,8 +119,6 @@ pub fn render_sql(
                 if annotate {
                     sql.push_str(&annotate_forward(mapping, target));
                 }
-                // Collect nested-path source columns from sibling mappings
-                // so the parent's _base includes them for noop detection.
                 let nested_base_cols: Vec<String> = if mapping.source.path.is_none() {
                     let mut cols: Vec<String> = Vec::new();
                     for m in &doc.mappings {
@@ -98,12 +135,15 @@ pub fn render_sql(
                 } else {
                     vec![]
                 };
-                sql.push_str(&forward::render_forward_view(
-                    mapping,
-                    source_meta,
-                    target,
-                    &nested_base_cols,
-                )?);
+                let mut view_sql =
+                    forward::render_forward_view(mapping, source_meta, target, &nested_base_cols)?;
+                if materialize {
+                    view_sql = materialize_view_sql(&view_sql);
+                    let vn = node.view_name();
+                    view_sql.push_str(&emit_unique_index(&vn, &["_src_id"], false));
+                    mat_view_names.push(vn);
+                }
+                sql.push_str(&view_sql);
                 sql.push('\n');
             }
             ViewNode::Identity(target_name) => {
@@ -116,20 +156,26 @@ pub fn render_sql(
                 if annotate {
                     sql.push_str(&annotate_identity(&mappings, target));
                 }
-                // Collect forward view names (mapping names that have fields).
                 let fwd_names: Vec<String> = mappings
                     .iter()
                     .filter(|m| m.has_fields())
                     .map(|m| m.name.clone())
                     .collect();
-                sql.push_str(&identity::render_identity_view(
+                let mut view_sql = identity::render_identity_view(
                     target_name,
                     target,
                     &mappings,
                     &doc.mappings,
                     &doc.sources,
                     &fwd_names,
-                )?);
+                )?;
+                if materialize {
+                    view_sql = materialize_view_sql(&view_sql);
+                    let vn = node.view_name();
+                    view_sql.push_str(&emit_unique_index(&vn, &["_entity_id"], false));
+                    mat_view_names.push(vn);
+                }
+                sql.push_str(&view_sql);
                 sql.push('\n');
             }
             ViewNode::Resolved(target_name) => {
@@ -142,17 +188,31 @@ pub fn render_sql(
                     .iter()
                     .filter(|m| m.target.name() == target_name)
                     .collect();
-                sql.push_str(&resolution::render_resolution_view(
+                let mut view_sql = resolution::render_resolution_view(
                     target_name,
                     target,
                     &mappings,
                     &doc.targets,
-                )?);
+                )?;
+                if materialize {
+                    view_sql = materialize_view_sql(&view_sql);
+                    let vn = node.view_name();
+                    view_sql.push_str(&emit_unique_index(&vn, &["_entity_id"], false));
+                    mat_view_names.push(vn);
+                }
+                sql.push_str(&view_sql);
                 sql.push('\n');
             }
             ViewNode::Analytics(target_name) => {
                 let target = doc.targets.get(target_name).expect("target exists in dag");
-                sql.push_str(&analytics::render_analytics_view(target_name, target)?);
+                let mut view_sql = analytics::render_analytics_view(target_name, target)?;
+                if materialize {
+                    view_sql = materialize_view_sql(&view_sql);
+                    let vn = node.view_name();
+                    view_sql.push_str(&emit_unique_index(&vn, &["_cluster_id"], false));
+                    mat_view_names.push(vn);
+                }
+                sql.push_str(&view_sql);
                 sql.push('\n');
             }
             ViewNode::Reverse(mapping_name) => {
@@ -167,7 +227,7 @@ pub fn render_sql(
                 let target_name = mapping.target.name();
                 let target = doc.targets.get(target_name);
                 let source_meta = doc.sources.get(&mapping.source.dataset);
-                sql.push_str(&reverse::render_reverse_view(
+                let mut view_sql = reverse::render_reverse_view(
                     mapping,
                     target_name,
                     target,
@@ -175,7 +235,14 @@ pub fn render_sql(
                     source_meta,
                     &doc.mappings,
                     &doc.sources,
-                )?);
+                )?;
+                if materialize {
+                    view_sql = materialize_view_sql(&view_sql);
+                    let vn = node.view_name();
+                    view_sql.push_str(&emit_unique_index(&vn, &["_cluster_id", "_src_id"], true));
+                    mat_view_names.push(vn);
+                }
+                sql.push_str(&view_sql);
                 sql.push('\n');
             }
             ViewNode::Delta(source_name) => {
@@ -188,14 +255,36 @@ pub fn render_sql(
                     sql.push_str(&format!("-- Delta for source: {source_name}\n"));
                 }
                 let source_meta = doc.sources.get(source_name.as_str());
-                sql.push_str(&delta::render_delta_view(
-                    source_name,
-                    &source_mappings,
-                    source_meta,
-                )?);
+                let mut view_sql =
+                    delta::render_delta_view(source_name, &source_mappings, source_meta)?;
+                if materialize {
+                    view_sql = materialize_view_sql(&view_sql);
+                    let vn = node.view_name();
+                    let mut key_cols: Vec<&str> = vec!["_cluster_id"];
+                    if let Some(src) = source_meta {
+                        for col in src.primary_key.columns() {
+                            key_cols.push(col);
+                        }
+                    }
+                    view_sql.push_str(&emit_unique_index(&vn, &key_cols, true));
+                    mat_view_names.push(vn);
+                }
+                sql.push_str(&view_sql);
                 sql.push('\n');
             }
         }
+    }
+
+    // Emit refresh script when materializing.
+    if materialize && !mat_view_names.is_empty() {
+        sql.push_str("-- Refresh materialized views in dependency order\n");
+        for vn in &mat_view_names {
+            sql.push_str(&format!(
+                "REFRESH MATERIALIZED VIEW CONCURRENTLY {};\n",
+                crate::qi(vn)
+            ));
+        }
+        sql.push('\n');
     }
 
     sql.push_str("COMMIT;\n");
@@ -508,7 +597,7 @@ mappings:
 "#,
         );
         let dag = build_dag(&doc);
-        let sql = render_sql(&doc, &dag, false, false).unwrap();
+        let sql = render_sql(&doc, &dag, false, false, false).unwrap();
         assert!(
             sql.contains("CREATE OR REPLACE FUNCTION _osi_text_norm"),
             "nested arrays should emit _osi_text_norm helper function"
@@ -532,7 +621,7 @@ mappings:
 "#,
         );
         let dag = build_dag(&doc);
-        let sql = render_sql(&doc, &dag, false, false).unwrap();
+        let sql = render_sql(&doc, &dag, false, false, false).unwrap();
         let fwd_pos = sql.find("_fwd_s").expect("should contain forward view");
         let id_pos = sql.find("_id_t").expect("should contain identity view");
         let res_pos = sql
@@ -561,7 +650,7 @@ mappings:
 "#,
         );
         let dag = build_dag(&doc);
-        let sql = render_sql(&doc, &dag, true, false).unwrap();
+        let sql = render_sql(&doc, &dag, true, false, false).unwrap();
         assert!(
             sql.contains("CREATE TABLE") && sql.contains("my_source"),
             "--create-tables should emit CREATE TABLE for source"
@@ -585,12 +674,171 @@ mappings:
 "#,
         );
         let dag = build_dag(&doc);
-        let sql = render_sql(&doc, &dag, false, true).unwrap();
+        let sql = render_sql(&doc, &dag, false, true, false).unwrap();
         assert!(
             sql.contains("-- [fwd]")
                 || sql.contains("-- Forward:")
                 || sql.contains("-- Annotation"),
             "--annotate should emit comment blocks before views"
+        );
+    }
+
+    #[test]
+    fn materialize_emits_materialized_views() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false, true).unwrap();
+        assert!(
+            sql.contains("CREATE MATERIALIZED VIEW IF NOT EXISTS"),
+            "materialize should emit MATERIALIZED VIEW"
+        );
+        assert!(
+            !sql.contains("CREATE OR REPLACE VIEW"),
+            "materialize should not emit plain VIEW"
+        );
+    }
+
+    #[test]
+    fn materialize_emits_unique_indexes() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false, true).unwrap();
+        // Forward view: unique on _src_id
+        assert!(
+            sql.contains("idx__fwd_s") && sql.contains("\"_src_id\""),
+            "forward view should have unique index on _src_id"
+        );
+        // Identity view: unique on _entity_id
+        assert!(
+            sql.contains("idx__id_t") && sql.contains("\"_entity_id\""),
+            "identity view should have unique index on _entity_id"
+        );
+        // Analytics view: unique on _cluster_id
+        assert!(
+            sql.contains("idx_t") && sql.contains("\"_cluster_id\""),
+            "analytics view should have unique index on _cluster_id"
+        );
+        // Delta view: unique on (_cluster_id, pk) with NULLS NOT DISTINCT
+        assert!(
+            sql.contains("idx__delta_s") && sql.contains("NULLS NOT DISTINCT"),
+            "delta view should have unique index with NULLS NOT DISTINCT"
+        );
+    }
+
+    #[test]
+    fn materialize_emits_refresh_script() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false, true).unwrap();
+        assert!(
+            sql.contains("REFRESH MATERIALIZED VIEW CONCURRENTLY"),
+            "materialize should emit refresh script"
+        );
+        // Refresh order should follow DAG
+        let fwd_refresh = sql
+            .find("REFRESH MATERIALIZED VIEW CONCURRENTLY \"_fwd_s\"")
+            .expect("missing fwd refresh");
+        let id_refresh = sql
+            .find("REFRESH MATERIALIZED VIEW CONCURRENTLY \"_id_t\"")
+            .expect("missing id refresh");
+        let res_refresh = sql
+            .find("REFRESH MATERIALIZED VIEW CONCURRENTLY \"_resolved_t\"")
+            .expect("missing resolved refresh");
+        assert!(
+            fwd_refresh < id_refresh && id_refresh < res_refresh,
+            "refresh order should follow DAG"
+        );
+    }
+
+    #[test]
+    fn materialize_delta_composite_pk() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: [order_id, line_no] }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false, true).unwrap();
+        // Delta index should include all PK columns
+        assert!(
+            sql.contains("\"order_id\"") && sql.contains("\"line_no\""),
+            "delta index should include composite PK columns"
+        );
+    }
+
+    #[test]
+    fn non_materialize_has_no_indexes() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false, false).unwrap();
+        assert!(
+            !sql.contains("CREATE UNIQUE INDEX"),
+            "non-materialize should not emit indexes"
+        );
+        assert!(
+            !sql.contains("REFRESH MATERIALIZED"),
+            "non-materialize should not emit refresh"
         );
     }
 }

@@ -43,7 +43,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [TYPE-HIERARCHY-PLAN.md](TYPE-HIERARCHY-PLAN.md) | Design | `hierarchy:` on target fields for IS-A type relationships; `type_matches` helper in reverse_filter. |
 | [TARGET-PATH-PLAN.md](TARGET-PATH-PLAN.md) | Design | Analysis of `target_path` (dotted notation on targets) — recommends output formatting over pipeline changes. |
 | [DBT-OUTPUT-PLAN.md](DBT-OUTPUT-PLAN.md) | Design | Generate a dbt project from mapping YAML; `ViewOutput` refactor; compatible with custom materialisations. |
-| [MATERIALIZED-VIEW-INDEX-PLAN.md](MATERIALIZED-VIEW-INDEX-PLAN.md) | Design | Opt-in materialized views with unique indexes; `NULLS NOT DISTINCT` for delta/reverse layers. |
+| [MATERIALIZED-VIEW-INDEX-PLAN.md](MATERIALIZED-VIEW-INDEX-PLAN.md) | Done | Opt-in materialized views with unique indexes; `NULLS NOT DISTINCT` for delta/reverse layers. |
 | [POLYGLOT-SQL-PLAN.md](POLYGLOT-SQL-PLAN.md) | Design | Multi-dialect SQL rendering via polyglot-sql; expression dialect choice; phased adoption plan. |
 | [UNIT-TEST-PLAN.md](UNIT-TEST-PLAN.md) | Done | Unit tests for render pipeline; reduce reliance on slow integration suite. |
 | [LEARNING-GUIDE-PLAN.md](LEARNING-GUIDE-PLAN.md) | Planned | Progressive learning guide teaching mapping concepts from first principles. |

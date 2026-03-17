@@ -84,7 +84,7 @@ Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 | UNIT-TEST-PLAN | ~~Planned~~ **Done** | Unit tests for render pipeline; reduce integration test reliance. |
 | PROPTEST-PLAN | ~~Planned~~ **Done** | Property-based fuzzing: random mapping generation, structural + execution phases. |
 | CI-RELEASE-PLAN | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
-| MATERIALIZED-VIEW-INDEX-PLAN | Design | Opt-in `--materialize` flag with unique indexes for production deployments. |
+| MATERIALIZED-VIEW-INDEX-PLAN | ~~Design~~ **Done** | Opt-in `--materialize` flag with unique indexes for production deployments. |
 | PGTRICKLE-OUTPUT-PLAN | Design | External post-processor rewriting views as pg_trickle stream tables. |
 | LEARNING-GUIDE-PLAN | Planned | Progressive 7-chapter learning guide teaching mapping concepts. |
 | DOCS-SITE-PLAN | Planned | mdBook documentation site with search, deployed to GitHub Pages. |

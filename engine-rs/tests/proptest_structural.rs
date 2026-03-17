@@ -288,7 +288,7 @@ proptest! {
 
         // Build DAG + render — must not panic
         let dag = osi_engine::dag::build_dag(&parsed);
-        let result = osi_engine::render::render_sql(&parsed, &dag, false, false);
+        let result = osi_engine::render::render_sql(&parsed, &dag, false, false, false);
 
         if let Ok(sql) = &result {
             prop_assert!(
@@ -319,7 +319,7 @@ proptest! {
 
         let dag = osi_engine::dag::build_dag(&parsed);
         // Exercise the create_tables + annotate paths
-        let result = osi_engine::render::render_sql(&parsed, &dag, true, true);
+        let result = osi_engine::render::render_sql(&parsed, &dag, true, true, false);
 
         if let Ok(sql) = &result {
             prop_assert!(check_balanced_parens(sql));
@@ -342,7 +342,7 @@ proptest! {
         };
 
         let dag = osi_engine::dag::build_dag(&parsed);
-        let result = osi_engine::render::render_sql(&parsed, &dag, false, false);
+        let result = osi_engine::render::render_sql(&parsed, &dag, false, false, false);
 
         if let Ok(sql) = &result {
             // Collect which targets have at least one mapping

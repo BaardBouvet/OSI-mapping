@@ -27,6 +27,9 @@ enum Command {
         /// Add comments showing where user-defined expressions, filters, and strategies appear
         #[arg(long)]
         annotate: bool,
+        /// Emit materialized views with unique indexes instead of plain views
+        #[arg(long)]
+        materialize: bool,
     },
     /// Validate mapping file(s)
     Validate {
@@ -58,10 +61,12 @@ fn main() -> Result<()> {
             output,
             create_tables,
             annotate,
+            materialize,
         } => {
             let doc = osi_engine::parser::parse_file(&mapping)?;
             let dag = osi_engine::dag::build_dag(&doc);
-            let sql = osi_engine::render::render_sql(&doc, &dag, create_tables, annotate)?;
+            let sql =
+                osi_engine::render::render_sql(&doc, &dag, create_tables, annotate, materialize)?;
 
             match output {
                 Some(path) => std::fs::write(&path, &sql)?,

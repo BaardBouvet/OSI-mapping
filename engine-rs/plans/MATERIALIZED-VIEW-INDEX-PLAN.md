@@ -1,6 +1,6 @@
 # Materialized views with unique indexes
 
-**Status:** Design
+**Status:** Done
 
 > **Abstract**: Adds opt-in materialized view generation to the engine and
 > emits `CREATE UNIQUE INDEX ... NULLS NOT DISTINCT` on each materialized
