@@ -1,0 +1,98 @@
+version: "1.0"
+description: >
+  Required-field constraints via reverse_filter. An organisation must have
+  either a name or an organisation number (or both) before it can be synced
+  back to a source system. Records where both are NULL are suppressed.
+
+sources:
+  crm:
+    primary_key: id
+  registry:
+    primary_key: org_id
+
+targets:
+  organisation:
+    fields:
+      org_number:
+        strategy: identity
+      name:
+        strategy: coalesce
+      country:
+        strategy: coalesce
+
+mappings:
+  - name: crm_orgs
+    source: { dataset: crm }
+    target: organisation
+    reverse_filter: "name IS NOT NULL OR org_number IS NOT NULL"
+    fields:
+      - source: org_nr
+        target: org_number
+      - source: company_name
+        target: name
+        priority: 1
+      - source: country
+        target: country
+        priority: 2
+
+  - name: registry_orgs
+    source: { dataset: registry }
+    target: organisation
+    reverse_filter: "name IS NOT NULL OR org_number IS NOT NULL"
+    fields:
+      - source: org_number
+        target: org_number
+      - source: name
+        target: name
+        priority: 2
+      - source: country_code
+        target: country
+        priority: 1
+
+tests:
+  - description: "Record with both name and org_number syncs normally"
+    input:
+      crm:
+        - { id: "C1", org_nr: "NO-123", company_name: "Acme AS", country: "NO" }
+      registry:
+        - { org_id: "R1", org_number: "NO-123", name: "Acme AS", country_code: "NO" }
+    expected: {}
+
+  - description: "Record with only name (no org_number) still syncs"
+    input:
+      crm:
+        - { id: "C1", org_nr: null, company_name: "Startup Inc", country: "NO" }
+      registry: []
+    expected: {}
+
+  - description: "Record with only org_number (no name) still syncs"
+    input:
+      crm:
+        - { id: "C1", org_nr: "NO-456", company_name: null, country: "SE" }
+      registry: []
+    expected: {}
+
+  - description: "Record with neither name nor org_number is suppressed"
+    input:
+      crm:
+        - { id: "C1", org_nr: null, company_name: null, country: "NO" }
+      registry:
+        - { org_id: "R1", org_number: null, name: null, country_code: "NO" }
+    expected:
+      crm:
+        deletes:
+          - { id: "C1" }
+      registry:
+        deletes:
+          - { org_id: "R1" }
+
+  - description: "Mixed — valid record syncs, empty record is suppressed"
+    input:
+      crm:
+        - { id: "C1", org_nr: "NO-789", company_name: "Valid AS", country: "NO" }
+        - { id: "C2", org_nr: null, company_name: null, country: "DK" }
+      registry: []
+    expected:
+      crm:
+        deletes:
+          - { id: "C2" }

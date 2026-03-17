@@ -29,8 +29,6 @@ docs/
   ai-guidelines.md       # Guidelines for AI agents working with mapping files
   design-rationale.md    # Design decisions and rationale
 engine-rs/               # Rust reference engine (YAML → PostgreSQL views)
-validation/
-  validate.py            # Multi-pass validator
 ```
 
 ## Resolution Strategies
@@ -61,38 +59,15 @@ Each target field declares a resolution strategy that determines how conflicts b
 
 ## Validation
 
-The validator performs 7 passes:
-
-1. **JSON Schema** — Structural validity against `mapping-schema.json`
-2. **Unique names** — No duplicate mapping names or duplicate field targets
-3. **Target references** — Mapping `target` and field `target` refer to declared entities/fields
-4. **Strategy consistency** — Required properties present for each strategy
-5. **Field coverage** — All target fields have at least one mapping
-6. **Test datasets** — Test `input`/`expected` dataset names match mapping sources
-7. **SQL syntax** — Expression fields parse as valid SQL (requires `sqlglot`)
-
-### Run
+The engine validates mapping files with 11 semantic passes:
 
 ```bash
-# Validate all examples
-python3 validation/validate.py
-
-# Validate a specific file
-python3 validation/validate.py examples/hello-world/mapping.yaml
-
-# Verbose output
-python3 validation/validate.py -v
-
-# Quiet mode (summary only)
-python3 validation/validate.py -q
+cd engine-rs
+cargo run -- validate ../examples/
+cargo run -- validate ../examples/hello-world/mapping.yaml -v
 ```
 
-### Install dependencies
-
-```bash
-pip install jsonschema pyyaml
-pip install sqlglot  # optional, for SQL expression validation
-```
+See [engine-rs/README.md](engine-rs/README.md) for details.
 
 ## Examples
 

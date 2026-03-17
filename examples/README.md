@@ -47,6 +47,7 @@ Use these examples together with `../docs/annotated-example.md` and `../docs/sch
 | [`propagated-delete`](propagated-delete/README.md) | GDPR-style deletion propagation via bool_or + reverse_filter |
 | [`reference-preservation`](reference-preservation/README.md) | Preserving foreign-key references |
 | [`references`](references/README.md) | Foreign-key references between targets |
+| [`required-fields`](required-fields/README.md) | Required-field constraints via reverse_filter OR pattern |
 | [`relationship-embedded`](relationship-embedded/README.md) | Embedded relationship mapping |
 | [`relationship-mapping`](relationship-mapping/README.md) | Standalone relationship mapping |
 | [`route`](route/README.md) | Routing records by field values |

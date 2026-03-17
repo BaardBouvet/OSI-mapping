@@ -5,7 +5,7 @@ A reference implementation that compiles OSI mapping YAML files into a **DAG of 
 ## Quick Start
 
 ```bash
-# Validate mapping files (replaces Python validate.py)
+# Validate mapping files
 cargo run -- validate ../examples/
 cargo run -- validate ../examples/hello-world/mapping.yaml -v
 
@@ -70,7 +70,8 @@ src/
 ├── lib.rs           Public API
 ├── model.rs         Strongly-typed mapping model (serde)
 ├── parser.rs        YAML → model deserialization
-├── validate.rs      7-pass validator (replaces Python validate.py)
+├── validate.rs      11-pass semantic validator
+├── validate_expr.rs Expression safety & column reference validation
 ├── dag.rs           View dependency graph
 ├── error.rs         Error types
 └── render/
