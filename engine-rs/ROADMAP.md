@@ -27,11 +27,11 @@ documentation.
 |------|--------|------|
 | PROPAGATED-DELETE-PLAN | ~~Pattern~~ **Done** | Example: GDPR deletion cascading via `bool_or` + `reverse_filter`. Example exists and passes. |
 | MULTI-VALUE-PLAN | ~~Pattern~~ **Done** | Example: single-vs-multi-value cardinality mismatch. Example exists and passes. |
-| HIERARCHY-MERGE-PLAN | Planned | Example: merging 2-level and 3-level hierarchies. |
+| HIERARCHY-MERGE-PLAN | ~~Planned~~ **Done** | Example: merging 2-level and 3-level hierarchies. Example exists and passes. |
 | DEPTH-MISMATCH-PLAN | Planned | Example: asymmetric nesting depth across systems. |
 | MISSING-BOTTOM-PLAN | Planned | Example: aggregation when one system lacks the leaf level. |
 
-**Progress:** 2/5 examples done (propagated-delete, multi-value). 40 examples total now pass E2E.
+**Progress:** 3/5 examples done (propagated-delete, multi-value, hierarchy-merge). 41 examples total now pass E2E.
 
 **Exit criteria:** Five new examples passing E2E tests.
 

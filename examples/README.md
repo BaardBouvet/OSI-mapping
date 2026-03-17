@@ -31,6 +31,7 @@ Use these examples together with `../docs/annotated-example.md` and `../docs/sch
 | [`embedded-multiple`](embedded-multiple/README.md) | Multiple embedded entities |
 | [`embedded-vs-many-to-many`](embedded-vs-many-to-many/README.md) | Embedded vs. reference-based relationships |
 | [`flattened`](flattened/README.md) | Flattened source structure into normalized target |
+| [`hierarchy-merge`](hierarchy-merge/README.md) | Merging 2-level and 3-level hierarchies via cross-depth identity resolution |
 | [`inserts-and-deletes`](inserts-and-deletes/README.md) | Handling new and removed records |
 | [`json-fields`](json-fields/README.md) | Extracting sub-fields from JSONB source columns via `source_path` |
 | [`merge-curated`](merge-curated/README.md) | Curated merge with manual overrides |

@@ -332,6 +332,12 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
     let mapping_path = examples_dir().join(format!("{example_name}/mapping.yaml"));
     let doc = osi_engine::parser::parse_file(&mapping_path)
         .unwrap_or_else(|e| panic!("parse {example_name}: {e}"));
+
+    // Validate expected test values: non-string scalars in nested JSONB objects must
+    // have a matching `type:` on the target field, otherwise the engine returns text
+    // and the comparison silently requires stringified values.
+    validate_expected_types(&doc, example_name);
+
     let dag = osi_engine::dag::build_dag(&doc);
     let sql = osi_engine::render::render_sql(&doc, &dag, false, false)
         .unwrap_or_else(|e| panic!("render {example_name}: {e}"));
@@ -1038,6 +1044,158 @@ fn normalize_json_to_text(v: &serde_json::Value) -> serde_json::Value {
                     .map(|(k, v)| (k.clone(), normalize_json_to_text(v)))
                     .collect(),
             )
+        }
+    }
+}
+
+/// Validate that expected test values don't contain non-string scalars (Number, Bool)
+/// for fields that lack a `type:` declaration on the target. Without `type:`, the
+/// engine pipeline returns text, so writing `budget: 50000` in expected would silently
+/// fail (actual is `"50000"`). Either add `type: numeric` to the target field or use
+/// a string value in expected.
+fn validate_expected_types(doc: &osi_engine::model::MappingDocument, example_name: &str) {
+    // Build a set of target field names that have an explicit type declaration.
+    // Key: field name (used in reverse views / nested JSONB objects).
+    let mut typed_fields: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (_target_name, target) in &doc.targets {
+        for (field_name, field_def) in &target.fields {
+            if field_def.field_type().is_some() {
+                typed_fields.insert(field_name.clone());
+            }
+        }
+    }
+
+    // Build a map from reverse-view source column names to target field names.
+    // In nested JSONB, the key is the source column name, not the target field name.
+    let mut source_to_target: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for mapping in &doc.mappings {
+        for fm in &mapping.fields {
+            if let (Some(ref src), Some(ref tgt)) = (&fm.source, &fm.target) {
+                source_to_target.insert(src.clone(), tgt.clone());
+            }
+        }
+    }
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for (test_idx, test) in doc.tests.iter().enumerate() {
+        for (dataset, expected) in &test.expected {
+            let all_rows: Vec<&serde_json::Value> = expected
+                .updates
+                .iter()
+                .chain(expected.inserts.iter())
+                .collect();
+            for row in all_rows {
+                if let Some(obj) = row.as_object() {
+                    check_nested_types(
+                        obj,
+                        &typed_fields,
+                        &source_to_target,
+                        &mut errors,
+                        example_name,
+                        test_idx + 1,
+                        dataset,
+                    );
+                }
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        let msg = errors.join("\n  ");
+        panic!(
+            "{example_name}: expected test data contains non-string values for fields without \
+             `type:` on the target. The engine returns text for untyped fields, so these values \
+             would never match.\n  {msg}\n\
+             Fix: add `type: numeric` (or appropriate type) to the target field definition, \
+             or use string values in expected."
+        );
+    }
+}
+
+/// Recursively check nested objects/arrays in expected test data for non-string scalars
+/// that don't correspond to typed target fields.
+fn check_nested_types(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    typed_fields: &std::collections::HashSet<String>,
+    source_to_target: &std::collections::HashMap<String, String>,
+    errors: &mut Vec<String>,
+    _example: &str,
+    test_num: usize,
+    dataset: &str,
+) {
+    for (key, value) in obj {
+        match value {
+            serde_json::Value::Array(arr) => {
+                // Nested arrays contain objects that flow through JSONB — check their fields.
+                for item in arr {
+                    if let Some(inner_obj) = item.as_object() {
+                        check_nested_object_types(
+                            inner_obj,
+                            typed_fields,
+                            source_to_target,
+                            errors,
+                            test_num,
+                            dataset,
+                            key,
+                        );
+                    }
+                }
+            }
+            _ => {} // Top-level fields go through source table columns, types are inferred.
+        }
+    }
+}
+
+/// Check leaf values inside a nested JSONB object for non-string types without target `type:`.
+fn check_nested_object_types(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    typed_fields: &std::collections::HashSet<String>,
+    source_to_target: &std::collections::HashMap<String, String>,
+    errors: &mut Vec<String>,
+    test_num: usize,
+    dataset: &str,
+    array_name: &str,
+) {
+    for (key, value) in obj {
+        match value {
+            serde_json::Value::Number(_) | serde_json::Value::Bool(_) => {
+                // Resolve the target field name: the key might be a source column name.
+                let target_field = source_to_target
+                    .get(key)
+                    .map(|s| s.as_str())
+                    .unwrap_or(key.as_str());
+                if !typed_fields.contains(target_field) {
+                    let type_hint = match value {
+                        serde_json::Value::Number(_) => "numeric",
+                        serde_json::Value::Bool(_) => "boolean",
+                        _ => "unknown",
+                    };
+                    errors.push(format!(
+                        "test {test_num}, {dataset}.{array_name}[].{key}: \
+                         value {value} is {type_hint} but target field '{target_field}' \
+                         has no `type:` declaration"
+                    ));
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                // Recurse into deeper nested arrays.
+                for item in arr {
+                    if let Some(inner_obj) = item.as_object() {
+                        check_nested_object_types(
+                            inner_obj,
+                            typed_fields,
+                            source_to_target,
+                            errors,
+                            test_num,
+                            dataset,
+                            key,
+                        );
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

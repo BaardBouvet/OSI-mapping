@@ -1,6 +1,6 @@
 # Hierarchy merge example
 
-**Status:** Planned
+**Status:** Done
 
 Demonstrate merging project hierarchies of different depths: a simple PM system
 with 2 levels (project → task) and an enterprise PM system with 3 levels

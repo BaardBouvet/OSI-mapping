@@ -42,6 +42,10 @@ Guidance on applicability.
 - Sections: Scenario, Key features, How it works, When to use. Omit sections that don't apply.
 - Never reference engine internals or plan files.
 
+### Test requirements
+
+- Every example must include at least one test that shows changes propagating (i.e., `expected:` contains `updates:` or `deletes:`, not just `{}`). Noop-only tests don't prove the mapping works.
+
 ### Catalog (`examples/README.md`)
 
 The `Full Example Catalog` table must list every example directory, sorted alphabetically. When adding an example, add its row to the table.
