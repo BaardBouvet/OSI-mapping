@@ -45,4 +45,6 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [DBT-OUTPUT-PLAN.md](DBT-OUTPUT-PLAN.md) | Design | Generate a dbt project from mapping YAML; `ViewOutput` refactor; compatible with custom materialisations. |
 | [MATERIALIZED-VIEW-INDEX-PLAN.md](MATERIALIZED-VIEW-INDEX-PLAN.md) | Design | Opt-in materialized views with unique indexes; `NULLS NOT DISTINCT` for delta/reverse layers. |
 | [POLYGLOT-SQL-PLAN.md](POLYGLOT-SQL-PLAN.md) | Design | Multi-dialect SQL rendering via polyglot-sql; expression dialect choice; phased adoption plan. |
+| [UNIT-TEST-PLAN.md](UNIT-TEST-PLAN.md) | Planned | Unit tests for render pipeline; reduce reliance on slow integration suite. |
+| [PGTRICKLE-OUTPUT-PLAN.md](PGTRICKLE-OUTPUT-PLAN.md) | Design | External post-processor that rewrites engine views as pg_trickle stream tables; per-view config. |
 | [YAML-VS-DSL-PLAN.md](YAML-VS-DSL-PLAN.md) | Design | Analysis of YAML vs custom DSL for the mapping format; recommends staying with YAML. |

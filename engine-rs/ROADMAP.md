@@ -81,6 +81,7 @@ Hardening, testing, and project identity before the 1.0 tag.
 
 | Plan | Status | Work |
 |------|--------|------|
+| UNIT-TEST-PLAN | Planned | Unit tests for render pipeline; reduce integration test reliance. |
 | PROPTEST-PLAN | Planned | Property-based fuzzing: random mapping generation, structural + execution phases. |
 | NAMING-PLAN | Design | Rename project (recommended: "Crossfold"). Update crate, binary, repo, docs. |
 | SOURCE-GROUPING-PLAN | Design | `system:` property on sources for visual DOT grouping. |
@@ -96,6 +97,7 @@ design. They may ship as 1.x minor releases.
 | Plan | Status | Reason deferred |
 |------|--------|-----------------|
 | DBT-OUTPUT-PLAN | Design | Generate a dbt project from mapping YAML. Current `psql -f` workflow works; dbt is additive. |
+| PGTRICKLE-OUTPUT-PLAN | Design | External post-processor rewriting views as pg_trickle stream tables. No engine changes. |
 | MATERIALIZED-VIEW-INDEX-PLAN | Design | Opt-in `--materialize` flag with unique indexes. Operators can write DDL manually today. |
 | POLYGLOT-SQL-PLAN | Design | Multi-dialect SQL rendering. PostgreSQL-only is fine for 1.0; other dialects via dbt adapters. |
 | COMPUTED-FIELDS-PLAN | Design | Depends on EXPRESSION-SAFETY (now done); only analytics layer. Ship as 1.x. |
