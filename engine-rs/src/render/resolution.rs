@@ -1,5 +1,6 @@
 use anyhow::Result;
 use indexmap::IndexMap;
+use std::collections::HashSet;
 
 use crate::model::{Strategy, Target};
 use crate::qi;
@@ -22,7 +23,7 @@ use crate::qi;
 pub fn render_resolution_view(
     target_name: &str,
     target: &Target,
-    _mappings: &[&crate::model::Mapping],
+    mappings: &[&crate::model::Mapping],
     _all_targets: &IndexMap<String, Target>,
 ) -> Result<String> {
     let view_name = qi(&format!("_resolved_{target_name}"));
@@ -32,6 +33,28 @@ pub fn render_resolution_view(
         .fields
         .values()
         .any(|f| f.default_expression().is_some());
+
+    // Detect mixed ordering fields: same target field receives both generated
+    // ordinality (`order: true`) and external keys (`source:`/`source_path`).
+    // For these fields, resolution should prefer external keys over generated
+    // 10-digit ordinality strings when both are present.
+    let mut generated_order_fields: HashSet<String> = HashSet::new();
+    let mut external_order_fields: HashSet<String> = HashSet::new();
+    for m in mappings {
+        for fm in &m.fields {
+            if let Some(ref tgt) = fm.target {
+                if fm.order {
+                    generated_order_fields.insert(tgt.clone());
+                } else if fm.source.is_some() || fm.source_path.is_some() {
+                    external_order_fields.insert(tgt.clone());
+                }
+            }
+        }
+    }
+    let mixed_order_fields: HashSet<String> = generated_order_fields
+        .intersection(&external_order_fields)
+        .cloned()
+        .collect();
 
     // ── Collect groups ──────────────────────────────────────────────
     // group_name → Vec<(field_name, strategy)>
@@ -161,9 +184,18 @@ pub fn render_resolution_view(
                 format!("array_agg(DISTINCT {qfname}) FILTER (WHERE {qfname} IS NOT NULL)")
             }
             Strategy::Coalesce => format!(
-                "(array_agg({qfname} ORDER BY COALESCE({}, _priority, 999) ASC NULLS LAST) \
+                "(array_agg({qfname} ORDER BY {order_rank}, COALESCE({}, _priority, 999) ASC NULLS LAST) \
                  FILTER (WHERE {qfname} IS NOT NULL))[1]",
-                qi(&format!("_priority_{fname}"))
+                qi(&format!("_priority_{fname}")),
+                order_rank = if mixed_order_fields.contains(fname.as_str()) {
+                    // Generated ordinality keys are exactly 10 digits.
+                    // Prefer non-generated (external/native) keys in mixed mode.
+                    format!(
+                        "CASE WHEN ({qfname})::text ~ '^[0-9]{{10}}$' THEN 1 ELSE 0 END ASC"
+                    )
+                } else {
+                    "0 ASC".to_string()
+                }
             ),
             Strategy::LastModified => format!(
                 "(array_agg({qfname} ORDER BY COALESCE({}, _last_modified) DESC NULLS LAST) \

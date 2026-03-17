@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::model::MappingDocument;
 
@@ -13,6 +13,8 @@ pub enum ViewNode {
     Identity(String),
     /// Resolved golden record view for a target.
     Resolved(String),
+    /// Canonical ordered view for mixed ordering targets.
+    Ordered(String),
     /// Analytics view — clean golden record for BI consumers. Named `{target}`.
     Analytics(String),
     /// Reverse mapping view. Named `_rev_{mapping}`. Opt-in via `sync: true`.
@@ -29,6 +31,7 @@ impl ViewNode {
             ViewNode::Forward(name) => format!("_fwd_{name}"),
             ViewNode::Identity(name) => format!("_id_{name}"),
             ViewNode::Resolved(name) => format!("_resolved_{name}"),
+            ViewNode::Ordered(name) => format!("_ordered_{name}"),
             ViewNode::Analytics(name) => name.clone(),
             ViewNode::Reverse(name) => format!("_rev_{name}"),
             ViewNode::Delta(name) => format!("_delta_{name}"),
@@ -41,6 +44,7 @@ impl ViewNode {
             ViewNode::Forward(name) => format!("FWD: {name}"),
             ViewNode::Identity(name) => format!("ID: {name}"),
             ViewNode::Resolved(name) => format!("RES: {name}"),
+            ViewNode::Ordered(name) => format!("ORD: {name}"),
             ViewNode::Analytics(name) => format!("ANA: {name}"),
             ViewNode::Reverse(name) => format!("REV: {name}"),
             ViewNode::Delta(name) => format!("DELTA: {name}"),
@@ -63,6 +67,7 @@ pub struct ViewDag {
 /// Build the view dependency graph from a mapping document.
 pub fn build_dag(doc: &MappingDocument) -> ViewDag {
     let mut edges: BTreeMap<ViewNode, Vec<ViewNode>> = BTreeMap::new();
+    let mixed_targets = mixed_order_targets(doc);
 
     // Collect unique target names from mappings.
     let mut target_names: Vec<String> = Vec::new();
@@ -127,21 +132,37 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             edges.get_mut(&res).unwrap().push(id.clone());
         }
 
-        // Analytics view depends on resolved view (one per target).
+        // Optional canonical ordered view for mixed-order targets.
+        if mixed_targets.contains(tname) {
+            let ord = ViewNode::Ordered(tname.to_string());
+            edges.entry(ord.clone()).or_default();
+            if !edges[&ord].contains(&res) {
+                edges.get_mut(&ord).unwrap().push(res.clone());
+            }
+        }
+
+        // Analytics view depends on ordered (if mixed) else resolved.
         // Consumer-facing: named just `{target}`.
         let analytics = ViewNode::Analytics(tname.to_string());
         edges.entry(analytics.clone()).or_default();
-        if !edges[&analytics].contains(&res) {
-            edges.get_mut(&analytics).unwrap().push(res.clone());
+        let analytics_dep = if mixed_targets.contains(tname) {
+            ViewNode::Ordered(tname.to_string())
+        } else {
+            res.clone()
+        };
+        if !edges[&analytics].contains(&analytics_dep) {
+            edges.get_mut(&analytics).unwrap().push(analytics_dep);
         }
 
         // Reverse + delta views (auto-derived from field directions).
         if mapping.needs_sync() {
             let rev = ViewNode::Reverse(mname.clone());
-            edges
-                .entry(rev.clone())
-                .or_default()
-                .push(ViewNode::Resolved(tname.to_string()));
+            let rev_dep = if mixed_targets.contains(tname) {
+                ViewNode::Ordered(tname.to_string())
+            } else {
+                ViewNode::Resolved(tname.to_string())
+            };
+            edges.entry(rev.clone()).or_default().push(rev_dep);
 
             // Delta is per-source-dataset (combines all reverse views for this source).
             let delta = ViewNode::Delta(src.clone());
@@ -207,6 +228,34 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
         order,
         join_edges,
     }
+}
+
+fn mixed_order_targets(doc: &MappingDocument) -> HashSet<String> {
+    let mut generated: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut external: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for m in &doc.mappings {
+        let tname = m.target.name().to_string();
+        for fm in &m.fields {
+            if let Some(ref tgt) = fm.target {
+                if fm.order {
+                    generated.entry(tname.clone()).or_default().insert(tgt.clone());
+                } else if fm.source.is_some() || fm.source_path.is_some() {
+                    external.entry(tname.clone()).or_default().insert(tgt.clone());
+                }
+            }
+        }
+    }
+
+    let mut out = HashSet::new();
+    for (target, gen_fields) in generated {
+        if let Some(ext_fields) = external.get(&target) {
+            if gen_fields.iter().any(|f| ext_fields.contains(f)) {
+                out.insert(target);
+            }
+        }
+    }
+    out
 }
 
 fn topological_sort(edges: &BTreeMap<ViewNode, Vec<ViewNode>>) -> Vec<ViewNode> {
@@ -282,7 +331,7 @@ pub fn to_dot(dag: &ViewDag) -> String {
             ViewNode::Source(_) => "cylinder",
             ViewNode::Forward(_) => "box",
             ViewNode::Analytics(_) => "note",
-            ViewNode::Reverse(_) | ViewNode::Delta(_) => "box",
+            ViewNode::Ordered(_) | ViewNode::Reverse(_) | ViewNode::Delta(_) => "box",
             _ => "box",
         };
         out.push_str(&format!(
@@ -359,4 +408,50 @@ mod tests {
         assert!(dag.edges.contains_key(&ViewNode::Delta("crm".into())));
         assert!(dag.edges.contains_key(&ViewNode::Delta("erp".into())));
     }
+
+        #[test]
+        fn mixed_order_target_adds_ordered_node() {
+            let doc = parser::parse_str(
+                r#"
+    version: "1.0"
+    sources:
+      a: { primary_key: id }
+      b: { primary_key: id }
+    targets:
+      step:
+        fields:
+          recipe: { strategy: identity }
+          instruction: { strategy: identity }
+          step_order: { strategy: coalesce }
+    mappings:
+      - name: a_steps
+        source: a
+        target: step
+        sync: true
+        fields:
+          - { source: id, target: recipe }
+          - { source: instruction, target: instruction }
+          - { target: step_order, order: true }
+      - name: b_steps
+        source: b
+        target: step
+        sync: true
+        fields:
+          - { source: id, target: recipe }
+          - { source: instruction, target: instruction }
+          - { source: sort_key, target: step_order }
+    "#,
+            )
+            .unwrap();
+
+            let dag = build_dag(&doc);
+            let ordered = ViewNode::Ordered("step".into());
+            assert!(dag.edges.contains_key(&ordered));
+
+            let rev = ViewNode::Reverse("a_steps".into());
+            assert!(
+                dag.edges[&rev].contains(&ordered),
+                "reverse view should depend on ordered layer for mixed targets"
+            );
+        }
 }

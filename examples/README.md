@@ -26,6 +26,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`composite-keys`](composite-keys/README.md) | Multi-field identity (compound match key) |
 | [`concurrent-detection`](concurrent-detection/README.md) | Detecting and handling concurrent edits |
 | [`crdt-ordering`](crdt-ordering/README.md) | Deterministic array element ordering via `order: true` |
+| [`crdt-ordering-native`](crdt-ordering-native/README.md) | Mixed ordering inputs: native `sort_key` + generated `order: true` |
 | [`custom-resolution`](custom-resolution/README.md) | Custom resolution strategy via expression |
 | [`depth-mismatch`](depth-mismatch/README.md) | Asymmetric nesting depth — 2-level vs 3-level with intermediate grouping |
 | [`embedded-simple`](embedded-simple/README.md) | Single embedded sub-entity |

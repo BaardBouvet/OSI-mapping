@@ -599,6 +599,9 @@ Maps a single source field to a single target field.
 | `priority` | integer | no | Per-field coalesce priority (overrides mapping-level) |
 | `last_modified` | [TimestampRef](#timestampref) | no | Per-field timestamp (overrides mapping-level) |
 | `reverse_required` | boolean | no | Exclude row from reverse if resolved value is null |
+| `order` | boolean | no | Generate deterministic per-array ordinal key in forward path |
+| `order_prev` | boolean | no | Derive previous element key (adjacency metadata) |
+| `order_next` | boolean | no | Derive next element key (adjacency metadata) |
 | `references` | string | no | Mapping name for FK reverse resolution (see below) |
 | `description` | string | no | Human-readable description |
 
@@ -675,6 +678,33 @@ When true, the entire row is excluded from reverse output if this field's resolv
 ```
 
 **Examples:** [inserts-and-deletes](../examples/inserts-and-deletes/)
+
+### Ordering metadata: `order`, `order_prev`, `order_next`
+
+Use `order: true` on an array mapping field to generate deterministic ordering
+metadata from source array position.
+
+```yaml
+- target: step_order
+  order: true
+```
+
+`order_prev` and `order_next` are optional adjacency helpers for graph-like
+ordering models.
+
+```yaml
+- target: prev_step
+  order_prev: true
+- target: next_step
+  order_next: true
+```
+
+In mixed-order setups (some mappings contribute native sort keys and others use
+`order: true`), reverse output arrays are emitted in canonical computed order.
+Consumers should process reverse ETL arrays in emitted order instead of relying
+on source-side recomputation of sort keys for generated-only rows.
+
+**Examples:** [crdt-ordering](../examples/crdt-ordering/), [crdt-ordering-native](../examples/crdt-ordering-native/)
 
 ### `references` (field mapping)
 

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use indexmap::IndexMap;
 
+use super::ordered;
 use crate::model::{Mapping, PrimaryKey, Source, Strategy, Target};
 use crate::qi;
 
@@ -76,7 +77,7 @@ fn pk_base_expr_map(
 /// Produces: `CREATE OR REPLACE VIEW _rev_{mapping_name} AS ...`
 ///
 /// The reverse view joins:
-///   `_resolved_{target}` (for resolved non-identity values)
+///   `_ordered_{target}` for mixed-order targets, otherwise `_resolved_{target}`
 ///   `_id_{target}` (LEFT JOIN for per-source-row identity values + entity assignment)
 ///
 /// A LEFT JOIN from resolved → identity ensures that entities WITHOUT a member
@@ -95,9 +96,16 @@ pub fn render_reverse_view(
 ) -> Result<String> {
     let view_name = qi(&format!("_rev_{}", mapping.name));
     let id_view = format!("_id_{target_name}");
-    let resolved_view = qi(&format!("_resolved_{target_name}"));
+    let has_mixed_order = !ordered::mixed_order_fields_for_target(all_mappings, target_name)
+        .is_empty();
+    let resolved_view = if has_mixed_order {
+        qi(&format!("_ordered_{target_name}"))
+    } else {
+        qi(&format!("_resolved_{target_name}"))
+    };
 
     let mut select_exprs: Vec<String> = Vec::new();
+    let mut added_rank_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
     select_exprs.push("id._src_id".to_string());
     select_exprs.push("COALESCE(id._entity_id_resolved, r._entity_id) AS _cluster_id".to_string());
 
@@ -138,6 +146,11 @@ pub fn render_reverse_view(
                 if (fm.order || fm.order_prev || fm.order_next) && fm.is_reverse() {
                     if let Some(ref tgt) = fm.target {
                         select_exprs.push(format!("r.{}", qi(tgt)));
+                        let rank_col = format!("_order_rank_{tgt}");
+                        select_exprs.push(format!(
+                            "NULLIF(to_jsonb(r)->>'{rank_col}', '')::bigint AS {}",
+                            qi(&rank_col)
+                        ));
                     }
                     continue;
                 }
@@ -276,6 +289,20 @@ pub fn render_reverse_view(
         } else {
             format!("{expr} AS {}", qi(&source_name))
         });
+
+        // Propagate canonical order-rank metadata from target field to source
+        // column when available (e.g. sort_key <- step_order).
+        if let Some(tgt) = target_field {
+            let rank_alias = format!("_order_rank_{source_name}");
+            if !added_rank_cols.contains(&rank_alias) {
+                let rank_src = format!("_order_rank_{tgt}");
+                select_exprs.push(format!(
+                    "NULLIF(to_jsonb(r)->>'{rank_src}', '')::bigint AS {}",
+                    qi(&rank_alias)
+                ));
+                added_rank_cols.insert(rank_alias);
+            }
+        }
     }
 
     // _base: pass through from identity view (built in forward view).

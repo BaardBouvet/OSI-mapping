@@ -64,6 +64,9 @@ cargo test
 
 # Parse-only smoke test
 cargo test parse_all_examples
+
+# Property-based fuzz tests (opt-in)
+cargo test --features proptests --test proptest_structural
 ```
 
 ### Code Coverage

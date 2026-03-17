@@ -862,7 +862,7 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
         .filter(|fm| fm.order || fm.order_prev || fm.order_next)
         .filter_map(|fm| fm.target.as_deref())
         .collect();
-    let table_alias = if child_results.is_empty() { "" } else { "n." };
+    let table_alias = "n.";
     let mut obj_parts: Vec<String> = node
         .item_fields
         .iter()
@@ -890,18 +890,29 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
         .as_deref()
         .or_else(|| node.item_fields.first().map(|s| s.as_str()))
         .unwrap_or("_src_id");
+    let order_rank_field = format!("_order_rank_{order_by_field}");
+    let q_order_field = qi(order_by_field);
+    let order_expr_leaf = format!(
+        "CASE WHEN NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint IS NULL THEN 1 ELSE 0 END, \
+         NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint, \
+         n.{q_order_field}"
+    );
+    let order_expr_nested = format!(
+        "CASE WHEN NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint IS NULL THEN 1 ELSE 0 END, \
+         NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint, \
+         n.{q_order_field}"
+    );
 
     if child_results.is_empty() {
         // Leaf node: simple aggregation.
         all_ctes.push(format!(
             "{alias} AS (\n\
-             SELECT {qgroup} AS _parent_key, \
-             COALESCE(jsonb_agg({obj_expr} ORDER BY {table_alias}{order_col}), '[]'::jsonb) AS {qsegment}\n\
-             FROM {rev_view}\n\
-             WHERE {qgroup} IS NOT NULL\n\
-             GROUP BY {qgroup}\n\
+               SELECT n.{qgroup} AS _parent_key, \
+             COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_leaf}), '[]'::jsonb) AS {qsegment}\n\
+               FROM {rev_view} AS n\n\
+               WHERE n.{qgroup} IS NOT NULL\n\
+               GROUP BY n.{qgroup}\n\
              )",
-            order_col = qi(order_by_field),
         ));
     } else {
         // Interior node: join child CTEs, then aggregate.
@@ -925,13 +936,12 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
         all_ctes.push(format!(
             "{alias} AS (\n\
              SELECT n.{qgroup} AS _parent_key, \
-             COALESCE(jsonb_agg({obj_expr} ORDER BY n.{order_col}), '[]'::jsonb) AS {qsegment}\n\
+             COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_nested}), '[]'::jsonb) AS {qsegment}\n\
              FROM {rev_view} AS n\n\
              {joins}\n\
              WHERE n.{qgroup} IS NOT NULL\n\
              GROUP BY n.{qgroup}\n\
              )",
-            order_col = qi(order_by_field),
             joins = joins.join("\n"),
         ));
     }

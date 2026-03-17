@@ -2,6 +2,7 @@ pub mod analytics;
 pub mod delta;
 pub mod forward;
 pub mod identity;
+pub mod ordered;
 pub mod resolution;
 pub mod reverse;
 
@@ -194,6 +195,23 @@ pub fn render_sql(
                     &mappings,
                     &doc.targets,
                 )?;
+                if materialize {
+                    view_sql = materialize_view_sql(&view_sql);
+                    let vn = node.view_name();
+                    view_sql.push_str(&emit_unique_index(&vn, &["_entity_id"], false));
+                    mat_view_names.push(vn);
+                }
+                sql.push_str(&view_sql);
+                sql.push('\n');
+            }
+            ViewNode::Ordered(target_name) => {
+                let target = doc.targets.get(target_name).expect("target exists in dag");
+                let mappings: Vec<_> = doc
+                    .mappings
+                    .iter()
+                    .filter(|m| m.target.name() == target_name)
+                    .collect();
+                let mut view_sql = ordered::render_ordered_view(target_name, target, &mappings)?;
                 if materialize {
                     view_sql = materialize_view_sql(&view_sql);
                     let vn = node.view_name();

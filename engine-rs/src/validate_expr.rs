@@ -89,7 +89,15 @@ fn contains_prohibited_keyword(expr: &str, exempt: &[&str]) -> Option<String> {
 
 // ── Internal view references ────────────────────────────────────────
 
-static INTERNAL_PREFIXES: &[&str] = &["_fwd_", "_id_", "_resolved_", "_rev_", "_delta_", "_grp_"];
+static INTERNAL_PREFIXES: &[&str] = &[
+    "_fwd_",
+    "_id_",
+    "_resolved_",
+    "_ordered_",
+    "_rev_",
+    "_delta_",
+    "_grp_",
+];
 
 fn contains_internal_view_ref(expr: &str) -> Option<String> {
     let stripped = strip_string_literals(expr);
