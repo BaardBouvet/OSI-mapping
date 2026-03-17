@@ -295,3 +295,159 @@ fn default_val_to_sql(val: &serde_yaml::Value) -> String {
         _ => "NULL".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser;
+
+    fn parse(yaml: &str) -> crate::model::MappingDocument {
+        parser::parse_str(yaml).expect("valid test YAML")
+    }
+
+    #[test]
+    fn coalesce_strategy() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let sql = render_resolution_view("t", target, &mappings, &doc.targets).unwrap();
+        assert!(
+            sql.contains("array_agg") && sql.contains("FILTER (WHERE"),
+            "coalesce should use array_agg with FILTER"
+        );
+        assert!(
+            sql.contains("_priority"),
+            "coalesce should order by priority"
+        );
+    }
+
+    #[test]
+    fn last_modified_strategy() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { email: { strategy: last_modified } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: email, target: email }]
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let sql = render_resolution_view("t", target, &mappings, &doc.targets).unwrap();
+        assert!(
+            sql.contains("_last_modified") || sql.contains("_ts_email"),
+            "last_modified should reference timestamp column"
+        );
+        assert!(
+            sql.contains("DESC NULLS LAST"),
+            "last_modified should order DESC NULLS LAST"
+        );
+    }
+
+    #[test]
+    fn bool_or_strategy() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { active: { strategy: bool_or } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: active, target: active }]
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let sql = render_resolution_view("t", target, &mappings, &doc.targets).unwrap();
+        assert!(
+            sql.contains("bool_or("),
+            "bool_or strategy should produce bool_or() aggregate"
+        );
+    }
+
+    #[test]
+    fn group_distinct_on() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      addr_street: { strategy: coalesce, group: address }
+      addr_city: { strategy: coalesce, group: address }
+      name: { strategy: coalesce }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields:
+      - { source: street, target: addr_street }
+      - { source: city, target: addr_city }
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let sql = render_resolution_view("t", target, &mappings, &doc.targets).unwrap();
+        assert!(
+            sql.contains("DISTINCT ON"),
+            "grouped fields should use DISTINCT ON CTE"
+        );
+        assert!(
+            sql.contains("_grp_address"),
+            "should create CTE for address group"
+        );
+    }
+
+    #[test]
+    fn default_expression_fallback() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: coalesce, default_expression: "'Unknown'" }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let sql = render_resolution_view("t", target, &mappings, &doc.targets).unwrap();
+        assert!(
+            sql.contains("COALESCE") && sql.contains("'Unknown'"),
+            "default_expression should produce COALESCE(..., default_expr)"
+        );
+    }
+}

@@ -453,6 +453,10 @@ mod tests {
     use super::*;
     use crate::parser;
 
+    fn parse(yaml: &str) -> crate::model::MappingDocument {
+        parser::parse_str(yaml).expect("valid test YAML")
+    }
+
     #[test]
     fn hello_world_forward_views_have_matching_columns() {
         let yaml = std::fs::read_to_string(
@@ -496,5 +500,170 @@ mod tests {
             assert!(sql.contains("AS \"_ts_email\""), "missing _ts_email");
             assert!(sql.contains("AS \"_ts_name\""), "missing _ts_name");
         }
+    }
+
+    #[test]
+    fn nested_array_lateral_join() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  order: { fields: { oid: { strategy: identity } } }
+  line: { fields: { lid: { strategy: identity }, oref: { strategy: coalesce, references: order } } }
+mappings:
+  - name: s_orders
+    source: s
+    target: order
+    fields: [{ source: id, target: oid }]
+  - name: s_lines
+    parent: s_orders
+    array: lines
+    parent_fields: { pid: id }
+    target: line
+    fields:
+      - { source: lid, target: lid }
+      - { source: pid, target: oref, references: s_orders }
+"#,
+        );
+        let m = &doc.mappings[1];
+        let target = doc.targets.get("line").unwrap();
+        let sql = render_forward_body(m, None, Some(target), &[]).unwrap();
+        assert!(
+            sql.contains("jsonb_array_elements"),
+            "should have LATERAL jsonb_array_elements for nested array"
+        );
+        assert!(
+            sql.contains("AS item"),
+            "should alias the array expansion as item"
+        );
+    }
+
+    #[test]
+    fn source_path_extraction() {
+        let expr = json_path_expr("metadata.tier");
+        assert!(
+            expr.contains("->>"),
+            "source_path should produce JSON extraction operator"
+        );
+        assert!(
+            expr.contains("metadata"),
+            "should reference the column name"
+        );
+    }
+
+    #[test]
+    fn expression_passthrough() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { phone: { strategy: expression, expression: "max(phone)" } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields:
+      - { source: phone_raw, target: phone, expression: "regexp_replace(phone_raw, '[^0-9]', '')" }
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[]).unwrap();
+        assert!(
+            sql.contains("regexp_replace"),
+            "expression should appear in forward SQL"
+        );
+    }
+
+    #[test]
+    fn filter_in_where() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    filter: "status = 'active'"
+    fields:
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[]).unwrap();
+        assert!(
+            sql.contains("WHERE status = 'active'"),
+            "filter should appear as WHERE clause"
+        );
+    }
+
+    #[test]
+    fn parent_field_promoted() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  order: { fields: { oid: { strategy: identity } } }
+  line: { fields: { lid: { strategy: identity }, oref: { strategy: coalesce, references: order } } }
+mappings:
+  - name: s_orders
+    source: s
+    target: order
+    fields: [{ source: id, target: oid }]
+  - name: s_lines
+    parent: s_orders
+    array: lines
+    parent_fields: { parent_id: id }
+    target: line
+    fields:
+      - { source: lid, target: lid }
+      - { source: parent_id, target: oref, references: s_orders }
+"#,
+        );
+        let m = &doc.mappings[1];
+        let target = doc.targets.get("line").unwrap();
+        let sql = render_forward_body(m, None, Some(target), &[]).unwrap();
+        // parent_id is a parent_field alias — should resolve to root column "id"
+        assert!(
+            sql.contains("\"id\""),
+            "parent field should resolve to root column reference"
+        );
+    }
+
+    #[test]
+    fn base_includes_source_columns() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { email: { strategy: identity }, name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[]).unwrap();
+        assert!(
+            sql.contains("jsonb_build_object(")
+                && sql.contains("'email'")
+                && sql.contains("'name'"),
+            "_base should include all mapped source columns"
+        );
     }
 }

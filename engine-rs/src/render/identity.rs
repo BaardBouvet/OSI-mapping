@@ -320,3 +320,192 @@ pub fn render_identity_view(
 
     Ok(sql)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser;
+
+    fn parse(yaml: &str) -> crate::model::MappingDocument {
+        parser::parse_str(yaml).expect("valid test YAML")
+    }
+
+    #[test]
+    fn recursive_cte_structure() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  a: { primary_key: id }
+  b: { primary_key: id }
+targets:
+  t: { fields: { email: { strategy: identity }, name: { strategy: coalesce } } }
+mappings:
+  - name: a
+    source: a
+    target: t
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+  - name: b
+    source: b
+    target: t
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let fwd_names: Vec<String> = vec!["a".into(), "b".into()];
+        let sql = render_identity_view(
+            "t",
+            Some(target),
+            &mappings,
+            &doc.mappings,
+            &doc.sources,
+            &fwd_names,
+        )
+        .unwrap();
+        assert!(
+            sql.contains("WITH RECURSIVE"),
+            "should use recursive CTE for identity resolution"
+        );
+        assert!(sql.contains("_id_closure"), "should define _id_closure CTE");
+        assert!(sql.contains("_component"), "should track component IDs");
+    }
+
+    #[test]
+    fn union_all_base() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  a: { primary_key: id }
+  b: { primary_key: id }
+targets:
+  t: { fields: { email: { strategy: identity } } }
+mappings:
+  - name: a
+    source: a
+    target: t
+    fields: [{ source: email, target: email }]
+  - name: b
+    source: b
+    target: t
+    fields: [{ source: email, target: email }]
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let fwd_names: Vec<String> = vec!["a".into(), "b".into()];
+        let sql = render_identity_view(
+            "t",
+            Some(target),
+            &mappings,
+            &doc.mappings,
+            &doc.sources,
+            &fwd_names,
+        )
+        .unwrap();
+        assert!(
+            sql.contains("_fwd_a"),
+            "should reference forward view for mapping a"
+        );
+        assert!(
+            sql.contains("_fwd_b"),
+            "should reference forward view for mapping b"
+        );
+        assert!(sql.contains("UNION ALL"), "should UNION ALL forward views");
+    }
+
+    #[test]
+    fn link_group_edges() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      ssn: { strategy: identity, link_group: national_id }
+      passport: { strategy: identity, link_group: national_id }
+      name: { strategy: coalesce }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields:
+      - { source: ssn, target: ssn }
+      - { source: passport, target: passport }
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let fwd_names: Vec<String> = vec!["s".into()];
+        let sql = render_identity_view(
+            "t",
+            Some(target),
+            &mappings,
+            &doc.mappings,
+            &doc.sources,
+            &fwd_names,
+        )
+        .unwrap();
+        // link_group fields should be combined with AND in the match condition
+        assert!(
+            sql.contains("\"ssn\""),
+            "should reference ssn identity field"
+        );
+        assert!(
+            sql.contains("\"passport\""),
+            "should reference passport identity field"
+        );
+        assert!(
+            sql.contains("WITH RECURSIVE"),
+            "link_group should trigger recursive CTE"
+        );
+    }
+
+    #[test]
+    fn single_mapping_no_identity_no_recursion() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let target = doc.targets.get("t").unwrap();
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let fwd_names: Vec<String> = vec!["s".into()];
+        let sql = render_identity_view(
+            "t",
+            Some(target),
+            &mappings,
+            &doc.mappings,
+            &doc.sources,
+            &fwd_names,
+        )
+        .unwrap();
+        // No identity fields → pass-through path (no recursion needed)
+        assert!(
+            !sql.contains("WITH RECURSIVE"),
+            "no identity fields should skip recursion"
+        );
+        assert!(sql.contains("_entity_id"), "should still assign entity IDs");
+        assert!(
+            sql.contains("_entity_id_resolved"),
+            "should still assign resolved entity IDs"
+        );
+    }
+}

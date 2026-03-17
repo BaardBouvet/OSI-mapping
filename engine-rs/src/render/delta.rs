@@ -1037,3 +1037,150 @@ fn render_delta_with_nested(
 
     Ok(sql)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser;
+
+    fn parse(yaml: &str) -> crate::model::MappingDocument {
+        parser::parse_str(yaml).expect("valid test YAML")
+    }
+
+    #[test]
+    fn simple_noop_detection() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        assert!(
+            sql.contains("IS NOT DISTINCT FROM"),
+            "noop detection should use IS NOT DISTINCT FROM"
+        );
+        assert!(
+            sql.contains("_base"),
+            "noop check should reference _base column"
+        );
+    }
+
+    #[test]
+    fn nested_array_cte_structure() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  order: { fields: { oid: { strategy: identity } } }
+  line: { fields: { lid: { strategy: identity }, oref: { strategy: coalesce, references: order } } }
+mappings:
+  - name: s_orders
+    source: s
+    target: order
+    fields: [{ source: id, target: oid }]
+  - name: s_lines
+    parent: s_orders
+    array: lines
+    parent_fields: { pid: id }
+    target: line
+    fields:
+      - { source: lid, target: lid }
+      - { source: pid, target: oref, references: s_orders }
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        assert!(
+            sql.contains("jsonb_agg"),
+            "nested array delta should use jsonb_agg CTE"
+        );
+        assert!(
+            sql.contains("_parent_key"),
+            "nested array CTE should include _parent_key"
+        );
+    }
+
+    #[test]
+    fn merged_delta_union() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t1: { fields: { name: { strategy: coalesce } } }
+  t2: { fields: { email: { strategy: coalesce } } }
+mappings:
+  - name: s_t1
+    source: s
+    target: t1
+    fields: [{ source: name, target: name }]
+  - name: s_t2
+    source: s
+    target: t2
+    fields: [{ source: email, target: email }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        assert!(
+            sql.contains("UNION ALL"),
+            "multi-target delta should produce UNION ALL of reverse views"
+        );
+        assert!(
+            sql.contains("_rev_s_t1") && sql.contains("_rev_s_t2"),
+            "should reference both reverse views"
+        );
+    }
+
+    #[test]
+    fn text_norm_both_sides() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  order: { fields: { oid: { strategy: identity } } }
+  line: { fields: { lid: { strategy: identity }, oref: { strategy: coalesce, references: order } } }
+mappings:
+  - name: s_orders
+    source: s
+    target: order
+    fields: [{ source: id, target: oid }]
+  - name: s_lines
+    parent: s_orders
+    array: lines
+    parent_fields: { pid: id }
+    target: line
+    fields:
+      - { source: lid, target: lid }
+      - { source: pid, target: oref, references: s_orders }
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        // _osi_text_norm should be applied in noop comparison for nested arrays
+        let norm_count = sql.matches("_osi_text_norm").count();
+        assert!(
+            norm_count >= 2,
+            "_osi_text_norm should appear on both sides of noop comparison, found {norm_count}"
+        );
+    }
+}

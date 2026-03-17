@@ -31,3 +31,76 @@ pub fn render_analytics_view(target_name: &str, target: &Target) -> Result<Strin
 
     Ok(sql)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser;
+
+    fn parse(yaml: &str) -> crate::model::MappingDocument {
+        parser::parse_str(yaml).expect("valid test YAML")
+    }
+
+    #[test]
+    fn analytics_selects_from_resolved() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  contact:
+    fields:
+      email: { strategy: identity }
+      name: { strategy: coalesce }
+mappings:
+  - name: s
+    source: s
+    target: contact
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("contact").unwrap();
+        let sql = render_analytics_view("contact", target).unwrap();
+        assert!(
+            sql.contains("FROM \"_resolved_contact\""),
+            "should select from resolved view"
+        );
+        assert!(
+            sql.contains("_entity_id AS _cluster_id"),
+            "should alias _entity_id"
+        );
+    }
+
+    #[test]
+    fn analytics_only_user_fields() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  contact:
+    fields:
+      email: { strategy: identity }
+      name: { strategy: coalesce }
+mappings:
+  - name: s
+    source: s
+    target: contact
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("contact").unwrap();
+        let sql = render_analytics_view("contact", target).unwrap();
+        assert!(sql.contains("\"email\""), "should include email field");
+        assert!(sql.contains("\"name\""), "should include name field");
+        assert!(!sql.contains("_src_id"), "should not include _src_id");
+        assert!(!sql.contains("_mapping"), "should not include _mapping");
+        assert!(!sql.contains("_base"), "should not include _base");
+    }
+}

@@ -341,3 +341,170 @@ pub fn render_reverse_view(
 
     Ok(sql)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser;
+
+    fn parse(yaml: &str) -> crate::model::MappingDocument {
+        parser::parse_str(yaml).expect("valid test YAML")
+    }
+
+    #[test]
+    fn parent_field_root_ref_returns_src_id() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  parent: { fields: { pid: { strategy: identity } } }
+  child:  { fields: { cid: { strategy: identity }, pref: { strategy: coalesce, references: parent } } }
+mappings:
+  - name: s_parents
+    source: s
+    target: parent
+    fields: [{ source: id, target: pid }]
+  - name: s_children
+    parent: s_parents
+    array: items
+    parent_fields: { parent_id: id }
+    target: child
+    fields:
+      - { source: cid, target: cid }
+      - { source: parent_id, target: pref, references: s_parents }
+"#,
+        );
+        let mapping = &doc.mappings[1];
+        let target = doc.targets.get("child").unwrap();
+        let sql = render_reverse_view(
+            mapping,
+            "child",
+            Some(target),
+            &doc.targets,
+            None,
+            &doc.mappings,
+            &doc.sources,
+        )
+        .unwrap();
+        assert!(
+            sql.contains("ref_local._src_id"),
+            "parent_field referencing root mapping should return ref_local._src_id"
+        );
+    }
+
+    #[test]
+    fn references_field_override() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { tid: { strategy: identity } } }
+  u: { fields: { uid: { strategy: identity }, tref: { strategy: coalesce, references: t } } }
+mappings:
+  - name: s_t
+    source: s
+    target: t
+    fields: [{ source: id, target: tid }]
+  - name: s_u
+    source: s
+    target: u
+    fields:
+      - { source: id, target: uid }
+      - { source: tid, target: tref, references: s_t, references_field: tid }
+"#,
+        );
+        let mapping = &doc.mappings[1];
+        let target = doc.targets.get("u").unwrap();
+        let sql = render_reverse_view(
+            mapping,
+            "u",
+            Some(target),
+            &doc.targets,
+            doc.sources.get("s"),
+            &doc.mappings,
+            &doc.sources,
+        )
+        .unwrap();
+        assert!(
+            sql.contains("ref_local.\"tid\""),
+            "references_field should force the return column to 'tid'"
+        );
+    }
+
+    #[test]
+    fn pk_type_casting() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s:
+    primary_key: id
+    fields:
+      id: { type: integer }
+targets:
+  t: { fields: { tid: { strategy: identity } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: id, target: tid }]
+"#,
+        );
+        let mapping = &doc.mappings[0];
+        let target = doc.targets.get("t").unwrap();
+        let source_meta = doc.sources.get("s");
+        let sql = render_reverse_view(
+            mapping,
+            "t",
+            Some(target),
+            &doc.targets,
+            source_meta,
+            &doc.mappings,
+            &doc.sources,
+        )
+        .unwrap();
+        assert!(
+            sql.contains("::integer"),
+            "PK column with type: integer should produce ::integer cast"
+        );
+    }
+
+    #[test]
+    fn reverse_expression_passthrough() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields:
+      - { source: full_name, target: name, reverse_expression: "r.\"name\"" }
+"#,
+        );
+        let mapping = &doc.mappings[0];
+        let target = doc.targets.get("t").unwrap();
+        let sql = render_reverse_view(
+            mapping,
+            "t",
+            Some(target),
+            &doc.targets,
+            None,
+            &doc.mappings,
+            &doc.sources,
+        )
+        .unwrap();
+        assert!(
+            sql.contains("r.\"name\""),
+            "reverse_expression should appear verbatim in SELECT"
+        );
+    }
+}

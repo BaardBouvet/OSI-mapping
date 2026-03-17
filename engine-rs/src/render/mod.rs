@@ -471,3 +471,126 @@ fn annotate_reverse(m: &Mapping) -> String {
     lines.push(String::new());
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dag::build_dag;
+    use crate::parser;
+
+    fn parse(yaml: &str) -> crate::model::MappingDocument {
+        parser::parse_str(yaml).expect("valid test YAML")
+    }
+
+    #[test]
+    fn osi_text_norm_function() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  order: { fields: { oid: { strategy: identity } } }
+  line: { fields: { lid: { strategy: identity }, oref: { strategy: coalesce, references: order } } }
+mappings:
+  - name: s_orders
+    source: s
+    target: order
+    fields: [{ source: id, target: oid }]
+  - name: s_lines
+    parent: s_orders
+    array: lines
+    parent_fields: { pid: id }
+    target: line
+    fields:
+      - { source: lid, target: lid }
+      - { source: pid, target: oref, references: s_orders }
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false).unwrap();
+        assert!(
+            sql.contains("CREATE OR REPLACE FUNCTION _osi_text_norm"),
+            "nested arrays should emit _osi_text_norm helper function"
+        );
+    }
+
+    #[test]
+    fn view_order_follows_dag() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false).unwrap();
+        let fwd_pos = sql.find("_fwd_s").expect("should contain forward view");
+        let id_pos = sql.find("_id_t").expect("should contain identity view");
+        let res_pos = sql
+            .find("_resolved_t")
+            .expect("should contain resolution view");
+        let delta_pos = sql.find("_delta_s").expect("should contain delta view");
+        assert!(fwd_pos < id_pos, "forward should come before identity");
+        assert!(id_pos < res_pos, "identity should come before resolution");
+        assert!(res_pos < delta_pos, "resolution should come before delta");
+    }
+
+    #[test]
+    fn create_tables_ddl() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  my_source: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: my_source
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, true, false).unwrap();
+        assert!(
+            sql.contains("CREATE TABLE") && sql.contains("my_source"),
+            "--create-tables should emit CREATE TABLE for source"
+        );
+    }
+
+    #[test]
+    fn annotate_comments() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, true).unwrap();
+        assert!(
+            sql.contains("-- [fwd]")
+                || sql.contains("-- Forward:")
+                || sql.contains("-- Annotation"),
+            "--annotate should emit comment blocks before views"
+        );
+    }
+}
