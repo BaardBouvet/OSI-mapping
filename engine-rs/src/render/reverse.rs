@@ -180,6 +180,11 @@ pub fn render_reverse_view(
                             let ref_is_nested = ref_mapping.map_or(false, |m| m.is_child());
                             if ref_is_nested && identity_fields.len() == 1 {
                                 format!("ref_local.{}", qi(identity_fields[0]))
+                            } else if ref_is_nested && identity_fields.contains(&tgt) {
+                                // Compound identity: return the specific identity field
+                                // that this field mapping targets, so the delta CTE join
+                                // matches the parent reverse view's column value.
+                                format!("ref_local.{}", qi(tgt))
                             } else {
                                 "ref_local._src_id".to_string()
                             }

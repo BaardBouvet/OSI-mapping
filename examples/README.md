@@ -26,6 +26,7 @@ Use these examples together with `../docs/annotated-example.md` and `../docs/sch
 | [`composite-keys`](composite-keys/README.md) | Multi-field identity (compound match key) |
 | [`concurrent-detection`](concurrent-detection/README.md) | Detecting and handling concurrent edits |
 | [`custom-resolution`](custom-resolution/README.md) | Custom resolution strategy via expression |
+| [`depth-mismatch`](depth-mismatch/README.md) | Asymmetric nesting depth — 2-level vs 3-level with intermediate grouping |
 | [`embedded-simple`](embedded-simple/README.md) | Single embedded sub-entity |
 | [`embedded-objects`](embedded-objects/README.md) | Nested embedded objects |
 | [`embedded-multiple`](embedded-multiple/README.md) | Multiple embedded entities |

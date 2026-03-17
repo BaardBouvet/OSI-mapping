@@ -27,7 +27,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [COMPOSITE-TYPES-PLAN.md](COMPOSITE-TYPES-PLAN.md) | Proposed | Replace JSONB with PostgreSQL composite types for typed nested array output. |
 | [PARENT-MAPPING-PLAN.md](PARENT-MAPPING-PLAN.md) | Done | Unify `embedded` + `source.path` under `parent:` with `array`/`array_path` for nested arrays. |
 | [HIERARCHY-MERGE-PLAN.md](HIERARCHY-MERGE-PLAN.md) | Done | Example: merge 2-level and 3-level project hierarchies across systems. |
-| [DEPTH-MISMATCH-PLAN.md](DEPTH-MISMATCH-PLAN.md) | Planned | Example: merge when one system has a deeper intermediate level than the other. |
+| [DEPTH-MISMATCH-PLAN.md](DEPTH-MISMATCH-PLAN.md) | Done | Example: merge when one system has a deeper intermediate level than the other. |
 | [MISSING-BOTTOM-PLAN.md](MISSING-BOTTOM-PLAN.md) | Planned | Example: merge when one system lacks the deepest level; `sql:` aggregation pattern. |
 | [POSITIONAL-ARRAY-PLAN.md](POSITIONAL-ARRAY-PLAN.md) | Planned | Support `_index` for nested arrays without natural identity; uses `WITH ORDINALITY`. |
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |

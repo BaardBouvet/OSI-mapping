@@ -1,6 +1,6 @@
 # Depth mismatch example
 
-**Status:** Planned
+**Status:** Done
 
 Demonstrate merging when one system has a deeper level than the other: System A
 has Product → Feature (2 levels), System B has Product → Module → Feature

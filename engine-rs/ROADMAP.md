@@ -28,10 +28,10 @@ documentation.
 | PROPAGATED-DELETE-PLAN | ~~Pattern~~ **Done** | Example: GDPR deletion cascading via `bool_or` + `reverse_filter`. Example exists and passes. |
 | MULTI-VALUE-PLAN | ~~Pattern~~ **Done** | Example: single-vs-multi-value cardinality mismatch. Example exists and passes. |
 | HIERARCHY-MERGE-PLAN | ~~Planned~~ **Done** | Example: merging 2-level and 3-level hierarchies. Example exists and passes. |
-| DEPTH-MISMATCH-PLAN | Planned | Example: asymmetric nesting depth across systems. |
+| DEPTH-MISMATCH-PLAN | ~~Planned~~ **Done** | Example: asymmetric nesting depth across systems. Required engine fixes for qualified `parent_fields` and compound-identity reverse references. |
 | MISSING-BOTTOM-PLAN | Planned | Example: aggregation when one system lacks the leaf level. |
 
-**Progress:** 3/5 examples done (propagated-delete, multi-value, hierarchy-merge). 41 examples total now pass E2E.
+**Progress:** 4/5 examples done (propagated-delete, multi-value, hierarchy-merge, depth-mismatch). 42 examples total now pass E2E.
 
 **Exit criteria:** Five new examples passing E2E tests.
 
@@ -110,7 +110,7 @@ design. They may ship as 1.x minor releases.
 ## Dependency graph
 
 ```
-Phase 0 (examples/patterns)        ← 1/5 done
+Phase 0 (examples/patterns)        ← 4/5 done
     │
     ▼
 Phase 1                            ← COMPLETE
@@ -150,7 +150,7 @@ Post-1.0
 
 | Phase | Plans | Engine changes | Theme | Progress |
 |-------|-------|---------------|-------|----------|
-| 0 | 5 | 0 | Prove patterns with examples | 1/5 done |
+| 0 | 5 | 0 | Prove patterns with examples | 4/5 done |
 | 1 | 2 | 2 | Lock the schema, secure expressions | **COMPLETE** |
 | 2 | 3 | 3 | Precision, positional identity, passthrough | Not started |
 | 3 | 3 | 3 | Rich types and provenance | Not started |

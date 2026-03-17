@@ -178,17 +178,43 @@ pub fn render_forward_body(
     // Build parent field alias → SQL expression map for nested sources.
     let mut parent_field_exprs: HashMap<String, String> = HashMap::new();
     if has_path {
+        let path_segments: Vec<&str> = mapping.source.path.as_ref()
+            .map(|p| p.split('.').collect())
+            .unwrap_or_default();
         for (alias, pref) in &mapping.source.parent_fields {
-            let col = match pref {
-                ParentFieldRef::Simple(c) => c.as_str(),
-                ParentFieldRef::Qualified { field, .. } => field.as_str(),
+            let (col, qualified_path) = match pref {
+                ParentFieldRef::Simple(c) => (c.as_str(), None),
+                ParentFieldRef::Qualified { field, path } => (field.as_str(), path.as_deref()),
             };
-            let expr = if path_depth <= 1 {
-                // Single segment: parent is the root table row.
-                qi(col)
-            } else {
-                // Multi-segment: parent is the intermediate JSONB item.
-                format!("(_nest_{}.value->>'{col}')", path_depth - 2)
+            let expr = match qualified_path {
+                Some(qpath) => {
+                    // Qualified ref: find which nesting level the path refers to.
+                    // The path names the array column at a specific level. We need
+                    // the row/item BEFORE that array was unpacked.
+                    // E.g. source.path = "modules.features", qualified path = "modules"
+                    //   → segment index 0 → root table level → qi(col)
+                    // E.g. source.path = "a.b.c", qualified path = "a.b"
+                    //   → segment index 1 → _nest_0 level
+                    let qsegments: Vec<&str> = qpath.split('.').collect();
+                    let last_q = qsegments.last().copied().unwrap_or("");
+                    // Find which path segment the qualified path's last component matches.
+                    let level = path_segments.iter().position(|&s| s == last_q).unwrap_or(0);
+                    if level == 0 {
+                        // Before the first array: root table column.
+                        qi(col)
+                    } else {
+                        // Before segment N: the item at segment N-1.
+                        format!("(_nest_{}.value->>'{col}')", level - 1)
+                    }
+                }
+                None => {
+                    // Simple ref: immediate parent level.
+                    if path_depth <= 1 {
+                        qi(col)
+                    } else {
+                        format!("(_nest_{}.value->>'{col}')", path_depth - 2)
+                    }
+                }
             };
             parent_field_exprs.insert(alias.clone(), expr);
         }

@@ -1,0 +1,239 @@
+version: "1.0"
+description: >
+  Asymmetric nesting depth: System A has Product → Feature (2 levels), System B
+  has Product → Module → Feature (3 levels). Features merge across systems via
+  identity despite living at different structural depths. The intermediate module
+  level exists only in System B. Overlapping fields (status, effort) propagate
+  bidirectionally via priority.
+
+sources:
+  system_a:
+    primary_key: id
+  system_b:
+    primary_key: id
+
+targets:
+  product:
+    fields:
+      product_name:
+        strategy: identity
+      product_owner:
+        strategy: coalesce
+      roadmap_url:
+        strategy: coalesce
+
+  module:
+    fields:
+      module_name:
+        strategy: identity
+      product_name:
+        strategy: coalesce
+        references: product
+      module_lead:
+        strategy: coalesce
+
+  feature:
+    fields:
+      feature_name:
+        strategy: identity
+      product_name:
+        strategy: coalesce
+        references: product
+      module_name:
+        strategy: coalesce
+        references: module
+      status:
+        strategy: coalesce
+      effort:
+        strategy: coalesce
+        type: numeric
+      priority:
+        strategy: coalesce
+        type: numeric
+
+mappings:
+  # ── System A (2 levels: product → features) ────────────
+  - name: a_products
+    source: { dataset: system_a }
+    target: product
+    fields:
+      - source: product_name
+        target: product_name
+      - source: product_owner
+        target: product_owner
+
+  - name: a_features
+    parent: a_products
+    array: features
+    parent_fields:
+      parent_product: product_name
+    target: feature
+    fields:
+      - source: parent_product
+        target: product_name
+        references: a_products
+      - source: name
+        target: feature_name
+      - source: status
+        target: status
+        priority: 1
+      - source: effort
+        target: effort
+        priority: 2
+
+  # ── System B (3 levels: product → modules → features) ──
+  - name: b_products
+    source: { dataset: system_b }
+    target: product
+    fields:
+      - source: product_name
+        target: product_name
+      - source: roadmap_url
+        target: roadmap_url
+
+  - name: b_modules
+    parent: b_products
+    array: modules
+    parent_fields:
+      parent_product: product_name
+    target: module
+    fields:
+      - source: parent_product
+        target: product_name
+        references: b_products
+      - source: name
+        target: module_name
+      - source: module_lead
+        target: module_lead
+
+  - name: b_features
+    parent: b_modules
+    array: features
+    parent_fields:
+      parent_module: name
+      parent_product:
+        path: modules
+        field: product_name
+    target: feature
+    fields:
+      - source: parent_product
+        target: product_name
+        references: b_products
+      - source: parent_module
+        target: module_name
+        references: b_modules
+      - source: name
+        target: feature_name
+      - source: status
+        target: status
+        priority: 2
+      - source: effort
+        target: effort
+        priority: 1
+      - source: priority
+        target: priority
+
+tests:
+  - description: "Bidirectional propagation — A's status wins, B's effort wins"
+    input:
+      system_a:
+        - id: "A1"
+          product_name: "Acme Platform"
+          product_owner: "Alice"
+          features:
+            - { name: "SSO", status: "done", effort: 5 }
+            - { name: "RBAC", status: "active", effort: 8 }
+      system_b:
+        - id: "B1"
+          product_name: "Acme Platform"
+          roadmap_url: "https://acme.example.com/roadmap"
+          modules:
+            - name: "Auth"
+              module_lead: "Bob"
+              features:
+                - { name: "SSO", status: "planned", effort: 12, priority: 1 }
+                - { name: "RBAC", status: "planned", effort: 16, priority: 2 }
+    expected:
+      system_a:
+        updates:
+          - id: "A1"
+            product_name: "Acme Platform"
+            product_owner: "Alice"
+            features:
+              - { name: "RBAC", status: "active", effort: 16 }
+              - { name: "SSO", status: "done", effort: 12 }
+      system_b:
+        updates:
+          - id: "B1"
+            product_name: "Acme Platform"
+            roadmap_url: "https://acme.example.com/roadmap"
+            modules:
+              - name: "Auth"
+                module_lead: "Bob"
+                features:
+                  - { name: "RBAC", status: "active", effort: 16, priority: 2 }
+                  - { name: "SSO", status: "done", effort: 12, priority: 1 }
+
+  - description: "System B has extra module — new features flow to System A"
+    input:
+      system_a:
+        - id: "A1"
+          product_name: "Acme Platform"
+          product_owner: "Alice"
+          features:
+            - { name: "SSO", status: "done", effort: 5 }
+      system_b:
+        - id: "B1"
+          product_name: "Acme Platform"
+          roadmap_url: "https://acme.example.com/roadmap"
+          modules:
+            - name: "Auth"
+              module_lead: "Bob"
+              features:
+                - { name: "SSO", status: "planned", effort: 12, priority: 1 }
+            - name: "Billing"
+              module_lead: "Carol"
+              features:
+                - { name: "Invoicing", status: "active", effort: 20, priority: 1 }
+    expected:
+      system_a:
+        updates:
+          - id: "A1"
+            product_name: "Acme Platform"
+            product_owner: "Alice"
+            features:
+              - { name: "Invoicing", status: "active", effort: 20 }
+              - { name: "SSO", status: "done", effort: 12 }
+      system_b:
+        updates:
+          - id: "B1"
+            product_name: "Acme Platform"
+            roadmap_url: "https://acme.example.com/roadmap"
+            modules:
+              - name: "Auth"
+                module_lead: "Bob"
+                features:
+                  - { name: "SSO", status: "done", effort: 12, priority: 1 }
+              - name: "Billing"
+                module_lead: "Carol"
+                features:
+                  - { name: "Invoicing", status: "active", effort: 20, priority: 1 }
+
+  - description: "Disjoint products — no overlap, both systems noop"
+    input:
+      system_a:
+        - id: "A1"
+          product_name: "Widget Pro"
+          product_owner: "Alice"
+          features:
+            - { name: "Dashboard", status: "done", effort: 3 }
+      system_b:
+        - id: "B1"
+          product_name: "Acme Platform"
+          roadmap_url: "https://acme.example.com/roadmap"
+          modules:
+            - name: "Auth"
+              module_lead: "Bob"
+              features:
+                - { name: "SSO", status: "planned", effort: 12, priority: 1 }
+    expected: {}
