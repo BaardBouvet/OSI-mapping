@@ -29,7 +29,7 @@ targets:
 
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: person
     fields:
       - source: contact_email
@@ -39,7 +39,7 @@ mappings:
         last_modified: updated_at
 
   - name: hr
-    source: { dataset: hr }
+    source: hr
     target: person
     fields:
       - source: employee_email

@@ -23,7 +23,7 @@ targets:
 
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: customer
     fields:
       - source: crm_id
@@ -33,7 +33,7 @@ mappings:
         priority: 1
 
   - name: billing
-    source: { dataset: billing }
+    source: billing
     target: customer
     fields:
       - source: billing_id
@@ -43,7 +43,7 @@ mappings:
         priority: 2
 
   - name: merges
-    source: { dataset: merges }
+    source: merges
     target: customer
     fields:
       - source: crm_id

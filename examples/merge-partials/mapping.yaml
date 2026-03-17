@@ -36,7 +36,7 @@ targets:
 
 mappings:
   - name: crm_contacts
-    source: { dataset: crm_contacts }
+    source: crm_contacts
     target: organization
     fields:
       - source: contact_email
@@ -56,7 +56,7 @@ mappings:
         direction: forward_only
 
   - name: crm_invoices
-    source: { dataset: crm_invoices }
+    source: crm_invoices
     target: invoice
     fields:
       - source: invoice_number
@@ -71,7 +71,7 @@ mappings:
         target: customer_email
 
   - name: erp_customers
-    source: { dataset: erp_customers }
+    source: erp_customers
     target: organization
     reverse_filter: "is_customer = true"
     fields:

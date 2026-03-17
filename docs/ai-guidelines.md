@@ -28,19 +28,19 @@ targets:
 
 mappings:
   - name: crm_companies
-    source: { dataset: crm }
+    source: crm
     target: company
     fields: [...]
   - name: erp_companies
-    source: { dataset: erp }
+    source: erp
     target: company
     fields: [...]
   - name: crm_contacts
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields: [...]
   - name: erp_contacts
-    source: { dataset: erp }
+    source: erp
     target: contact
     fields: [...]
 ```
@@ -66,7 +66,7 @@ targets:                  # Target entity definitions with resolution rules
 
 mappings:                 # Source-to-target field mappings
   - name: <unique_name>
-    source: { dataset: <name> }
+    source: <name>
     target: <entity_name>
     fields:
       - source: <src_field>
@@ -156,7 +156,7 @@ targets:
 
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields:
       - source: email
@@ -166,7 +166,7 @@ mappings:
         priority: 1    # CRM wins
 
   - name: erp
-    source: { dataset: erp }
+    source: erp
     target: contact
     fields:
       - source: email
@@ -221,7 +221,7 @@ targets:
 ```yaml
 mappings:
   - name: order_header
-    source: { dataset: orders }
+    source: orders
     target: order
     fields: [...]
 
@@ -236,7 +236,7 @@ mappings:
 ```yaml
 mappings:
   - name: shop_orders
-    source: { dataset: orders }
+    source: orders
     target: order
     fields: [...]
 
@@ -258,7 +258,7 @@ mappings:
 ```yaml
 mappings:
   - name: active_customers
-    source: { dataset: crm }
+    source: crm
     target: customer
     filter: "status = 'active'"              # Forward: only active rows
     reverse_filter: "segment = 'retail'"     # Reverse: only retail back to CRM
@@ -272,7 +272,7 @@ When records are linked by an external system (MDM, record linkage tool):
 ```yaml
 mappings:
   - name: match_links
-    source: { dataset: match_results }
+    source: match_results
     target: contact
     links:
       - field: crm_id
@@ -290,7 +290,7 @@ For insert tracking — prevents duplicate inserts by feeding back generated IDs
 ```yaml
 mappings:
   - name: erp
-    source: { dataset: erp }
+    source: erp
     target: contact
     cluster_members: true    # creates _cluster_members_erp table
     fields: [...]
@@ -316,7 +316,7 @@ tests:
 
 ### Test Rules
 
-- `input` and `expected` keys must be dataset names matching `mappings[].source.dataset`
+- `input` and `expected` keys must be source names matching `mappings[].source`
 - `expected` values are **always objects** with explicit `updates`, `inserts`, `deletes` arrays
 - Never use a bare array for expected — always the `{ updates, inserts, deletes }` form
 - Omit a key (`updates`, `inserts`, or `deletes`) only when that category is empty

@@ -39,7 +39,7 @@ targets:
 
 mappings:
   - name: crm_customers
-    source: { dataset: crm_customers }
+    source: crm_customers
     target: customer
     fields:
       - source: domain
@@ -68,14 +68,14 @@ mappings:
         direction: forward_only
 
   - name: erp_customers
-    source: { dataset: erp_customers }
+    source: erp_customers
     target: customer
     fields:
       - source: domain
         target: domain
 
   - name: erp_contacts
-    source: { dataset: erp_contacts }
+    source: erp_contacts
     target: contact
     fields:
       - source: name
@@ -85,7 +85,7 @@ mappings:
         target: email
 
   - name: erp_customer_contacts
-    source: { dataset: erp_customer_contacts }
+    source: erp_customer_contacts
     target: customer_contact
     fields:
       - source: customer_id

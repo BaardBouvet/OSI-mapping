@@ -30,7 +30,7 @@ targets:
 
 mappings:
   - name: crm_customers
-    source: { dataset: crm_customers }
+    source: crm_customers
     target: customer
     last_modified: last_modified
     fields:
@@ -46,7 +46,7 @@ mappings:
         target: country
 
   - name: erp_companies
-    source: { dataset: erp_companies }
+    source: erp_companies
     target: customer
     last_modified: updated_at
     fields:
@@ -56,7 +56,7 @@ mappings:
         target: address_ref
 
   - name: erp_addresses
-    source: { dataset: erp_addresses }
+    source: erp_addresses
     target: customer
     last_modified: modified_at
     fields:

@@ -34,7 +34,7 @@ targets:
 
 mappings:
   - name: hr_status_codes
-    source: { dataset: hr_status_codes }
+    source: hr_status_codes
     target: status
     fields:
       - source: hr_code
@@ -43,7 +43,7 @@ mappings:
         target: name
 
   - name: crm_status_codes
-    source: { dataset: crm_status_codes }
+    source: crm_status_codes
     target: status
     fields:
       - source: crm_code
@@ -52,7 +52,7 @@ mappings:
         target: name
 
   - name: hr_system
-    source: { dataset: hr_system }
+    source: hr_system
     target: employee
     last_modified: last_updated
     fields:
@@ -63,7 +63,7 @@ mappings:
         references: hr_status_codes
 
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: employee
     last_modified: modified_date
     fields:

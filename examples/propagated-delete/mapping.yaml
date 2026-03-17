@@ -25,7 +25,7 @@ targets:
 
 mappings:
   - name: crm_customers
-    source: { dataset: crm }
+    source: crm
     target: customer
     fields:
       - source: email
@@ -37,7 +37,7 @@ mappings:
         target: is_deleted
 
   - name: erp_customers
-    source: { dataset: erp }
+    source: erp
     target: customer
     reverse_filter: "is_deleted IS NOT TRUE"
     fields:

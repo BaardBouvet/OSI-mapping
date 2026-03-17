@@ -21,7 +21,7 @@ targets:
 
 mappings:
   - name: companies
-    source: { dataset: companies }
+    source: companies
     target: company
     fields:
       - source: company_email
@@ -34,7 +34,7 @@ mappings:
         last_modified: modified_at
 
   - name: customers
-    source: { dataset: customers }
+    source: customers
     target: company
     reverse_filter: "account IS NOT NULL"
     fields:

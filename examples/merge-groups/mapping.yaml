@@ -25,7 +25,7 @@ targets:
 
 mappings:
   - name: crm_contacts
-    source: { dataset: crm_contacts }
+    source: crm_contacts
     target: person
     fields:
       - source: first_name
@@ -39,7 +39,7 @@ mappings:
         priority: 1
 
   - name: erp_employees
-    source: { dataset: erp_employees }
+    source: erp_employees
     target: person
     fields:
       - source: first_name

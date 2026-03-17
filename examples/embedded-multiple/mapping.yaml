@@ -37,7 +37,7 @@ targets:
 
 mappings:
   - name: crm_customer
-    source: { dataset: crm }
+    source: crm
     target: customer
     fields:
       - source: customer_id
@@ -73,7 +73,7 @@ mappings:
         last_modified: updated_at
 
   - name: billing_customer
-    source: { dataset: billing }
+    source: billing
     target: customer
     fields:
       - source: account_id

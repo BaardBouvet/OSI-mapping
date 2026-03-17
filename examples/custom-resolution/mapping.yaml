@@ -28,7 +28,7 @@ targets:
 
 mappings:
   - name: catalog
-    source: { dataset: catalog }
+    source: catalog
     target: product
     fields:
       - source: name

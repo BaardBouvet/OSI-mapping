@@ -28,7 +28,7 @@ targets:
 
 mappings:
   - name: contacts_person
-    source: { dataset: contacts }
+    source: contacts
     target: person
     filter: "contact_type = 'person'"
     fields:
@@ -45,7 +45,7 @@ mappings:
         reverse_expression: "'person'"
 
   - name: contacts_company
-    source: { dataset: contacts }
+    source: contacts
     target: company
     filter: "contact_type = 'company'"
     fields:

@@ -1184,12 +1184,12 @@ targets:
         strategy: coalesce
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields:
       - { source: email, target: email }
   - name: crm
-    source: { dataset: crm2 }
+    source: crm2
     target: contact
     fields:
       - { source: email, target: email }
@@ -1215,7 +1215,7 @@ targets:
         strategy: identity
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: nonexistent
     fields:
       - { source: email, target: email }
@@ -1241,7 +1241,7 @@ targets:
         strategy: identity
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields:
       - { source: email, target: email }
@@ -1272,7 +1272,7 @@ targets:
         strategy: coalesce
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields:
       - { source: email, target: email }
@@ -1302,7 +1302,7 @@ targets:
         expression: "max(name"
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields:
       - { source: email, target: email }
@@ -1331,7 +1331,7 @@ targets:
         strategy: coalesce
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields:
       - { source: email, target: email }
@@ -1364,7 +1364,7 @@ targets:
         strategy: coalesce
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields:
       - { source: email, target: email }
@@ -1396,7 +1396,7 @@ targets:
         strategy: coalesce
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     reverse_filter: "nonexistent_field = true"
     fields:

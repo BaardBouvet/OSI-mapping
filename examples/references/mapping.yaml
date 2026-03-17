@@ -32,7 +32,7 @@ targets:
 
 mappings:
   - name: crm_company
-    source: { dataset: crm_company }
+    source: crm_company
     target: company
     fields:
       - source: homepage
@@ -43,7 +43,7 @@ mappings:
         references: crm_contact
 
   - name: crm_contact
-    source: { dataset: crm_contact }
+    source: crm_contact
     target: person
     fields:
       - source: primary_email
@@ -54,7 +54,7 @@ mappings:
         references: crm_company
 
   - name: erp_customer
-    source: { dataset: erp_customer }
+    source: erp_customer
     target: company
     fields:
       - source: website
@@ -65,7 +65,7 @@ mappings:
         references: erp_contact
 
   - name: erp_contact
-    source: { dataset: erp_contact }
+    source: erp_contact
     target: person
     fields:
       - source: email

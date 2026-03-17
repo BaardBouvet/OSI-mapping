@@ -32,7 +32,7 @@ targets:
 mappings:
   # ── CRM (scalar phone) ────────────────────────────────
   - name: crm_contacts
-    source: { dataset: crm }
+    source: crm
     target: contact
     priority: 10
     fields:
@@ -45,7 +45,7 @@ mappings:
 
   # CRM's single phone also contributes to the shared phone list
   - name: crm_phones
-    source: { dataset: crm }
+    source: crm
     target: phone_entry
     fields:
       - source: email
@@ -58,7 +58,7 @@ mappings:
 
   # ── Contact Center (phone list only, no scalar phone) ──
   - name: cc_contacts
-    source: { dataset: contact_center }
+    source: contact_center
     target: contact
     priority: 20
     fields:

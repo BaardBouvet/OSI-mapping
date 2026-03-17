@@ -44,7 +44,7 @@ targets:
 mappings:
   # CRM normalized tables
   - name: crm_companies
-    source: { dataset: crm_companies }
+    source: crm_companies
     target: company
     fields:
       - source: company_email
@@ -54,7 +54,7 @@ mappings:
         last_modified: updated_at
 
   - name: crm_contacts
-    source: { dataset: crm_contacts }
+    source: crm_contacts
     target: person
     fields:
       - source: contact_email
@@ -64,7 +64,7 @@ mappings:
         last_modified: updated_at
 
   - name: crm_associations
-    source: { dataset: crm_associations }
+    source: crm_associations
     target: company_person_association
     fields:
       - source: company_id
@@ -78,7 +78,7 @@ mappings:
 
   # ERP denormalized — company mapping
   - name: erp_companies
-    source: { dataset: erp_companies }
+    source: erp_companies
     target: company
     last_modified: modified_at
     fields:

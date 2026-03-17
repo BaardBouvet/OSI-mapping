@@ -29,7 +29,7 @@ targets:
 
 mappings:
   - name: customers
-    source: { dataset: customers }
+    source: customers
     target: customer
     fields:
       - source: customer_id

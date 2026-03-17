@@ -19,7 +19,7 @@ targets:
 
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: company
     last_modified: updated_at
     fields:

@@ -31,7 +31,7 @@ targets:
 
 mappings:
   - name: crm_a
-    source: { dataset: crm_a }
+    source: crm_a
     target: contact
     fields:
       - source: email
@@ -261,7 +261,7 @@ Controls what value is returned when a reference is translated back to the sourc
 ```yaml
 # CRM stores ISO codes, ERP stores full names — same country entity
 - name: crm_system
-  source: { dataset: crm_system }
+  source: crm_system
   target: customer
   fields:
     - source: country_code
@@ -270,7 +270,7 @@ Controls what value is returned when a reference is translated back to the sourc
       references_field: iso_code   # return iso_code, not the PK (name)
 
 - name: erp_system
-  source: { dataset: erp_system }
+  source: erp_system
   target: customer
   fields:
     - source: country
@@ -346,8 +346,8 @@ Maps fields from one source dataset to one target entity.
 |---|---|---|---|
 | `name` | string | **yes** | Unique identifier (`^[a-z][a-z0-9_]*$`) |
 | `description` | string | no | Human-readable description |
-| `source` | [SourceRef](#sourceref) | * | Source dataset reference (required unless `parent` is set) |
-| `target` | string / [DatasetRef](#datasetref) | **yes** | Target entity name or external dataset |
+| `source` | string | * | Source name — must match a key in `sources` (required unless `parent` is set) |
+| `target` | string | **yes** | Target entity name — must match a key in `targets` |
 | `parent` | string | * | Name of parent mapping — inherits source (mutually exclusive with `source`) |
 | `array` | string | no | JSONB array column to expand into rows (requires `parent`) |
 | `array_path` | string | no | Dotted path to a JSONB array (requires `parent`, mutually exclusive with `array`) |
@@ -366,7 +366,7 @@ Maps fields from one source dataset to one target entity.
 ```yaml
 mappings:
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     priority: 1
     last_modified: updated_at
@@ -385,7 +385,7 @@ Explicitly names the parent mapping. The child inherits `source` from the parent
 
 ```yaml
   - name: order_header
-    source: { dataset: orders }
+    source: orders
     target: order
     fields: [...]
 
@@ -403,7 +403,7 @@ Explicitly names the parent mapping. The child inherits `source` from the parent
 
 ```yaml
   - name: shop_orders
-    source: { dataset: shop }
+    source: shop
     target: order
     fields: [...]
 
@@ -449,7 +449,7 @@ SQL WHERE conditions that control which rows flow through the mapping.
 
 ```yaml
   - name: active_contacts
-    source: { dataset: crm }
+    source: crm
     target: contact
     filter: "status = 'active'"
     reverse_filter: "type LIKE '%customer%'"
@@ -464,7 +464,7 @@ When true, reverse output includes `_base_` columns with original source values 
 
 ```yaml
   - name: crm
-    source: { dataset: crm }
+    source: crm
     target: contact
     include_base: true
     fields: [...]
@@ -480,7 +480,7 @@ A mapping with `links` but no `fields` is a "linkage-only" mapping — it contri
 
 ```yaml
   - name: match_links
-    source: { dataset: match_results }
+    source: match_results
     target: contact
     links:
       - field: crm_id
@@ -495,7 +495,7 @@ Column in the linking table providing a pre-computed cluster ID. Enables the IVM
 
 ```yaml
   - name: mdm_links
-    source: { dataset: mdm_xref }
+    source: mdm_xref
     target: contact
     link_key: cluster_id
     links:
@@ -521,13 +521,13 @@ ETL feedback table for insert tracking. When the delta view produces an insert, 
 
 ```yaml
   - name: erp
-    source: { dataset: erp }
+    source: erp
     target: contact
     cluster_members: true                  # all defaults
     fields: [...]
 
   - name: legacy
-    source: { dataset: legacy }
+    source: legacy
     target: contact
     cluster_members:                       # custom names
       table: legacy_feedback
@@ -546,7 +546,7 @@ Column in the source table holding a pre-populated cluster ID from ETL feedback.
 
 ```yaml
   - name: billing
-    source: { dataset: billing }
+    source: billing
     target: customer
     cluster_field: entity_cluster_id
     fields: [...]
@@ -703,7 +703,7 @@ targets:
 # Each mapping specifies which mapping to resolve through
 mappings:
   - name: crm_contact
-    source: { dataset: crm_contacts }
+    source: crm_contacts
     target: person
     fields:
       - source: company_id
@@ -711,7 +711,7 @@ mappings:
         references: crm_company  # resolve via CRM company mapping
 
   - name: erp_contact
-    source: { dataset: erp_contacts }
+    source: erp_contacts
     target: person
     fields:
       - source: customer_ref
@@ -740,38 +740,6 @@ Overrides the mapping-level timestamp for a specific field. Useful when differen
 **Examples:** [value-groups](../examples/value-groups/)
 
 ---
-
-## SourceRef
-
-Reference to a source dataset. For nested array extraction, use `parent` + `array`/`array_path` at the mapping level instead (see [`parent`](#parent)).
-
-| Property | Type | Required | Description |
-|---|---|---|---|
-| `dataset` | string | **yes** | Source dataset/table name |
-| `path` | string | no | Internal: populated from `array`/`array_path` by the parser |
-| `parent_fields` | object | no | Internal: populated from mapping-level `parent_fields` by the parser |
-
-### Simple dataset
-
-```yaml
-source: { dataset: crm }
-```
-
-**Examples:** [nested-arrays](../examples/nested-arrays/), [nested-arrays-deep](../examples/nested-arrays-deep/), [nested-arrays-multiple](../examples/nested-arrays-multiple/)
-
----
-
-## DatasetRef
-
-Reference to an external dataset, used when the mapping target is not defined in the same file's `targets` section.
-
-| Property | Type | Required | Description |
-|---|---|---|---|
-| `dataset` | string | **yes** | Dataset/table name |
-
-```yaml
-target: { dataset: external_contacts }
-```
 
 ---
 

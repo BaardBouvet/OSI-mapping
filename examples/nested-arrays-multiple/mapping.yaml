@@ -74,7 +74,7 @@ targets:
 
 mappings:
   - name: source_orgs
-    source: { dataset: source }
+    source: source
     target: organization
     fields:
       - source: id
@@ -154,7 +154,7 @@ mappings:
 
   # Flat HR sources
   - name: hr_departments
-    source: { dataset: hr_departments }
+    source: hr_departments
     target: department
     fields:
       - source: dept_id
@@ -169,7 +169,7 @@ mappings:
         priority: 1
 
   - name: hr_employees
-    source: { dataset: hr_employees }
+    source: hr_employees
     target: employee
     fields:
       - source: emp_id

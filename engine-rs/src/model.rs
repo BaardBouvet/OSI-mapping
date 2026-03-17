@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 /// Top-level mapping document.
 #[derive(Debug, Deserialize)]
@@ -420,31 +420,45 @@ impl ClusterMembers {
     }
 }
 
-/// Source dataset reference.
-#[derive(Debug, Default, Deserialize)]
+/// Source reference — deserialised from a plain string (the source name).
+/// Internal fields `path` and `parent_fields` are populated by the parser.
+#[derive(Debug, Default)]
 pub struct SourceRef {
-    #[serde(default)]
     pub dataset: String,
-    #[serde(default)]
     pub path: Option<String>,
-    #[serde(default)]
     pub parent_fields: IndexMap<String, ParentFieldRef>,
 }
 
-/// Target reference — string name or dataset ref.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum TargetRef {
-    Name(String),
-    Dataset { dataset: String },
+impl<'de> Deserialize<'de> for SourceRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let name = String::deserialize(deserializer)?;
+        Ok(SourceRef {
+            dataset: name,
+            path: None,
+            parent_fields: IndexMap::new(),
+        })
+    }
 }
+
+/// Target reference — plain string name.
+#[derive(Debug)]
+pub struct TargetRef(String);
 
 impl TargetRef {
     pub fn name(&self) -> &str {
-        match self {
-            TargetRef::Name(n) => n,
-            TargetRef::Dataset { dataset } => dataset,
-        }
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for TargetRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(TargetRef(String::deserialize(deserializer)?))
     }
 }
 

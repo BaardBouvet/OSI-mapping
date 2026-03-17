@@ -66,3 +66,15 @@ Use these examples together with `../docs/annotated-example.md` and `../docs/sch
 | [`vocabulary-standard`](vocabulary-standard/README.md) | Standard vocabulary usage |
 
 Each example directory contains a local `README.md` and a `mapping.yaml` with the full definition including test cases.
+
+## Schema Properties Without Example Coverage
+
+These mapping schema properties are not yet demonstrated by any example:
+
+| Property | Description |
+|---|---|
+| `array_path` | Dotted path to a JSONB array nested inside a JSON object (vs `array` for top-level arrays) |
+| `links` / `LinkRef` | External identity edges from a linking table |
+| `link_key` | Column in a linking table providing pre-computed cluster identity |
+| `cluster_members` | ETL feedback table for insert tracking |
+| `cluster_field` | Source column holding a pre-populated cluster ID |

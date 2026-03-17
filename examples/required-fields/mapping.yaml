@@ -22,7 +22,7 @@ targets:
 
 mappings:
   - name: crm_orgs
-    source: { dataset: crm }
+    source: crm
     target: organisation
     reverse_filter: "name IS NOT NULL OR org_number IS NOT NULL"
     fields:
@@ -36,7 +36,7 @@ mappings:
         priority: 2
 
   - name: registry_orgs
-    source: { dataset: registry }
+    source: registry
     target: organisation
     reverse_filter: "name IS NOT NULL OR org_number IS NOT NULL"
     fields:

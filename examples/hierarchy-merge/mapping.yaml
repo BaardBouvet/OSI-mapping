@@ -54,7 +54,7 @@ targets:
 mappings:
   # ── Simple PM (2 levels: project → task) ───────────────
   - name: simple_projects
-    source: { dataset: simple_pm }
+    source: simple_pm
     target: project
     fields:
       - source: project_name
@@ -83,7 +83,7 @@ mappings:
 
   # ── Enterprise PM (3 levels: program → project → task) ─
   - name: enterprise_programs
-    source: { dataset: enterprise_pm }
+    source: enterprise_pm
     target: program
     fields:
       - source: program_name

@@ -29,7 +29,7 @@ targets:
 
 mappings:
   - name: country_vocabulary
-    source: { dataset: country_vocabulary }
+    source: country_vocabulary
     target: country
     fields:
       - source: name
@@ -38,7 +38,7 @@ mappings:
         target: iso_code
 
   - name: crm_system
-    source: { dataset: crm_system }
+    source: crm_system
     target: customer
     fields:
       - source: account_id
@@ -50,7 +50,7 @@ mappings:
         references_field: iso_code
 
   - name: erp_system
-    source: { dataset: erp_system }
+    source: erp_system
     target: customer
     fields:
       - source: customer_id

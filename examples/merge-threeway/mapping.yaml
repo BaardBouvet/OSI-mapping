@@ -25,7 +25,7 @@ targets:
 
 mappings:
   - name: source_a
-    source: { dataset: source_a }
+    source: source_a
     target: company
     fields:
       - source: email
@@ -40,7 +40,7 @@ mappings:
         priority: 1
 
   - name: source_b
-    source: { dataset: source_b }
+    source: source_b
     target: company
     fields:
       - source: contact_email
@@ -55,7 +55,7 @@ mappings:
         priority: 2
 
   - name: source_c
-    source: { dataset: source_c }
+    source: source_c
     target: company
     fields:
       - source: email_address

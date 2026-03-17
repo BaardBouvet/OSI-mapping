@@ -33,7 +33,7 @@ targets:
 mappings:
   # Routing: contacts → person (where contact_type = 'person')
   - name: contacts_person
-    source: { dataset: contacts }
+    source: contacts
     target: person
     filter: "contact_type = 'person'"
     fields:
@@ -51,7 +51,7 @@ mappings:
 
   # Routing: contacts → company (where contact_type = 'company')
   - name: contacts_company
-    source: { dataset: contacts }
+    source: contacts
     target: company
     filter: "contact_type = 'company'"
     fields:
@@ -69,7 +69,7 @@ mappings:
 
   # Dedicated source for persons
   - name: crm_persons
-    source: { dataset: crm_persons }
+    source: crm_persons
     target: person
     fields:
       - source: email
@@ -83,7 +83,7 @@ mappings:
 
   # Dedicated source for companies
   - name: erp_companies
-    source: { dataset: erp_companies }
+    source: erp_companies
     target: company
     fields:
       - source: email

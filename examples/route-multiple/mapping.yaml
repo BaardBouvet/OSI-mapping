@@ -22,7 +22,7 @@ targets:
 
 mappings:
   - name: contacts_primary
-    source: { dataset: contacts }
+    source: contacts
     target: person
     filter: "is_primary = 'true'"
     reverse_filter: "is_primary_contact = true"
@@ -41,7 +41,7 @@ mappings:
         expression: "true"
 
   - name: contacts_secondary
-    source: { dataset: contacts }
+    source: contacts
     target: person
     filter: "is_primary = 'false'"
     reverse_filter: "is_primary_contact = false"

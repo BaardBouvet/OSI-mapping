@@ -28,7 +28,7 @@ targets:
 
 mappings:
   - name: crm_account
-    source: { dataset: crm_account }
+    source: crm_account
     target: customer
     fields:
       - source: customer_email

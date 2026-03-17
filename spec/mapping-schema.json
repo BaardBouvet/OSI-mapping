@@ -102,10 +102,6 @@
     },
 
     "TargetField": {
-      "$ref": "#/$defs/TargetFieldDef"
-    },
-
-    "TargetFieldDef": {
       "type": "object",
       "description": "Full target field definition with strategy and optional configuration.",
       "required": ["strategy"],
@@ -166,15 +162,12 @@
         },
         "description": { "type": "string" },
         "source": {
-          "$ref": "#/$defs/SourceRef",
-          "description": "The source dataset to map from. Required for root mappings; omit when parent is set."
+          "type": "string",
+          "description": "Source name — must match a key in the top-level sources section. Required for root mappings; omit when parent is set."
         },
         "target": {
-          "description": "Target entity. String = reference to a key in 'targets'. Object = external dataset reference.",
-          "oneOf": [
-            { "type": "string", "description": "Reference to a target entity defined in the targets section." },
-            { "$ref": "#/$defs/DatasetRef", "description": "External target dataset reference." }
-          ]
+          "type": "string",
+          "description": "Target entity — must match a key in the top-level targets section."
         },
         "parent": {
           "type": "string",
@@ -352,40 +345,7 @@
     },
 
 
-    "SourceRef": {
-      "type": "object",
-      "description": "Reference to a source dataset, optionally with nested array extraction.",
-      "required": ["dataset"],
-      "additionalProperties": false,
-      "properties": {
-        "dataset": {
-          "type": "string",
-          "description": "Source dataset/table name."
-        },
-        "path": {
-          "type": "string",
-          "description": "Dot-delimited path to a nested array in the source. When set, the mapping operates on each item in that array. Use dot notation for deep nesting (e.g. 'lines.sub_items')."
-        },
-        "parent_fields": {
-          "type": "object",
-          "description": "Import ancestor-level fields into scope when mapping nested arrays. Keys are alias names; values identify the ancestor field.",
-          "additionalProperties": { "$ref": "#/$defs/ParentFieldRef" }
-        }
-      }
-    },
 
-    "DatasetRef": {
-      "type": "object",
-      "description": "Reference to an external dataset (used when target is not defined in the same file).",
-      "required": ["dataset"],
-      "additionalProperties": false,
-      "properties": {
-        "dataset": {
-          "type": "string",
-          "description": "Dataset/table name."
-        }
-      }
-    },
 
 
     "Expression": {
@@ -431,7 +391,7 @@
         },
         "input": {
           "type": "object",
-          "description": "Input data keyed by source dataset name (matching mapping source.dataset). Each value is an array of row objects.",
+          "description": "Input data keyed by source name (matching the mapping's source field). Each value is an array of row objects.",
           "additionalProperties": {
             "type": "array",
             "items": { "type": "object" }

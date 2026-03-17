@@ -56,7 +56,7 @@ mappings:
 
   # ── CRM mapping ──────────────────────────────────────────────────
   - name: crm                       # unique identifier (lowercase, underscores)
-    source: { dataset: crm }        # source dataset name
+    source: crm                     # source name (matches key in sources section)
     target: contact                  # references the target defined above
 
     # Mapping-level timestamp — applies to all fields using last_modified
@@ -87,7 +87,7 @@ mappings:
 
   # ── ERP mapping ──────────────────────────────────────────────────
   - name: erp
-    source: { dataset: erp }
+    source: erp
     target: contact
     last_modified: modified_date
 
@@ -109,7 +109,7 @@ mappings:
 
   # ── Phone directory mapping ──────────────────────────────────────
   - name: phonebook
-    source: { dataset: phonebook }
+    source: phonebook
     target: contact
 
     fields:
@@ -135,7 +135,7 @@ tests:
   - description: "Alice exists in all three systems. CRM name wins (priority 1). ERP title wins (more recent). Phone resolved by max()."
 
     # Input: one array of rows per source dataset.
-    # Keys must match mapping source.dataset names.
+    # Keys must match mapping source names.
     input:
       crm:
         - id: "C1"

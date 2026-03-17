@@ -38,7 +38,7 @@ targets:
 mappings:
   # Shop: parent order
   - name: shop_orders
-    source: { dataset: shop }
+    source: shop
     target: purchase_order
     fields:
       - source: order_id
@@ -66,7 +66,7 @@ mappings:
 
   # Warehouse: normalized order table
   - name: warehouse_orders
-    source: { dataset: warehouse_orders }
+    source: warehouse_orders
     target: purchase_order
     fields:
       - source: order_number
@@ -77,7 +77,7 @@ mappings:
 
   # Warehouse: normalized line items table
   - name: warehouse_lines
-    source: { dataset: warehouse_lines }
+    source: warehouse_lines
     target: order_line
     fields:
       - source: order_number

@@ -32,7 +32,7 @@ targets:
 
 mappings:
   - name: crm_customers
-    source: { dataset: crm }
+    source: crm
     target: customer
     fields:
       - source: email
@@ -51,7 +51,7 @@ mappings:
         target: contact_type
 
   - name: erp_customers
-    source: { dataset: erp }
+    source: erp
     target: customer
     priority: 1
     fields:

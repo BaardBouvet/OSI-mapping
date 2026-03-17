@@ -26,7 +26,7 @@ targets:
 
 mappings:
   - name: system_a
-    source: { dataset: system_a }
+    source: system_a
     target: person
     priority: 1
     fields:
@@ -46,7 +46,7 @@ mappings:
         reverse_expression: "'+' || SUBSTRING(phone, 1, 1) || ' ' || SUBSTRING(phone, 2, 3) || '-' || SUBSTRING(phone, 5)"
 
   - name: system_b
-    source: { dataset: system_b }
+    source: system_b
     target: person
     priority: 2
     fields:

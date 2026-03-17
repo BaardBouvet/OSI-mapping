@@ -54,7 +54,7 @@ targets:
 mappings:
   # ── System A (2 levels: product → features) ────────────
   - name: a_products
-    source: { dataset: system_a }
+    source: system_a
     target: product
     fields:
       - source: product_name
@@ -83,7 +83,7 @@ mappings:
 
   # ── System B (3 levels: product → modules → features) ──
   - name: b_products
-    source: { dataset: system_b }
+    source: system_b
     target: product
     fields:
       - source: product_name

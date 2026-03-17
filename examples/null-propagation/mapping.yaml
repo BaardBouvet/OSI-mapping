@@ -30,7 +30,7 @@ mappings:
   # CRM is authoritative (priority 1). When phone is NULL, substitute a
   # sentinel so coalesce doesn't skip it.
   - name: crm_contacts
-    source: { dataset: crm }
+    source: crm
     target: contact
     fields:
       - source: email
@@ -46,7 +46,7 @@ mappings:
 
   # ERP is lower priority. No sentinel — NULL just means "don't know".
   - name: erp_contacts
-    source: { dataset: erp }
+    source: erp
     target: contact
     fields:
       - source: email

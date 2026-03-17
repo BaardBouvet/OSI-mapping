@@ -44,7 +44,7 @@ targets:
 
 mappings:
   - name: source_parents
-    source: { dataset: source }
+    source: source
     target: parent
     fields:
       - source: id
@@ -84,7 +84,7 @@ mappings:
 
   # Flat sources for parents, children, grandchildren
   - name: flat_parents
-    source: { dataset: flat_parents }
+    source: flat_parents
     target: parent
     fields:
       - source: parent_id
@@ -93,7 +93,7 @@ mappings:
         target: name
 
   - name: flat_children
-    source: { dataset: flat_children }
+    source: flat_children
     target: child
     fields:
       - source: child_id
@@ -106,7 +106,7 @@ mappings:
         priority: 1
 
   - name: flat_grandchildren
-    source: { dataset: flat_grandchildren }
+    source: flat_grandchildren
     target: grandchild
     fields:
       - source: grandchild_id

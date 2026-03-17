@@ -34,7 +34,7 @@ targets:
 
 mappings:
   - name: system_a
-    source: { dataset: system_a }
+    source: system_a
     target: user
     fields:
       - source: id
@@ -44,7 +44,7 @@ mappings:
         priority: 1
 
   - name: system_b
-    source: { dataset: system_b }
+    source: system_b
     target: user
     fields:
       - source: id
@@ -54,7 +54,7 @@ mappings:
         priority: 2
 
   - name: system_c
-    source: { dataset: system_c }
+    source: system_c
     target: user
     fields:
       - source: id
@@ -64,7 +64,7 @@ mappings:
         priority: 3
 
   - name: system_a_linkage
-    source: { dataset: system_a_linkage }
+    source: system_a_linkage
     target: user
     fields:
       - source: system_a_id
@@ -75,7 +75,7 @@ mappings:
         target: system_c_id
 
   - name: system_b_linkage
-    source: { dataset: system_b_linkage }
+    source: system_b_linkage
     target: user
     fields:
       - source: system_b_id
@@ -86,7 +86,7 @@ mappings:
         target: system_c_id
 
   - name: system_c_linkage
-    source: { dataset: system_c_linkage }
+    source: system_c_linkage
     target: user
     fields:
       - source: system_c_id
