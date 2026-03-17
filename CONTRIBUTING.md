@@ -74,9 +74,9 @@ The index table must list every plan file with its status and a one-line summary
 
 ## Documentation (`docs/`)
 
-- `schema-reference.md` — authoritative property reference.
-- `design-rationale.md` — why decisions were made.
-- `ai-guidelines.md` — compact reference for AI agents.
-- `annotated-example.md` — walkthrough of a complete mapping.
+- `reference/schema-reference.md` — authoritative property reference.
+- `reference/annotated-example.md` — walkthrough of a complete mapping.
+- `design/design-rationale.md` — why decisions were made.
+- `design/ai-guidelines.md` — compact reference for AI agents.
 
 When adding a new mapping property or strategy, update all four files.

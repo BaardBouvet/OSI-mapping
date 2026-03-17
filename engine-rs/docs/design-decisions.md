@@ -1,6 +1,6 @@
 # Engine Design Decisions
 
-This document captures design decisions specific to the OSI reference engine — the Rust implementation that compiles mapping YAML into PostgreSQL views. For decisions about the mapping schema itself, see [docs/design-rationale.md](../../docs/design-rationale.md).
+This document captures design decisions specific to the OSI reference engine — the Rust implementation that compiles mapping YAML into PostgreSQL views. For decisions about the mapping schema itself, see [docs/design/design-rationale.md](../../docs/design/design-rationale.md).
 
 ## View Pipeline Architecture
 

@@ -47,7 +47,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [POLYGLOT-SQL-PLAN.md](POLYGLOT-SQL-PLAN.md) | Design | Multi-dialect SQL rendering via polyglot-sql; expression dialect choice; phased adoption plan. |
 | [UNIT-TEST-PLAN.md](UNIT-TEST-PLAN.md) | Done | Unit tests for render pipeline; reduce reliance on slow integration suite. |
 | [LEARNING-GUIDE-PLAN.md](LEARNING-GUIDE-PLAN.md) | Planned | Progressive learning guide teaching mapping concepts from first principles. |
-| [DOCS-SITE-PLAN.md](DOCS-SITE-PLAN.md) | Planned | Publish documentation as a static site using mdBook (`book.toml`) with GitHub Pages. |
+| [DOCS-SITE-PLAN.md](DOCS-SITE-PLAN.md) | Done | Publish documentation as a static site using mdBook (`book.toml`) with GitHub Pages. |
 | [CI-RELEASE-PLAN.md](CI-RELEASE-PLAN.md) | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
 | [CODE-COVERAGE-PLAN.md](CODE-COVERAGE-PLAN.md) | Done | Code coverage via cargo-llvm-cov with Codecov reporting. |
 | [CODE-QUALITY-PLAN.md](CODE-QUALITY-PLAN.md) | Done | Enforce rustfmt, clippy, cargo-deny; one-time codebase cleanup. |

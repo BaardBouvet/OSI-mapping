@@ -87,7 +87,7 @@ Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 | MATERIALIZED-VIEW-INDEX-PLAN | ~~Design~~ **Done** | Opt-in `--materialize` flag with unique indexes for production deployments. |
 | PGTRICKLE-OUTPUT-PLAN | Design | External post-processor rewriting views as pg_trickle stream tables. |
 | LEARNING-GUIDE-PLAN | Planned | Progressive 7-chapter learning guide teaching mapping concepts. |
-| DOCS-SITE-PLAN | Planned | mdBook documentation site with search, deployed to GitHub Pages. |
+| DOCS-SITE-PLAN | ~~Planned~~ **Done** | mdBook documentation site with search, deployed to GitHub Pages. |
 | NAMING-PLAN | Design | Rename project (recommended: "Crossfold"). Update crate, binary, repo, docs. |
 
 **Exit criteria:** CI pipeline green on every push. Pre-built binaries on

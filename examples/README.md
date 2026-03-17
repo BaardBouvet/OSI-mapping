@@ -16,7 +16,7 @@ This directory contains runnable mapping examples, each in its own subdirectory.
 - `merge-threeway/` for merge behavior across multiple systems
 - `reference-preservation/` for foreign-key handling across merged entities
 
-Use these examples together with `../docs/annotated-example.md` and `../docs/schema-reference.md`.
+Use these examples together with `../docs/reference/annotated-example.md` and `../docs/reference/schema-reference.md`.
 
 ## Full Example Catalog
 

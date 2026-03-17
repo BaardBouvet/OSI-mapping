@@ -9,11 +9,11 @@ One YAML file describes the full picture: target entities, field mappings, resol
 Use the docs and examples instead of learning from a dense inline snippet:
 
 - Start here: [`examples/hello-world/README.md`](examples/hello-world/README.md)
-- Step-by-step walkthrough: [`docs/annotated-example.md`](docs/annotated-example.md)
-- Full schema reference: [`docs/schema-reference.md`](docs/schema-reference.md)
+- Step-by-step walkthrough: [`docs/reference/annotated-example.md`](docs/reference/annotated-example.md)
+- Full schema reference: [`docs/reference/schema-reference.md`](docs/reference/schema-reference.md)
 - Why this project exists: [`docs/motivation.md`](docs/motivation.md)
-- Design background and tradeoffs: [`docs/design-rationale.md`](docs/design-rationale.md)
-- AI authoring guidance: [`docs/ai-guidelines.md`](docs/ai-guidelines.md)
+- Design background and tradeoffs: [`docs/design/design-rationale.md`](docs/design/design-rationale.md)
+- AI authoring guidance: [`docs/design/ai-guidelines.md`](docs/design/ai-guidelines.md)
 
 
 
@@ -26,8 +26,9 @@ examples/
   hello-world/           # Simplest possible mapping (start here)
   ...                    # 34 more examples covering all features
 docs/
-  ai-guidelines.md       # Guidelines for AI agents working with mapping files
-  design-rationale.md    # Design decisions and rationale
+  reference/             # Schema reference, annotated example, examples catalog
+  design/                # Design rationale, AI guidelines
+  motivation.md          # Why this project exists
 engine-rs/               # Rust reference engine (YAML → PostgreSQL views)
 ```
 

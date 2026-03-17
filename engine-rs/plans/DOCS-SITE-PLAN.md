@@ -1,6 +1,6 @@
 # Documentation site
 
-**Status:** Planned
+**Status:** Done
 
 Publish all documentation as a static site using mdBook (`book.toml`),
 deployable to GitHub Pages or any static host.
