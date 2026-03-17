@@ -74,19 +74,25 @@ Larger features that expand the type system and analytics layer.
 **Exit criteria:** Array fields work in forward, identity, resolution, reverse,
 and delta views. Composite-type output optional and backward-compatible.
 
-## Phase 4 — Quality and project
+## Phase 4 — Quality, docs, and release
 
-Hardening, testing, and project identity before the 1.0 tag.
+Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 
 | Plan | Status | Work |
 |------|--------|------|
+| CODE-QUALITY-PLAN | Planned | Enforce rustfmt + clippy + cargo-deny; one-time codebase cleanup. |
+| CODE-COVERAGE-PLAN | Planned | cargo-llvm-cov + Codecov; discover untested paths. |
 | UNIT-TEST-PLAN | Planned | Unit tests for render pipeline; reduce integration test reliance. |
 | PROPTEST-PLAN | Planned | Property-based fuzzing: random mapping generation, structural + execution phases. |
+| CI-RELEASE-PLAN | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
+| LEARNING-GUIDE-PLAN | Planned | Progressive 7-chapter learning guide teaching mapping concepts. |
+| DOCS-SITE-PLAN | Planned | mdBook documentation site with search, deployed to GitHub Pages. |
 | NAMING-PLAN | Design | Rename project (recommended: "Crossfold"). Update crate, binary, repo, docs. |
 | SOURCE-GROUPING-PLAN | Design | `system:` property on sources for visual DOT grouping. |
 
-**Exit criteria:** Proptest harness runs in CI. Project name settled and
-applied across all artifacts.
+**Exit criteria:** CI pipeline green on every push. Pre-built binaries on
+GitHub Releases. Documentation site live. Proptest harness runs in CI.
+Project name settled and applied across all artifacts.
 
 ## Post-1.0
 
@@ -130,7 +136,12 @@ Phase 3
             │
             ▼
 Phase 4
+    ├── CODE-QUALITY-PLAN (fmt + clippy + deny)
+    ├── CODE-COVERAGE-PLAN
+    ├── UNIT-TEST-PLAN
     ├── PROPTEST-PLAN
+    ├── CI-RELEASE-PLAN
+    ├── LEARNING-GUIDE-PLAN ──▶ DOCS-SITE-PLAN
     ├── NAMING-PLAN
     └── SOURCE-GROUPING-PLAN
             │
@@ -153,6 +164,6 @@ Post-1.0
 | 1 | 2 | 2 | Lock the schema, secure expressions | **COMPLETE** |
 | 2 | 3 | 3 | Precision, positional identity, passthrough | Not started |
 | 3 | 3 | 3 | Rich types and provenance | Not started |
-| 4 | 3 | 1 | Quality, naming, polish | Not started |
+| 4 | 9 | 1 | Quality, docs, CI/CD, naming | Not started |
 | Post | 9 | — | Deferred or not implementing | — |
-| **Total** | **24** | **9** | | |
+| **Total** | **29** | **9** | | |

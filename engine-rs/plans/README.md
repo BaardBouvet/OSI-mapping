@@ -45,5 +45,10 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [MATERIALIZED-VIEW-INDEX-PLAN.md](MATERIALIZED-VIEW-INDEX-PLAN.md) | Design | Opt-in materialized views with unique indexes; `NULLS NOT DISTINCT` for delta/reverse layers. |
 | [POLYGLOT-SQL-PLAN.md](POLYGLOT-SQL-PLAN.md) | Design | Multi-dialect SQL rendering via polyglot-sql; expression dialect choice; phased adoption plan. |
 | [UNIT-TEST-PLAN.md](UNIT-TEST-PLAN.md) | Planned | Unit tests for render pipeline; reduce reliance on slow integration suite. |
+| [LEARNING-GUIDE-PLAN.md](LEARNING-GUIDE-PLAN.md) | Planned | Progressive learning guide teaching mapping concepts from first principles. |
+| [DOCS-SITE-PLAN.md](DOCS-SITE-PLAN.md) | Planned | Publish documentation as a static site using mdBook (`book.toml`) with GitHub Pages. |
+| [CI-RELEASE-PLAN.md](CI-RELEASE-PLAN.md) | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
+| [CODE-COVERAGE-PLAN.md](CODE-COVERAGE-PLAN.md) | Planned | Code coverage via cargo-llvm-cov with Codecov reporting. |
+| [CODE-QUALITY-PLAN.md](CODE-QUALITY-PLAN.md) | Planned | Enforce rustfmt, clippy, cargo-deny; one-time codebase cleanup. |
 | [PGTRICKLE-OUTPUT-PLAN.md](PGTRICKLE-OUTPUT-PLAN.md) | Design | External post-processor that rewrites engine views as pg_trickle stream tables; per-view config. |
 | [YAML-VS-DSL-PLAN.md](YAML-VS-DSL-PLAN.md) | Design | Analysis of YAML vs custom DSL for the mapping format; recommends staying with YAML. |
