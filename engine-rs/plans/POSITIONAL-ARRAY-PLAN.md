@@ -1,9 +1,16 @@
 # Positional arrays
 
-**Status:** Planned
+**Status:** Superseded
 
-Support nested arrays where elements have no natural identity fields. Identity
-is derived from the parent's identity + the element's array index position.
+Superseded by [CRDT-ORDERING-PLAN](CRDT-ORDERING-PLAN.md), which separates
+ordering from identity and adds CRDT-style merge semantics for multi-source
+array element ordering.
+
+---
+
+*Original description:* Support nested arrays where elements have no natural
+identity fields. Identity is derived from the parent's identity + the element's
+array index position.
 
 ## Problem
 

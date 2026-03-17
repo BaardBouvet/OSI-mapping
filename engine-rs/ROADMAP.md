@@ -55,11 +55,11 @@ without changing the schema surface locked in Phase 1.
 | Plan | Status | Work |
 |------|--------|------|
 | PRECISION-LOSS-PLAN | Planned | `normalize:` property on field mappings for lossy noop comparison (Phase 1 only: truncation, rounding, case folding). |
-| POSITIONAL-ARRAY-PLAN | Planned | `_index` identity for nested arrays without natural keys; `WITH ORDINALITY` in forward views. |
+| CRDT-ORDERING-PLAN | Planned | `order: true` + optional prev/next CRDT links for nested array ordering; supersedes POSITIONAL-ARRAY-PLAN. |
 | PASSTHROUGH-PLAN | Planned | `passthrough:` list on mappings to carry unmapped columns to delta output. |
 
 **Exit criteria:** New examples for each feature. Noop suppression correct for
-normalized fields. Positional arrays round-trip through reverse views.
+normalized fields. Ordered arrays round-trip through reverse views.
 
 ## Phase 3 — Richer types and output
 
@@ -125,7 +125,7 @@ Phase 1                            ← COMPLETE
             ▼
 Phase 2
     ├── PRECISION-LOSS-PLAN ──▶ unblocks: NULL-WINS (post-1.0)
-    ├── POSITIONAL-ARRAY-PLAN
+    ├── CRDT-ORDERING-PLAN
     └── PASSTHROUGH-PLAN
             │
             ▼
@@ -162,8 +162,8 @@ Post-1.0
 |-------|-------|---------------|-------|----------|
 | 0 | 4 | 0 | Prove patterns with examples | **COMPLETE** |
 | 1 | 2 | 2 | Lock the schema, secure expressions | **COMPLETE** |
-| 2 | 3 | 3 | Precision, positional identity, passthrough | Not started |
+| 2 | 3 | 3 | Precision, CRDT ordering, passthrough | Not started |
 | 3 | 3 | 3 | Rich types and provenance | Not started |
 | 4 | 9 | 1 | Quality, docs, CI/CD, naming | Not started |
 | Post | 9 | — | Deferred or not implementing | — |
-| **Total** | **29** | **9** | | |
+| **Total** | **30** | **9** | | |
