@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{MappingDocument, Strategy};
-use crate::validate_expr::{validate_expression, ExprContext};
+use crate::validate_expr::{extract_identifiers, validate_expression, ExprContext};
 
 /// A validation diagnostic — either an error or a warning.
 #[derive(Debug, Clone)]
@@ -109,6 +109,9 @@ pub fn validate(doc: &MappingDocument) -> ValidationResult {
 
     // Pass 10: Parent mapping rules
     pass_parent_mapping(doc, &mut result);
+
+    // Pass 11: Column reference validation (warnings only)
+    pass_column_refs(doc, &mut result);
 
     result
 }
@@ -964,6 +967,143 @@ fn pass_parent_mapping(doc: &MappingDocument, result: &mut ValidationResult) {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Pass 11 — Column reference validation (warnings only)
+// ──────────────────────────────────────────────────────────────────────
+
+fn pass_column_refs(doc: &MappingDocument, result: &mut ValidationResult) {
+    // Build target field sets per target name.
+    let target_fields: HashMap<&str, HashSet<&str>> = doc
+        .targets
+        .iter()
+        .map(|(tname, tdef)| {
+            let fields: HashSet<&str> = tdef.fields.keys().map(|k| k.as_str()).collect();
+            (tname.as_str(), fields)
+        })
+        .collect();
+
+    // Check target-level expressions (default_expression, target expression).
+    for (tname, tdef) in &doc.targets {
+        let available = &target_fields[tname.as_str()];
+        for (fname, fdef) in &tdef.fields {
+            if let Some(expr) = fdef.expression() {
+                check_column_refs(
+                    expr,
+                    available,
+                    &format!("target '{tname}.{fname}' expression"),
+                    result,
+                );
+            }
+            if let Some(expr) = fdef.default_expression() {
+                check_column_refs(
+                    expr,
+                    available,
+                    &format!("target '{tname}.{fname}' default_expression"),
+                    result,
+                );
+            }
+        }
+    }
+
+    // Check mapping-level expressions.
+    for m in &doc.mappings {
+        let target_name = m.target.name();
+
+        // Source columns: union of source.fields keys + field mapping source names.
+        let mut source_cols: HashSet<&str> = HashSet::new();
+        if let Some(src) = doc.sources.get(&m.source.dataset) {
+            source_cols.extend(src.fields.keys().map(|k| k.as_str()));
+        }
+        for fm in &m.fields {
+            if let Some(ref s) = fm.source {
+                source_cols.insert(s.as_str());
+            }
+            if let Some(ref sp) = fm.source_path {
+                // First segment of dotted path is the column name.
+                if let Some(col) = sp.split('.').next() {
+                    source_cols.insert(col);
+                }
+            }
+        }
+        // Also include parent_fields aliases as source columns.
+        for alias in m.source.parent_fields.keys() {
+            source_cols.insert(alias.as_str());
+        }
+
+        // Target fields for this mapping's target.
+        let target_cols = target_fields.get(target_name).cloned().unwrap_or_default();
+
+        // filter: — source columns available
+        if let Some(ref filter) = m.filter {
+            check_column_refs(
+                filter,
+                &source_cols,
+                &format!("mapping '{}' filter", m.name),
+                result,
+            );
+        }
+
+        // reverse_filter: — target fields available
+        if let Some(ref filter) = m.reverse_filter {
+            check_column_refs(
+                filter,
+                &target_cols,
+                &format!("mapping '{}' reverse_filter", m.name),
+                result,
+            );
+        }
+
+        for fm in &m.fields {
+            let label = fm
+                .target
+                .as_deref()
+                .or(fm.source.as_deref())
+                .unwrap_or("?");
+
+            // expression: — source columns available
+            if let Some(ref expr) = fm.expression {
+                check_column_refs(
+                    expr,
+                    &source_cols,
+                    &format!("mapping '{}' field '{label}' expression", m.name),
+                    result,
+                );
+            }
+
+            // reverse_expression: — target fields available
+            if let Some(ref expr) = fm.reverse_expression {
+                check_column_refs(
+                    expr,
+                    &target_cols,
+                    &format!("mapping '{}' field '{label}' reverse_expression", m.name),
+                    result,
+                );
+            }
+        }
+    }
+}
+
+/// Warn when an expression references identifiers not in the available column set.
+fn check_column_refs(
+    expr: &str,
+    available: &HashSet<&str>,
+    location: &str,
+    result: &mut ValidationResult,
+) {
+    // Skip if available set is empty — we have no column info to check against.
+    if available.is_empty() {
+        return;
+    }
+    for ident in extract_identifiers(expr) {
+        if !available.contains(ident.as_str()) {
+            result.warning(
+                "ColumnRef",
+                format!("{location}: unknown column '{ident}'"),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1175,6 +1315,104 @@ mappings:
         assert!(
             msgs.iter().any(|m| m.contains("parenthes")),
             "expected SQL syntax error, got: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn warn_unknown_column_in_expression() {
+        let yaml = r#"
+version: "1.0"
+targets:
+  contact:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+mappings:
+  - name: crm
+    source: { dataset: crm }
+    target: contact
+    fields:
+      - { source: email, target: email }
+      - { target: name, expression: "SPLIT_PART(full_name, ' ', 1)" }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        // full_name is not declared as a source column — should warn
+        let warns: Vec<String> = result
+            .warnings()
+            .filter(|d| d.pass == "ColumnRef")
+            .map(|d| d.message.clone())
+            .collect();
+        assert!(
+            warns.iter().any(|m| m.contains("full_name")),
+            "expected ColumnRef warning for 'full_name', got: {warns:?}"
+        );
+    }
+
+    #[test]
+    fn no_column_warning_for_known_source() {
+        let yaml = r#"
+version: "1.0"
+targets:
+  contact:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+mappings:
+  - name: crm
+    source: { dataset: crm }
+    target: contact
+    fields:
+      - { source: email, target: email }
+      - { source: full_name, target: name, expression: "SPLIT_PART(full_name, ' ', 1)" }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        let col_warns: Vec<String> = result
+            .warnings()
+            .filter(|d| d.pass == "ColumnRef")
+            .map(|d| d.message.clone())
+            .collect();
+        assert!(
+            col_warns.is_empty(),
+            "expected no ColumnRef warnings when source is declared, got: {col_warns:?}"
+        );
+    }
+
+    #[test]
+    fn warn_unknown_column_in_reverse_filter() {
+        let yaml = r#"
+version: "1.0"
+targets:
+  contact:
+    fields:
+      email:
+        strategy: identity
+      is_active:
+        strategy: coalesce
+mappings:
+  - name: crm
+    source: { dataset: crm }
+    target: contact
+    reverse_filter: "nonexistent_field = true"
+    fields:
+      - { source: email, target: email }
+      - { source: active, target: is_active }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        let col_warns: Vec<String> = result
+            .warnings()
+            .filter(|d| d.pass == "ColumnRef")
+            .map(|d| d.message.clone())
+            .collect();
+        assert!(
+            col_warns.iter().any(|m| m.contains("nonexistent_field")),
+            "expected ColumnRef warning for 'nonexistent_field', got: {col_warns:?}"
         );
     }
 }
