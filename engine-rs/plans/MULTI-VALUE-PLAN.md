@@ -1,6 +1,6 @@
 # Multi-value cardinality
 
-**Status:** Pattern
+**Status:** Done
 
 Handle cardinality mismatch: one system stores a single value while another
 stores multiple values for the same semantic field (e.g., one phone number vs.

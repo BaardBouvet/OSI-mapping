@@ -32,7 +32,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [POSITIONAL-ARRAY-PLAN.md](POSITIONAL-ARRAY-PLAN.md) | Planned | Support `_index` for nested arrays without natural identity; uses `WITH ORDINALITY`. |
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
 | [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Planned | `normalize` property on field mappings for lossy noop comparison (truncation, rounding, case folding). |
-| [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Pattern | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
+| [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
 | [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Phase 1–2 done | Validate expressions as safe SQL snippets; `lookup:` for cross-target access. |
 | [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Planned | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
 | [PROPTEST-PLAN.md](PROPTEST-PLAN.md) | Planned | Property-based testing harness using `proptest` to fuzz the engine with random mapping documents. |

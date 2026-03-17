@@ -1,0 +1,127 @@
+version: "1.0"
+description: >
+  Cardinality mismatch: CRM stores a single phone column while the contact center
+  stores a JSONB array of phone numbers — no scalar phone at all. A shared
+  primary_phone target field bridges the gap via an expression that picks CC's
+  first phone. A phone_entry child target holds the full merged list.
+
+sources:
+  crm:
+    primary_key: id
+  contact_center:
+    primary_key: email
+
+targets:
+  contact:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+      primary_phone:
+        strategy: coalesce
+
+  phone_entry:
+    fields:
+      contact_ref:
+        strategy: coalesce
+        references: contact
+      phone:
+        strategy: identity
+
+mappings:
+  # ── CRM (scalar phone) ────────────────────────────────
+  - name: crm_contacts
+    source: { dataset: crm }
+    target: contact
+    priority: 10
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+      - source: phone
+        target: primary_phone
+
+  # CRM's single phone also contributes to the shared phone list
+  - name: crm_phones
+    source: { dataset: crm }
+    target: phone_entry
+    fields:
+      - source: email
+        target: contact_ref
+        direction: forward_only
+        references: crm_contacts
+      - source: phone
+        target: phone
+        direction: forward_only
+
+  # ── Contact Center (phone list only, no scalar phone) ──
+  - name: cc_contacts
+    source: { dataset: contact_center }
+    target: contact
+    priority: 20
+    fields:
+      - source: email
+        target: email
+      # Derive a scalar phone from the JSONB array's first element
+      - expression: "phones->0->>'number'"
+        target: primary_phone
+
+  # Contact center's full phone list from JSONB array
+  - name: cc_phones
+    parent: cc_contacts
+    array: phones
+    parent_fields:
+      parent_email: email
+    target: phone_entry
+    fields:
+      - source: parent_email
+        target: contact_ref
+        references: cc_contacts
+      - source: number
+        target: phone
+
+tests:
+  - description: "CRM scalar phone merges into CC phone list"
+    input:
+      crm:
+        - { id: "C1", email: "alice@example.com", name: "Alice", phone: "555-1000" }
+      contact_center:
+        - email: "alice@example.com"
+          phones:
+            - { number: "555-2000" }
+            - { number: "555-2001" }
+    expected:
+      crm: {}
+      contact_center:
+        updates:
+          - email: "alice@example.com"
+            phones:
+              - { number: "555-1000" }
+              - { number: "555-2000" }
+              - { number: "555-2001" }
+
+  - description: "CRM has no phone — receives CC's first array element via coalesce"
+    input:
+      crm:
+        - { id: "C1", email: "bob@example.com", name: "Bob", phone: null }
+      contact_center:
+        - email: "bob@example.com"
+          phones:
+            - { number: "555-3000" }
+    expected:
+      crm:
+        updates:
+          - { id: "C1", email: "bob@example.com", name: "Bob", phone: "555-3000" }
+
+  - description: "No overlap — different emails, both noop"
+    input:
+      crm:
+        - { id: "C1", email: "carol@example.com", name: "Carol", phone: "555-4000" }
+      contact_center:
+        - email: "dave@other.com"
+          phones:
+            - { number: "555-9000" }
+    expected:
+      crm: {}

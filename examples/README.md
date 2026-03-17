@@ -39,6 +39,7 @@ Use these examples together with `../docs/annotated-example.md` and `../docs/sch
 | [`merge-internal`](merge-internal/README.md) | Internal merge within a single source |
 | [`merge-partials`](merge-partials/README.md) | Partial record merge |
 | [`merge-threeway`](merge-threeway/README.md) | Three-way merge between sources |
+| [`multi-value`](multi-value/README.md) | Scalar-vs-list cardinality mismatch with primary_phone + phone list |
 | [`multiple-target-mappings`](multiple-target-mappings/README.md) | Multiple targets in one file |
 | [`nested-arrays`](nested-arrays/README.md) | Array-of-objects field mapping |
 | [`nested-arrays-deep`](nested-arrays-deep/README.md) | Deeply nested array structures |
