@@ -200,6 +200,93 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
                     );
                 }
             }
+
+            // order: true is mutually exclusive with source, source_path, expression
+            if fm.order {
+                if fm.source.is_some() || fm.source_path.is_some() || fm.expression.is_some() {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}' field[{}]: 'order: true' is mutually exclusive with 'source', 'source_path', and 'expression'",
+                            mapping.name, i
+                        ),
+                    );
+                }
+                if fm.target.is_none() {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}' field[{}]: 'order: true' requires a 'target' field",
+                            mapping.name, i
+                        ),
+                    );
+                }
+                if !mapping.is_nested() {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}' field[{}]: 'order: true' is only valid on nested mappings (with array/array_path)",
+                            mapping.name, i
+                        ),
+                    );
+                }
+            }
+
+            // order_prev/order_next must appear together
+            if fm.order_prev != fm.order_next {
+                result.error(
+                    "Schema",
+                    format!(
+                        "mapping '{}' field[{}]: 'order_prev' and 'order_next' must both be set or both omitted",
+                        mapping.name, i
+                    ),
+                );
+            }
+            if fm.order_prev || fm.order_next {
+                if fm.source.is_some() || fm.source_path.is_some() || fm.expression.is_some() {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}' field[{}]: 'order_prev'/'order_next' is mutually exclusive with 'source', 'source_path', and 'expression'",
+                            mapping.name, i
+                        ),
+                    );
+                }
+                if fm.target.is_none() {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}' field[{}]: 'order_prev'/'order_next' requires a 'target' field",
+                            mapping.name, i
+                        ),
+                    );
+                }
+            }
+        }
+
+        // At most one order: true field per mapping
+        let order_count = mapping.fields.iter().filter(|f| f.order).count();
+        if order_count > 1 {
+            result.error(
+                "Schema",
+                format!(
+                    "mapping '{}': at most one 'order: true' field allowed, found {}",
+                    mapping.name, order_count
+                ),
+            );
+        }
+
+        // order_prev/order_next require that the mapping also has order: true
+        let has_order = mapping.fields.iter().any(|f| f.order);
+        let has_prev_next = mapping.fields.iter().any(|f| f.order_prev || f.order_next);
+        if has_prev_next && !has_order {
+            result.error(
+                "Schema",
+                format!(
+                    "mapping '{}': 'order_prev'/'order_next' require an 'order: true' field on the same mapping",
+                    mapping.name
+                ),
+            );
         }
     }
 }
@@ -344,6 +431,30 @@ fn pass_strategy_consistency(doc: &MappingDocument, result: &mut ValidationResul
                         field_priority: fm.priority,
                         field_last_modified: fm.last_modified.is_some(),
                     });
+            }
+        }
+    }
+
+    // 4-order: order/order_prev/order_next fields must NOT target identity strategy
+    for m in &doc.mappings {
+        let tname = m.target.name();
+        if let Some(tdef) = doc.targets.get(tname) {
+            for (i, fm) in m.fields.iter().enumerate() {
+                if fm.order || fm.order_prev || fm.order_next {
+                    if let Some(ref ftarget) = fm.target {
+                        if let Some(fdef) = tdef.fields.get(ftarget.as_str()) {
+                            if fdef.strategy() == Strategy::Identity {
+                                result.error(
+                                    "Strategy",
+                                    format!(
+                                        "mapping '{}' field[{}]: order field '{}' must not use strategy 'identity'",
+                                        m.name, i, ftarget
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1398,6 +1509,118 @@ mappings:
         assert!(
             col_warns.iter().any(|m| m.contains("nonexistent_field")),
             "expected ColumnRef warning for 'nonexistent_field', got: {col_warns:?}"
+        );
+    }
+
+    #[test]
+    fn order_true_rejected_on_non_nested_mapping() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: identity }
+      pos: { strategy: coalesce }
+mappings:
+  - name: m
+    source: s
+    target: t
+    fields:
+      - { source: name, target: name }
+      - { target: pos, order: true }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            result.has_errors(),
+            "order: true on non-nested mapping should error"
+        );
+        let errs: Vec<&str> = result.errors().map(|d| d.message.as_str()).collect();
+        assert!(
+            errs.iter().any(|m| m.contains("only valid on nested")),
+            "expected nested-only error, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn order_true_rejected_with_source() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  item:
+    fields:
+      parent_id: { strategy: identity }
+      pos: { strategy: coalesce }
+mappings:
+  - name: parent
+    source: s
+    target: item
+    fields:
+      - { source: id, target: parent_id }
+  - name: child
+    source: s
+    parent: parent
+    array: items
+    parent_fields:
+      parent_id: id
+    target: item
+    fields:
+      - { source: parent_id, target: parent_id, references: parent }
+      - { source: idx, target: pos, order: true }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(result.has_errors(), "order: true with source should error");
+        let errs: Vec<&str> = result.errors().map(|d| d.message.as_str()).collect();
+        assert!(
+            errs.iter().any(|m| m.contains("mutually exclusive")),
+            "expected mutually exclusive error, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn order_field_targeting_identity_rejected() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  item:
+    fields:
+      parent_id: { strategy: identity }
+      pos: { strategy: identity }
+mappings:
+  - name: parent
+    source: s
+    target: item
+    fields:
+      - { source: id, target: parent_id }
+  - name: child
+    source: s
+    parent: parent
+    array: items
+    parent_fields:
+      parent_id: id
+    target: item
+    fields:
+      - { source: parent_id, target: parent_id, references: parent }
+      - { target: pos, order: true }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            result.has_errors(),
+            "order field with identity strategy should error"
+        );
+        let errs: Vec<&str> = result.errors().map(|d| d.message.as_str()).collect();
+        assert!(
+            errs.iter()
+                .any(|m| m.contains("must not use strategy 'identity'")),
+            "expected identity rejection, got: {errs:?}"
         );
     }
 }

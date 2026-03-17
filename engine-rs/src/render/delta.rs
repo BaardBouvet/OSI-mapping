@@ -158,6 +158,9 @@ struct NestingNode<'a> {
     item_fields: Vec<String>,
     /// The parent_field alias that links back to the parent level (for GROUP BY).
     parent_fk_field: Option<String>,
+    /// Target field name of the `order: true` field, if any.
+    /// When present, `jsonb_agg` uses this for ORDER BY instead of first item_field.
+    order_field: Option<String>,
     /// Child nesting levels (deeper arrays within this one).
     children: Vec<NestingNode<'a>>,
 }
@@ -733,6 +736,7 @@ fn build_nesting_tree<'a>(
         mapping: &'a Mapping,
         item_fields: Vec<String>,
         parent_fk_field: Option<String>,
+        order_field: Option<String>,
     }
 
     let mut all_nested: Vec<FlatNested<'a>> = Vec::new();
@@ -740,20 +744,36 @@ fn build_nesting_tree<'a>(
         if let Some(path) = m.source.path.as_deref() {
             let parent_aliases: std::collections::HashSet<String> =
                 m.source.parent_fields.keys().cloned().collect();
-            let item_fields: Vec<String> = m
+            let mut item_fields: Vec<String> = m
                 .fields
                 .iter()
                 .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
                 .filter_map(|fm| fm.source_name().map(|s| s.to_string()))
                 .filter(|src| !pk_columns.contains(src.as_str()) && !parent_aliases.contains(src))
                 .collect();
+            // Include order/order_prev/order_next target names (no source_name)
+            for fm in &m.fields {
+                if (fm.order || fm.order_prev || fm.order_next) && fm.is_reverse() {
+                    if let Some(ref tgt) = fm.target {
+                        if !item_fields.contains(tgt) {
+                            item_fields.push(tgt.clone());
+                        }
+                    }
+                }
+            }
             let parent_fk_field = m.source.parent_fields.keys().next().cloned();
+            let order_field = m
+                .fields
+                .iter()
+                .find(|fm| fm.order)
+                .and_then(|fm| fm.target.clone());
             let segments: Vec<String> = path.split('.').map(|s| s.to_string()).collect();
             all_nested.push(FlatNested {
                 segments,
                 mapping: m,
                 item_fields,
                 parent_fk_field,
+                order_field,
             });
         }
     }
@@ -772,6 +792,7 @@ fn build_nesting_tree<'a>(
                 mapping: flat.mapping,
                 item_fields: flat.item_fields,
                 parent_fk_field: flat.parent_fk_field,
+                order_field: flat.order_field,
                 children: Vec::new(),
             });
         } else {
@@ -784,6 +805,7 @@ fn build_nesting_tree<'a>(
                     mapping: flat.mapping,
                     item_fields: flat.item_fields,
                     parent_fk_field: flat.parent_fk_field,
+                    order_field: flat.order_field,
                     children: Vec::new(),
                 });
             }
@@ -831,10 +853,20 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
     }
 
     // Build jsonb_build_object parts for this node's own fields.
+    // Exclude order/order_prev/order_next fields from the JSONB object —
+    // they are ordering metadata, not data content.
+    let order_targets: std::collections::HashSet<&str> = node
+        .mapping
+        .fields
+        .iter()
+        .filter(|fm| fm.order || fm.order_prev || fm.order_next)
+        .filter_map(|fm| fm.target.as_deref())
+        .collect();
     let table_alias = if child_results.is_empty() { "" } else { "n." };
     let mut obj_parts: Vec<String> = node
         .item_fields
         .iter()
+        .filter(|f| !order_targets.contains(f.as_str()))
         .map(|f| format!("'{f}', {table_alias}{}", qi(f)))
         .collect();
 
@@ -852,17 +884,24 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
     let qgroup = qi(group_col);
     let qsegment = qi(&node.segment);
 
+    // Determine ORDER BY field: use order_field if set, otherwise first item_field.
+    let order_by_field = node
+        .order_field
+        .as_deref()
+        .or_else(|| node.item_fields.first().map(|s| s.as_str()))
+        .unwrap_or("_src_id");
+
     if child_results.is_empty() {
         // Leaf node: simple aggregation.
         all_ctes.push(format!(
             "{alias} AS (\n\
              SELECT {qgroup} AS _parent_key, \
-             COALESCE(jsonb_agg({obj_expr} ORDER BY {table_alias}{first_item}), '[]'::jsonb) AS {qsegment}\n\
+             COALESCE(jsonb_agg({obj_expr} ORDER BY {table_alias}{order_col}), '[]'::jsonb) AS {qsegment}\n\
              FROM {rev_view}\n\
              WHERE {qgroup} IS NOT NULL\n\
              GROUP BY {qgroup}\n\
              )",
-            first_item = qi(node.item_fields.first().map(|s| s.as_str()).unwrap_or("_src_id")),
+            order_col = qi(order_by_field),
         ));
     } else {
         // Interior node: join child CTEs, then aggregate.
@@ -883,20 +922,16 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
             ));
         }
 
-        let first_item = qi(node
-            .item_fields
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("_src_id"));
         all_ctes.push(format!(
             "{alias} AS (\n\
              SELECT n.{qgroup} AS _parent_key, \
-             COALESCE(jsonb_agg({obj_expr} ORDER BY n.{first_item}), '[]'::jsonb) AS {qsegment}\n\
+             COALESCE(jsonb_agg({obj_expr} ORDER BY n.{order_col}), '[]'::jsonb) AS {qsegment}\n\
              FROM {rev_view} AS n\n\
              {joins}\n\
              WHERE n.{qgroup} IS NOT NULL\n\
              GROUP BY n.{qgroup}\n\
              )",
+            order_col = qi(order_by_field),
             joins = joins.join("\n"),
         ));
     }

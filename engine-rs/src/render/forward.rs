@@ -292,7 +292,39 @@ pub fn render_forward_body(
                 .find(|fm| fm.is_forward() && fm.target.as_deref() == Some(fname.as_str()));
 
             if let Some(fm) = fm {
-                let expr = if let Some(ref e) = fm.expression {
+                let expr = if fm.order {
+                    // Tier 1 ordinal ordering: zero-padded position from WITH ORDINALITY
+                    "lpad((item.idx - 1)::text, 10, '0')".to_string()
+                } else if fm.order_prev || fm.order_next {
+                    // Tier 2 linked-list CRDT: LAG/LEAD over identity fields
+                    let window_fn = if fm.order_prev { "LAG" } else { "LEAD" };
+                    // Find identity fields on the target for the neighbor reference
+                    let identity_fields: Vec<&str> = target
+                        .fields
+                        .iter()
+                        .filter(|(_, fd)| fd.strategy() == crate::model::Strategy::Identity)
+                        .map(|(n, _)| n.as_str())
+                        .collect();
+                    let value_expr = if identity_fields.len() == 1 {
+                        qi(identity_fields[0])
+                    } else {
+                        // Composite identity: JSONB object of neighbor's identity
+                        let parts: Vec<String> = identity_fields
+                            .iter()
+                            .map(|f| format!("'{}', {}", crate::sql_escape(f), qi(f)))
+                            .collect();
+                        format!("jsonb_build_object({})", parts.join(", "))
+                    };
+                    // Partition by parent field aliases (or parent PK)
+                    let partition_cols: Vec<String> =
+                        parent_field_exprs.values().cloned().collect::<Vec<_>>();
+                    let partition = if partition_cols.is_empty() {
+                        String::new()
+                    } else {
+                        format!("PARTITION BY {} ", partition_cols.join(", "))
+                    };
+                    format!("{window_fn}({value_expr}) OVER ({partition}ORDER BY item.idx)")
+                } else if let Some(ref e) = fm.expression {
                     e.clone()
                 } else if let Some(ref sp) = fm.source_path {
                     if has_path {
@@ -423,9 +455,14 @@ pub fn render_forward_body(
 
     // Nested arrays via LATERAL jsonb_array_elements
     if let Some(ref path) = mapping.source.path {
+        let has_ordering = mapping
+            .fields
+            .iter()
+            .any(|f| f.order || f.order_prev || f.order_next);
         let segments: Vec<&str> = path.split('.').collect();
         for (i, seg) in segments.iter().enumerate() {
-            let alias = if i == segments.len() - 1 {
+            let is_last = i == segments.len() - 1;
+            let alias = if is_last {
                 "item".to_string()
             } else {
                 format!("_nest_{i}")
@@ -435,9 +472,16 @@ pub fn render_forward_body(
             } else {
                 format!("_nest_{}.value->'{seg}'", i - 1)
             };
-            sql.push_str(&format!(
-                "\nCROSS JOIN LATERAL jsonb_array_elements({parent}) AS {alias}"
-            ));
+            if is_last && has_ordering {
+                // WITH ORDINALITY provides item.idx for order fields
+                sql.push_str(&format!(
+                    "\nCROSS JOIN LATERAL jsonb_array_elements({parent}) WITH ORDINALITY AS {alias}(value, idx)"
+                ));
+            } else {
+                sql.push_str(&format!(
+                    "\nCROSS JOIN LATERAL jsonb_array_elements({parent}) AS {alias}"
+                ));
+            }
         }
     }
 
@@ -664,6 +708,98 @@ mappings:
                 && sql.contains("'email'")
                 && sql.contains("'name'"),
             "_base should include all mapped source columns"
+        );
+    }
+
+    #[test]
+    fn order_true_emits_with_ordinality_and_lpad() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  item:
+    fields:
+      parent_id: { strategy: identity }
+      value: { strategy: identity }
+      item_order: { strategy: coalesce }
+mappings:
+  - name: parent
+    source: s
+    target: item
+    fields:
+      - { source: id, target: parent_id }
+  - name: child
+    source: s
+    parent: parent
+    array: items
+    parent_fields:
+      parent_id: id
+    target: item
+    fields:
+      - { source: parent_id, target: parent_id, references: parent }
+      - { target: item_order, order: true }
+      - { source: value, target: value }
+"#,
+        );
+        let target = doc.targets.get("item").unwrap();
+        let sql = render_forward_body(&doc.mappings[1], None, Some(target), &[]).unwrap();
+        assert!(
+            sql.contains("WITH ORDINALITY AS item(value, idx)"),
+            "should emit WITH ORDINALITY: {sql}"
+        );
+        assert!(
+            sql.contains("lpad((item.idx - 1)::text, 10, '0')"),
+            "should emit lpad ordinal expression: {sql}"
+        );
+    }
+
+    #[test]
+    fn order_prev_next_emit_lag_lead() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  step:
+    fields:
+      parent_id: { strategy: identity }
+      instruction: { strategy: identity }
+      step_order: { strategy: coalesce }
+      step_prev: { strategy: coalesce }
+      step_next: { strategy: coalesce }
+mappings:
+  - name: parent
+    source: s
+    target: step
+    fields:
+      - { source: id, target: parent_id }
+  - name: child
+    source: s
+    parent: parent
+    array: steps
+    parent_fields:
+      parent_id: id
+    target: step
+    fields:
+      - { source: parent_id, target: parent_id, references: parent }
+      - { target: step_order, order: true }
+      - { target: step_prev, order_prev: true, order_next: false }
+      - { target: step_next, order_prev: false, order_next: true }
+      - { source: instruction, target: instruction }
+"#,
+        );
+        let target = doc.targets.get("step").unwrap();
+        let sql = render_forward_body(&doc.mappings[1], None, Some(target), &[]).unwrap();
+        assert!(
+            sql.contains("LAG(") && sql.contains("OVER ("),
+            "should emit LAG window function: {sql}"
+        );
+        assert!(
+            sql.contains("LEAD(") && sql.contains("ORDER BY item.idx)"),
+            "should emit LEAD window function: {sql}"
         );
     }
 }

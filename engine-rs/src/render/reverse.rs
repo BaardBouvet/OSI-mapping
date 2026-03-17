@@ -133,6 +133,14 @@ pub fn render_reverse_view(
         let source_name = match fm.source_name() {
             Some(s) => s.to_string(),
             None => {
+                // Order fields have no source column but need to flow through
+                // for delta array reconstruction ORDER BY.
+                if (fm.order || fm.order_prev || fm.order_next) && fm.is_reverse() {
+                    if let Some(ref tgt) = fm.target {
+                        select_exprs.push(format!("r.{}", qi(tgt)));
+                    }
+                    continue;
+                }
                 if let Some(ref rev_expr) = fm.reverse_expression {
                     select_exprs.push(format!("{rev_expr} AS _rev_computed"));
                 }

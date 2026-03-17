@@ -55,7 +55,7 @@ without changing the schema surface locked in Phase 1.
 | Plan | Status | Work |
 |------|--------|------|
 | PRECISION-LOSS-PLAN | Planned | `normalize:` property on field mappings for lossy noop comparison (Phase 1 only: truncation, rounding, case folding). |
-| CRDT-ORDERING-PLAN | Planned | `order: true` + optional prev/next CRDT links for nested array ordering; supersedes POSITIONAL-ARRAY-PLAN. |
+| CRDT-ORDERING-PLAN | ~~Planned~~ **Done** | `order: true` + optional prev/next CRDT links for nested array ordering; supersedes POSITIONAL-ARRAY-PLAN. |
 | PASSTHROUGH-PLAN | Planned | `passthrough:` list on mappings to carry unmapped columns to delta output. |
 
 **Exit criteria:** New examples for each feature. Noop suppression correct for

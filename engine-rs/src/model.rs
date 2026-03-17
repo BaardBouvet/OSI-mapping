@@ -513,13 +513,36 @@ pub struct FieldMapping {
     pub references_field: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// When true, auto-populates this field with a sortable position key
+    /// derived from the array element's index (Tier 1 ordinal ordering).
+    /// Mutually exclusive with `source`, `source_path`, and `expression`.
+    /// Only valid on nested mappings (those with `parent:`/`source.path`).
+    #[serde(default)]
+    pub order: bool,
+    /// When true, auto-populates with the identity of the previous sibling
+    /// (Tier 2 linked-list CRDT ordering). Requires `order: true` and
+    /// `order_next: true` on the same mapping.
+    #[serde(default)]
+    pub order_prev: bool,
+    /// When true, auto-populates with the identity of the next sibling
+    /// (Tier 2 linked-list CRDT ordering). Requires `order: true` and
+    /// `order_prev: true` on the same mapping.
+    #[serde(default)]
+    pub order_next: bool,
 }
 
 impl FieldMapping {
     /// Effective direction considering defaults.
+    /// Order fields default to Bidirectional so they flow through to reverse/delta
+    /// for array reconstruction ORDER BY.
     pub fn effective_direction(&self) -> Direction {
         self.direction.unwrap_or_else(|| {
-            if self.source.is_some() || self.source_path.is_some() {
+            if self.order
+                || self.order_prev
+                || self.order_next
+                || self.source.is_some()
+                || self.source_path.is_some()
+            {
                 Direction::Bidirectional
             } else {
                 Direction::ForwardOnly

@@ -1,6 +1,6 @@
 # CRDT ordering for array elements
 
-**Status:** Planned
+**Status:** Done
 
 Supersedes [POSITIONAL-ARRAY-PLAN](POSITIONAL-ARRAY-PLAN.md).
 

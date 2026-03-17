@@ -25,6 +25,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`hello-world`](hello-world/README.md) | Simplest mapping — two sources, one target, identity + coalesce |
 | [`composite-keys`](composite-keys/README.md) | Multi-field identity (compound match key) |
 | [`concurrent-detection`](concurrent-detection/README.md) | Detecting and handling concurrent edits |
+| [`crdt-ordering`](crdt-ordering/README.md) | Deterministic array element ordering via `order: true` |
 | [`custom-resolution`](custom-resolution/README.md) | Custom resolution strategy via expression |
 | [`depth-mismatch`](depth-mismatch/README.md) | Asymmetric nesting depth — 2-level vs 3-level with intermediate grouping |
 | [`embedded-simple`](embedded-simple/README.md) | Single embedded sub-entity |
