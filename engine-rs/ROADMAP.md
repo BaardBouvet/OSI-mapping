@@ -82,7 +82,7 @@ Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 | CODE-QUALITY-PLAN | ~~Planned~~ **Done** | Enforce rustfmt + clippy + cargo-deny; one-time codebase cleanup. |
 | CODE-COVERAGE-PLAN | ~~Planned~~ **Done** | cargo-llvm-cov + Codecov; discover untested paths. |
 | UNIT-TEST-PLAN | ~~Planned~~ **Done** | Unit tests for render pipeline; reduce integration test reliance. |
-| PROPTEST-PLAN | Planned | Property-based fuzzing: random mapping generation, structural + execution phases. |
+| PROPTEST-PLAN | ~~Planned~~ **Done** | Property-based fuzzing: random mapping generation, structural + execution phases. |
 | CI-RELEASE-PLAN | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
 | MATERIALIZED-VIEW-INDEX-PLAN | Design | Opt-in `--materialize` flag with unique indexes for production deployments. |
 | PGTRICKLE-OUTPUT-PLAN | Design | External post-processor rewriting views as pg_trickle stream tables. |

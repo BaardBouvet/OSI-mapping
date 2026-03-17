@@ -36,7 +36,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
 | [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Phase 1–2 done | Validate expressions as safe SQL snippets; `lookup:` for cross-target access. |
 | [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Planned | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
-| [PROPTEST-PLAN.md](PROPTEST-PLAN.md) | Planned | Property-based testing harness using `proptest` to fuzz the engine with random mapping documents. |
+| [PROPTEST-PLAN.md](PROPTEST-PLAN.md) | Done | Property-based testing harness using `proptest` to fuzz the engine with random mapping documents. |
 | [ANALYTICS-PROVENANCE-PLAN.md](ANALYTICS-PROVENANCE-PLAN.md) | Planned | Provenance + contributions views — trace golden records back to source data. |
 | [PASSTHROUGH-PLAN.md](PASSTHROUGH-PLAN.md) | Planned | Carry unmapped source columns through to delta output for ETL context. |
 | [NULL-WINS-PLAN.md](NULL-WINS-PLAN.md) | Maybe | `null_wins` expression on field mappings — may not implement; sentinel pattern works today. |

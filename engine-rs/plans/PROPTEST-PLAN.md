@@ -1,6 +1,6 @@
 # Property-based testing
 
-**Status:** Planned
+**Status:** Done
 
 Property-based testing harness using the `proptest` crate to fuzz the engine
 with randomly generated mapping documents and verify structural invariants.
