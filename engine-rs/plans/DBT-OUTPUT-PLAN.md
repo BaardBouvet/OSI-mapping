@@ -724,3 +724,256 @@ reference when choosing which stages to materialise:
 
 This guidance belongs in the generated `README.md` or as comments in
 `dbt_project.yml`, not encoded in the engine.
+
+---
+
+## Appendix B: Could the engine be a pure dbt package?
+
+### The question
+
+Instead of a Rust binary that generates SQL, could the entire mapping
+compiler live inside dbt as a Jinja macro package?  The user would write
+`mapping.yaml`, and a dbt package would read it, validate it, and generate
+models — no external tooling required.
+
+### What dbt's macro system can do
+
+dbt macros are Jinja2 templates with access to:
+
+- **`{{ var() }}`** — project variables (YAML values from `dbt_project.yml`)
+- **`{% set %}`** — local variables, lists, dicts
+- **`{% for %}`** — iteration over lists and dicts
+- **`{% if %}`** — conditionals
+- **`{% macro %}`** — reusable functions with parameters
+- **`{{ ref() }}`** — model dependency tracking
+- **`{{ source() }}`** — source declarations
+- **`adapter.dispatch()`** — multi-adapter SQL dispatch
+- **`run_query()`** — execute SQL during compilation
+- **`log()`** — debug output
+- **YAML parsing** — dbt natively reads `schema.yml` and `dbt_project.yml`
+  but macros cannot read arbitrary YAML files at compile time
+
+dbt also supports **pre-hook / post-hook / on-run-start / on-run-end**
+for procedural DDL.
+
+### What the engine does that Jinja can handle
+
+| Engine feature | Jinja feasibility | Notes |
+|---|---|---|
+| Read mapping YAML | Partial | No native arbitrary-file YAML reader.  Would need to encode the mapping as `dbt_project.yml` vars or a `schema.yml` extension. |
+| Field mapping → SELECT | Easy | `{% for field in fields %} "{{ field.source }}" AS "{{ field.target }}" {% endfor %}` |
+| Strategy dispatch | Easy | `{% if strategy == 'coalesce' %} (array_agg(...)) {% elif ... %}` |
+| Source/target iteration | Easy | `{% for mapping in mappings %}` |
+| View naming | Easy | String concatenation |
+| Basic type casting | Easy | `::{{ field.type }}` |
+| DAG ordering | Free | dbt handles this via `{{ ref() }}` dependency tracking |
+| `_base` JSONB construction | Medium | `jsonb_build_object()` call with field iteration |
+| Forward filter / reverse_filter | Easy | `{% if filter %} WHERE {{ filter }} {% endif %}` |
+
+### What Jinja cannot realistically handle
+
+**1. YAML parsing of arbitrary files**
+
+dbt macros cannot read `mapping.yaml` from disk.  The mapping would
+need to be encoded as dbt variables in `dbt_project.yml`:
+
+```yaml
+# dbt_project.yml
+vars:
+  osi_mapping:
+    sources:
+      crm: { primary_key: id }
+    targets:
+      company:
+        fields:
+          email: { strategy: identity }
+    mappings:
+      - name: crm_companies
+        source: { dataset: crm }
+        target: company
+        fields:
+          - { source: email, target: email }
+```
+
+This duplicates the spec inside dbt's own YAML structure.  Users lose
+standalone `mapping.yaml` files, JSON Schema validation, and
+editor-level autocompletion against our schema.
+
+**2. 11-pass semantic validation**
+
+The engine runs 11 sequential validation passes with cross-referencing:
+strategy consistency checks (does coalesce have priorities? does
+last_modified have timestamps?), field coverage analysis (are all
+target fields mapped?), expression safety checking (balanced parens,
+prohibited SQL keywords, internal view reference blocking), column
+reference validation, parent chain resolution, and test data PK
+verification.
+
+Jinja has no exception model, no structured error accumulation, no
+regex support, and limited string introspection.  Trying to validate
+`reverse_filter: "name IS NOT NULL OR org_number IS NOT NULL"` for
+balanced parentheses and prohibited keywords in Jinja is effectively
+impossible without `run_query()` hacks.
+
+The best approximation: skip validation entirely and let PostgreSQL
+catch errors at runtime.  This is a significant regression in user
+experience — the Rust engine catches 30+ categories of errors before
+any SQL is executed.
+
+**3. Expression safety enforcement**
+
+The engine's `validate_expr.rs` strips string literals, checks for 24
+prohibited SQL keywords (SELECT, INSERT, DROP...), blocks internal view
+references (`_fwd_`, `_id_`, etc.), verifies balanced parentheses and
+quotes, and extracts identifiers for column reference checking.  This
+is effectively a mini SQL parser.
+
+Jinja has no regex engine, no character-level string parsing, and no
+backtracking.  This entire subsystem would have to be dropped.
+
+**4. Recursive CTE generation for identity resolution**
+
+The identity view builds a `WITH RECURSIVE` CTE that:
+- UNIONs all forward views for a target
+- Computes entity IDs via `md5(_mapping || ':' || _src_id)`
+- Constructs matching conditions from identity fields, cluster IDs,
+  and pairwise link edges
+- Runs transitive closure to find connected components
+- Selects the MIN component as canonical entity ID
+
+The matching condition generation is the hard part.  For each pair of
+identity fields across all contributing mappings, the engine builds
+`n._field IS NOT NULL AND n._field = n2._field` clauses, groups them
+by `link_group`, and combines with cluster ID matching and link edge
+conditions.  The logic varies based on whether mappings have
+`cluster_field`, `cluster_members`, `links`, or `link_key`.
+
+This is ~300 lines of Rust with multiple levels of conditional logic.
+In Jinja it would be a deeply nested macro with 10+ conditional
+branches, generating a SQL string character by character.  Possible
+but essentially unmaintainable.
+
+**5. Nested JSONB reconstruction in delta views**
+
+The delta module builds a `JsonNode` tree from dotted source paths
+(`metadata.tags[0].value`) and emits `jsonb_build_object()` /
+`jsonb_build_array()` calls that reconstruct the original source
+JSONB structure from denormalised target columns.  This requires:
+
+- Path parsing (`metadata.tags[0].value` →
+  `[Key("metadata"), Key("tags"), Index(0), Key("value")]`)
+- Tree insertion (recursive key-by-key traversal)
+- Tree-to-SQL serialisation (recursive `jsonb_build_object` nesting)
+- Array gap handling (sparse indices → `jsonb_build_array`)
+
+Jinja has no recursive data structure support.  It can iterate over
+flat lists but cannot build or traverse trees.  This would require
+flattening the reconstruction logic into sequential string operations,
+which is fragile and hard to test.
+
+**6. Multi-pass parent chain resolution**
+
+Nested array mappings use `parent:` references that can chain
+(grandchild → child → parent).  The parser resolves these iteratively,
+inheriting `source.dataset`, building compound `source.path`, and
+promoting `parent_fields`.  Each pass resolves one level; the loop
+continues until all are resolved.
+
+Jinja's `{% for %}` cannot modify the collection it's iterating over.
+Fixed-point iteration requires workarounds (recursive macros with
+depth limits) that are brittle and hard to debug.
+
+**7. Composite primary key handling**
+
+Composite keys use `jsonb_build_object('col_a', col_a, 'col_b', col_b)`
+for deterministic serialisation and `((_src_id::jsonb)->>'col_a')` for
+reverse extraction.  The logic varies by key type (single vs. composite)
+across forward, identity, reverse, and delta views.  Each view needs
+type-aware casting based on `source.fields.type` declarations.
+
+In Jinja this is possible but verbose — every PK appearance in every
+view template needs a `{% if pk_type == 'composite' %}` branch.  With
+~6 views per target and ~4 PK reference sites per view, this becomes
+a maintenance burden.
+
+### What a "dbt-only" architecture would look like
+
+If we accepted the limitations above, the closest viable approach:
+
+```
+User writes:
+  dbt_project.yml         (mapping encoded as vars)
+
+dbt package provides:
+  macros/
+    osi_forward.sql       (generate_model macro per view type)
+    osi_identity.sql
+    osi_resolution.sql
+    osi_reverse.sql
+    osi_delta.sql
+    osi_analytics.sql
+  
+  models/
+    (empty — user generates models via dbt run-operation osi_generate)
+```
+
+The user would run `dbt run-operation osi_generate` to create model
+files, then `dbt run`.  But this means the dbt package is a code
+generator running inside dbt — essentially rebuilding the Rust engine
+in Jinja, with worse tooling, no type safety, and no validation.
+
+### Quantitative comparison
+
+| Dimension | Rust engine | Hypothetical dbt package |
+|---|---|---|
+| Source lines | ~5,700 Rust | ~3,000-4,000 Jinja (estimate) |
+| Validation passes | 11 | 0-2 (basic structural only) |
+| Expression safety | Full (24 keyword rules, balanced checks, column refs) | None |
+| Error messages | 30+ categories with file/line context | PostgreSQL runtime errors |
+| Test infrastructure | 58 unit + 12 integration tests | dbt test (schema-level only) |
+| Mapping format | Standalone `mapping.yaml` + JSON Schema | Embedded in `dbt_project.yml` vars |
+| IDE support | JSON Schema → autocompletion, validation | None (opaque vars block) |
+| Debugging | `osi-engine render --annotate`, `osi-engine dot` | dbt compile + manual inspection |
+| Nested arrays | Full (arbitrary depth, sparse indices, type-aware) | Flat only (1 level, no reconstruction) |
+| Primary keys | Single + composite with type casting | Single only (composite too complex) |
+| Build time | <100ms | dbt compile overhead (~2-5s) |
+
+### Recommendation: do not reimplement as a dbt package
+
+The OSI mapping engine is a **domain-specific compiler**, not a SQL
+templating tool.  Its value comes from:
+
+1. **Validation** — catching errors before SQL hits the database
+2. **Expression safety** — preventing SQL injection in user expressions
+3. **Correctness** — type-aware PK handling, nested JSONB reconstruction,
+   transitive closure connectivity
+4. **Composability** — the `ViewOutput` refactor (Phase 1 of this plan)
+   makes the engine a backend-agnostic compiler that can target dbt,
+   raw SQL, or any future output format
+
+dbt is the right **deployment vehicle** — the engine compiles to dbt
+models, and dbt handles materialisation, scheduling, and lineage.
+But dbt's Jinja macro system is the wrong **implementation language**
+for a 5,700-line compiler with 11 validation passes, expression
+parsing, tree construction, and graph algorithms.
+
+The hybrid approach (Rust compiler → dbt project output) gives the best
+of both: compile-time safety from the engine, runtime flexibility from
+dbt.
+
+### When to reconsider
+
+This recommendation should be revisited if:
+
+- **dbt gains a Python model API** — dbt already has experimental Python
+  model support.  If this matures to support general-purpose compilation
+  (not just pandas/Spark transforms), a Python reimplementation of the
+  engine could run inside dbt directly.
+- **The mapping spec shrinks dramatically** — if the spec drops nested
+  arrays, composite keys, expression safety, and multi-pass validation,
+  the remaining logic might fit in Jinja.  But that would remove the
+  features that differentiate the tool.
+- **dbt packages gain pre-compile hooks** — if dbt supported running
+  an external binary before compilation (similar to `on-run-start` but
+  for code generation), the engine could remain Rust while appearing as
+  a native dbt package.

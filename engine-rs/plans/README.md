@@ -43,5 +43,6 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [TARGET-PATH-PLAN.md](TARGET-PATH-PLAN.md) | Design | Analysis of `target_path` (dotted notation on targets) — recommends output formatting over pipeline changes. |
 | [COMPUTED-FIELDS-PLAN.md](COMPUTED-FIELDS-PLAN.md) | Design | `computed:` on targets for cross-target aggregation and recursive self-traversal in analytics views. |
 | [DBT-OUTPUT-PLAN.md](DBT-OUTPUT-PLAN.md) | Design | Generate a dbt project from mapping YAML; `ViewOutput` refactor; compatible with custom materialisations. |
+| [MATERIALIZED-VIEW-INDEX-PLAN.md](MATERIALIZED-VIEW-INDEX-PLAN.md) | Design | Opt-in materialized views with unique indexes; `NULLS NOT DISTINCT` for delta/reverse layers. |
 | [POLYGLOT-SQL-PLAN.md](POLYGLOT-SQL-PLAN.md) | Design | Multi-dialect SQL rendering via polyglot-sql; expression dialect choice; phased adoption plan. |
 | [YAML-VS-DSL-PLAN.md](YAML-VS-DSL-PLAN.md) | Design | Analysis of YAML vs custom DSL for the mapping format; recommends staying with YAML. |
