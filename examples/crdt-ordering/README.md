@@ -9,8 +9,8 @@ recipes. Steps are identified by their instruction text (content-based identity)
 The Blog CMS has higher priority for ordering.
 
 Blog CMS inserts an extra step ("Grease the pan") that Recipe DB doesn't have.
-After merge, the reconstructed array follows Blog CMS's ordering while
-preserving Recipe DB's duration values.
+After merge, the reconstructed array follows Blog CMS's ordering while recipe-
+level fields (for example `cuisine`) can still come from Recipe DB by priority.
 
 ## Key features
 
@@ -18,8 +18,8 @@ preserving Recipe DB's duration values.
 - **Content-based identity** — steps matched by `instruction`, not position
 - **Position ≠ identity** — `step_order` uses `coalesce` (ordering metadata),
   not `identity`
-- **Priority-driven ordering** — Blog CMS (priority 2) ordering wins over
-  Recipe DB (priority 1)
+- **Priority-driven ordering** — Blog CMS step ordering wins via per-mapping
+  priority while recipe-level fields can resolve independently
 
 ## How it works
 

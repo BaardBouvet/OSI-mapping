@@ -23,8 +23,10 @@ targets:
     fields:
       recipe_name:
         strategy: identity
+        link_group: step_identity
       instruction:
         strategy: identity
+        link_group: step_identity
       step_order:
         strategy: coalesce
       duration:
@@ -94,47 +96,56 @@ mappings:
         target: duration
 
 tests:
-  - description: "Blog inserts a step; ordering follows blog (higher priority)"
+  - description: "Blog ordering wins while recipe data still contributes"
     input:
       recipe_db:
         - id: "Chocolate Cake"
           cuisine: "French"
-          steps: >
-            [
-              {"instruction": "Preheat to 200°C", "duration": "10"},
-              {"instruction": "Mix dry ingredients", "duration": "5"},
-              {"instruction": "Bake 30 min", "duration": "30"}
-            ]
+          steps:
+            - instruction: "Preheat to 200°C"
+              duration: "10"
+            - instruction: "Mix dry ingredients"
+              duration: "5"
+            - instruction: "Sift flour"
+              duration: "7"
+            - instruction: "Bake 30 min"
+              duration: "30"
       blog_cms:
         - id: "Chocolate Cake"
           cuisine: "Dessert"
-          steps: >
-            [
-              {"instruction": "Preheat to 200°C"},
-              {"instruction": "Grease the pan"},
-              {"instruction": "Mix dry ingredients"},
-              {"instruction": "Bake 30 min"}
-            ]
+          steps:
+            - instruction: "Preheat to 200°C"
+            - instruction: "Grease the pan"
+            - instruction: "Mix dry ingredients"
+            - instruction: "Bake 30 min"
     expected:
       recipe_db:
         updates:
           - id: "Chocolate Cake"
-            cuisine: "Dessert"
-            steps: >
-              [
-                {"instruction": "Preheat to 200°C", "duration": "10"},
-                {"instruction": "Grease the pan"},
-                {"instruction": "Mix dry ingredients", "duration": "5"},
-                {"instruction": "Bake 30 min", "duration": "30"}
-              ]
+            cuisine: "French"
+            steps:
+              - instruction: "Preheat to 200°C"
+                duration: "10"
+              - instruction: "Mix dry ingredients"
+                duration: "5"
+              - instruction: "Grease the pan"
+                duration: null
+              - instruction: "Sift flour"
+                duration: "7"
+              - instruction: "Bake 30 min"
+                duration: "30"
       blog_cms:
         updates:
           - id: "Chocolate Cake"
-            cuisine: "Dessert"
-            steps: >
-              [
-                {"instruction": "Preheat to 200°C", "duration": "10"},
-                {"instruction": "Grease the pan"},
-                {"instruction": "Mix dry ingredients", "duration": "5"},
-                {"instruction": "Bake 30 min", "duration": "30"}
-              ]
+            cuisine: "French"
+            steps:
+              - instruction: "Preheat to 200°C"
+                duration: "10"
+              - instruction: "Grease the pan"
+                duration: null
+              - instruction: "Mix dry ingredients"
+                duration: "5"
+              - instruction: "Sift flour"
+                duration: "7"
+              - instruction: "Bake 30 min"
+                duration: "30"
