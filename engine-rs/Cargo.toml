@@ -5,6 +5,10 @@ edition = "2021"
 description = "Reference engine for OSI mapping spec — renders mappings to a DAG of PostgreSQL views"
 license = "MIT"
 
+[features]
+default = []
+proptests = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
@@ -33,3 +37,8 @@ needless_pass_by_value = "warn"
 redundant_clone = "warn"
 manual_let_else = "warn"
 uninlined_format_args = "warn"
+
+[[test]]
+name = "proptest_structural"
+path = "tests/proptest_structural.rs"
+required-features = ["proptests"]
