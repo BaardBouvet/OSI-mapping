@@ -11,7 +11,7 @@ is essential for cross-entity references and holistic conflict resolution.
 
 ## Quick start
 
-- Start here: [hello-world example](https://github.com/OWNER/osi-mapping/tree/main/examples/hello-world)
+- Start here: [hello-world example](https://github.com/BaardBouvet/OSI-mapping/tree/main/examples/hello-world)
 - Step-by-step walkthrough: [Annotated example](reference/annotated-example.md)
 - Full schema reference: [Schema reference](reference/schema-reference.md)
 - Why this project exists: [Motivation](motivation.md)
@@ -55,5 +55,5 @@ cargo run -- render ../examples/hello-world/mapping.yaml
 cargo run -- validate ../examples/
 ```
 
-See the [engine-rs README](https://github.com/OWNER/osi-mapping/tree/main/engine-rs)
+See the [engine-rs README](https://github.com/BaardBouvet/OSI-mapping/tree/main/engine-rs)
 for full documentation.
