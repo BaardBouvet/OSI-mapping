@@ -3,7 +3,10 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "osi-engine", about = "OSI mapping reference engine — renders mappings to PostgreSQL views")]
+#[command(
+    name = "osi-engine",
+    about = "OSI mapping reference engine — renders mappings to PostgreSQL views"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -50,7 +53,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Render { mapping, output, create_tables, annotate } => {
+        Command::Render {
+            mapping,
+            output,
+            create_tables,
+            annotate,
+        } => {
             let doc = osi_engine::parser::parse_file(&mapping)?;
             let dag = osi_engine::dag::build_dag(&doc);
             let sql = osi_engine::render::render_sql(&doc, &dag, create_tables, annotate)?;
@@ -84,15 +92,12 @@ fn main() -> Result<()> {
                 let (errors, warnings) = match osi_engine::parser::parse_file(filepath) {
                     Ok(doc) => {
                         let result = osi_engine::validate::validate(&doc);
-                        let errors: Vec<String> =
-                            result.errors().map(|d| d.to_string()).collect();
+                        let errors: Vec<String> = result.errors().map(|d| d.to_string()).collect();
                         let warnings: Vec<String> =
                             result.warnings().map(|d| d.to_string()).collect();
                         (errors, warnings)
                     }
-                    Err(e) => {
-                        (vec![format!("[Parse] {e:#}")], vec![])
-                    }
+                    Err(e) => (vec![format!("[Parse] {e:#}")], vec![]),
                 };
 
                 total_errors += errors.len();
@@ -128,9 +133,7 @@ fn main() -> Result<()> {
                 }
             }
 
-            println!(
-                "\n{checked} checked, {total_errors} error(s), {total_warnings} warning(s)"
-            );
+            println!("\n{checked} checked, {total_errors} error(s), {total_warnings} warning(s)");
             if total_errors > 0 {
                 std::process::exit(1);
             }
@@ -147,7 +150,10 @@ fn main() -> Result<()> {
 }
 
 /// Collect mapping files from a path argument.
-fn collect_mapping_files(path: Option<PathBuf>, repo_root: &std::path::Path) -> Result<Vec<PathBuf>> {
+fn collect_mapping_files(
+    path: Option<PathBuf>,
+    repo_root: &std::path::Path,
+) -> Result<Vec<PathBuf>> {
     match path {
         Some(p) => {
             if p.is_file() {
@@ -165,7 +171,10 @@ fn collect_mapping_files(path: Option<PathBuf>, repo_root: &std::path::Path) -> 
             // Default: look for examples/ relative to current dir or parent
             let examples = if repo_root.join("examples").is_dir() {
                 repo_root.join("examples")
-            } else if repo_root.parent().map_or(false, |p| p.join("examples").is_dir()) {
+            } else if repo_root
+                .parent()
+                .is_some_and(|p| p.join("examples").is_dir())
+            {
                 repo_root.parent().unwrap().join("examples")
             } else {
                 anyhow::bail!("No examples/ directory found; provide a path explicitly");
@@ -184,7 +193,7 @@ fn collect_yamls_recursive(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 collect_yamls_recursive(&path, files);
-            } else if path.file_name().map_or(false, |n| n == "mapping.yaml") {
+            } else if path.file_name().is_some_and(|n| n == "mapping.yaml") {
                 files.push(path);
             }
         }

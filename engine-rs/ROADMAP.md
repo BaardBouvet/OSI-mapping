@@ -68,11 +68,10 @@ Larger features that expand the type system and analytics layer.
 | Plan | Status | Work |
 |------|--------|------|
 | TARGET-ARRAYS-PLAN | Planned | Array-typed target fields (`text[]`, `integer[]`). Eliminates child targets for simple value lists. Full pipeline impact. |
-| COMPOSITE-TYPES-PLAN | Proposed | Replace JSONB nested-array output with PostgreSQL composite types in delta/analytics views. |
 | ANALYTICS-PROVENANCE-PLAN | Planned | `_provenance_` and `_contributions_` views for source-tracing and stewardship. |
 
 **Exit criteria:** Array fields work in forward, identity, resolution, reverse,
-and delta views. Composite-type output optional and backward-compatible.
+and delta views.
 
 ## Phase 4 — Quality, docs, and release
 
@@ -85,10 +84,11 @@ Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 | UNIT-TEST-PLAN | Planned | Unit tests for render pipeline; reduce integration test reliance. |
 | PROPTEST-PLAN | Planned | Property-based fuzzing: random mapping generation, structural + execution phases. |
 | CI-RELEASE-PLAN | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
+| MATERIALIZED-VIEW-INDEX-PLAN | Design | Opt-in `--materialize` flag with unique indexes for production deployments. |
+| PGTRICKLE-OUTPUT-PLAN | Design | External post-processor rewriting views as pg_trickle stream tables. |
 | LEARNING-GUIDE-PLAN | Planned | Progressive 7-chapter learning guide teaching mapping concepts. |
 | DOCS-SITE-PLAN | Planned | mdBook documentation site with search, deployed to GitHub Pages. |
 | NAMING-PLAN | Design | Rename project (recommended: "Crossfold"). Update crate, binary, repo, docs. |
-| SOURCE-GROUPING-PLAN | Design | `system:` property on sources for visual DOT grouping. |
 
 **Exit criteria:** CI pipeline green on every push. Pre-built binaries on
 GitHub Releases. Documentation site live. Proptest harness runs in CI.
@@ -101,9 +101,9 @@ design. They may ship as 1.x minor releases.
 
 | Plan | Status | Reason deferred |
 |------|--------|-----------------|
+| COMPOSITE-TYPES-PLAN | Proposed | Replace JSONB with PostgreSQL composite types. JSONB works today; typed output is additive. |
+| SOURCE-GROUPING-PLAN | Design | `system:` property on sources for visual DOT grouping. Pure cosmetic; no functional impact. |
 | DBT-OUTPUT-PLAN | Design | Generate a dbt project from mapping YAML. Current `psql -f` workflow works; dbt is additive. |
-| PGTRICKLE-OUTPUT-PLAN | Design | External post-processor rewriting views as pg_trickle stream tables. No engine changes. |
-| MATERIALIZED-VIEW-INDEX-PLAN | Design | Opt-in `--materialize` flag with unique indexes. Operators can write DDL manually today. |
 | POLYGLOT-SQL-PLAN | Design | Multi-dialect SQL rendering. PostgreSQL-only is fine for 1.0; other dialects via dbt adapters. |
 | COMPUTED-FIELDS-PLAN | Design | Cross-target aggregation (`from:` + `match:`), recursive traversal (`traverse:`), and missing-bottom example. |
 | TYPE-HIERARCHY-PLAN | Design | Existing `CASE` expressions handle it today. |
@@ -131,7 +131,6 @@ Phase 2
             ▼
 Phase 3
     ├── TARGET-ARRAYS-PLAN ──▶ simplifies MULTI-VALUE pattern
-    ├── COMPOSITE-TYPES-PLAN
     └── ANALYTICS-PROVENANCE-PLAN
             │
             ▼
@@ -141,17 +140,20 @@ Phase 4
     ├── UNIT-TEST-PLAN
     ├── PROPTEST-PLAN
     ├── CI-RELEASE-PLAN
+    ├── MATERIALIZED-VIEW-INDEX-PLAN
+    ├── PGTRICKLE-OUTPUT-PLAN
     ├── LEARNING-GUIDE-PLAN ──▶ DOCS-SITE-PLAN
-    ├── NAMING-PLAN
-    └── SOURCE-GROUPING-PLAN
+    └── NAMING-PLAN
             │
             ▼
         1.0 release
             │
             ▼
 Post-1.0
+    ├── COMPOSITE-TYPES-PLAN
+    ├── SOURCE-GROUPING-PLAN
     ├── COMPUTED-FIELDS-PLAN (aggregation + traversal + missing-bottom example)
-    ├── DBT-OUTPUT-PLAN ──▶ MATERIALIZED-VIEW-INDEX-PLAN (indexes via dbt config)
+    ├── DBT-OUTPUT-PLAN
     ├── POLYGLOT-SQL-PLAN
     └── ...
 ```
@@ -163,7 +165,7 @@ Post-1.0
 | 0 | 4 | 0 | Prove patterns with examples | **COMPLETE** |
 | 1 | 2 | 2 | Lock the schema, secure expressions | **COMPLETE** |
 | 2 | 3 | 3 | Precision, CRDT ordering, passthrough | Not started |
-| 3 | 3 | 3 | Rich types and provenance | Not started |
-| 4 | 9 | 1 | Quality, docs, CI/CD, naming | Not started |
-| Post | 9 | — | Deferred or not implementing | — |
+| 3 | 2 | 2 | Rich types and provenance | Not started |
+| 4 | 11 | 1 | Quality, docs, CI/CD, naming, deployment | Not started |
+| Post | 11 | — | Deferred or not implementing | — |
 | **Total** | **30** | **9** | | |

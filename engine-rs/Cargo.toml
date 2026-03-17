@@ -21,3 +21,14 @@ testcontainers-modules = { version = "0.11", features = ["postgres"] }
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 glob = "0.3"
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+style = { level = "warn" }
+complexity = { level = "warn" }
+perf = { level = "warn" }
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+manual_let_else = "warn"
+uninlined_format_args = "warn"

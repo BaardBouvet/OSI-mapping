@@ -58,11 +58,9 @@ fn resolve_parents(doc: &mut MappingDocument) -> Result<()> {
                 .iter()
                 .find(|other| other.name == parent_name)
                 .map(|other| (other.source.dataset.clone(), other.source.path.clone()))
-                .ok_or_else(|| anyhow::anyhow!(
-                    "mapping '{}': parent '{}' not found",
-                    m.name,
-                    parent_name
-                ))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("mapping '{}': parent '{}' not found", m.name, parent_name)
+                })?;
 
             let m = &mut doc.mappings[i];
 

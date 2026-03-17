@@ -28,7 +28,10 @@ pub fn render_resolution_view(
     let view_name = qi(&format!("_resolved_{target_name}"));
     let id_view = qi(&format!("_id_{target_name}"));
 
-    let has_default_expr = target.fields.values().any(|f| f.default_expression().is_some());
+    let has_default_expr = target
+        .fields
+        .values()
+        .any(|f| f.default_expression().is_some());
 
     // ── Collect groups ──────────────────────────────────────────────
     // group_name → Vec<(field_name, strategy)>
@@ -69,12 +72,7 @@ pub fn render_resolution_view(
             Strategy::LastModified => {
                 let parts: Vec<String> = fields
                     .iter()
-                    .map(|(f, _)| {
-                        format!(
-                            "COALESCE({}, _last_modified)",
-                            qi(&format!("_ts_{f}"))
-                        )
-                    })
+                    .map(|(f, _)| format!("COALESCE({}, _last_modified)", qi(&format!("_ts_{f}"))))
                     .collect();
                 format!("GREATEST({}) DESC NULLS LAST", parts.join(", "))
             }
@@ -159,9 +157,9 @@ pub fn render_resolution_view(
         let strategy = fdef.strategy();
         let base_expr = match strategy {
             Strategy::Identity => format!("min({qfname})"),
-            Strategy::Collect => format!(
-                "array_agg(DISTINCT {qfname}) FILTER (WHERE {qfname} IS NOT NULL)"
-            ),
+            Strategy::Collect => {
+                format!("array_agg(DISTINCT {qfname}) FILTER (WHERE {qfname} IS NOT NULL)")
+            }
             Strategy::Coalesce => format!(
                 "(array_agg({qfname} ORDER BY COALESCE({}, _priority, 999) ASC NULLS LAST) \
                  FILTER (WHERE {qfname} IS NOT NULL))[1]",
@@ -173,13 +171,11 @@ pub fn render_resolution_view(
                 qi(&format!("_ts_{fname}"))
             ),
             Strategy::Expression => {
-                let default_e = format!("max({})", qfname);
+                let default_e = format!("max({qfname})");
                 let agg_expr = fdef.expression().unwrap_or(&default_e);
                 agg_expr.to_string()
             }
-            Strategy::BoolOr => format!(
-                "bool_or(({qfname})::boolean)"
-            ),
+            Strategy::BoolOr => format!("bool_or(({qfname})::boolean)"),
         };
 
         if has_default_expr {
@@ -238,14 +234,11 @@ pub fn render_resolution_view(
         let group_by_clause = if group_by_extra.is_empty() {
             format!("GROUP BY {eid_ref}")
         } else {
-            format!(
-                "GROUP BY {eid_ref}, {}",
-                group_by_extra.join(", ")
-            )
+            format!("GROUP BY {eid_ref}, {}", group_by_extra.join(", "))
         };
 
         let from_clause = if joins.is_empty() {
-            id_view.clone()
+            id_view
         } else {
             format!("{id_view}\n  {}", joins.join("\n  "))
         };

@@ -34,14 +34,18 @@ pub(crate) fn parse_path_segments(path: &str) -> Vec<PathSegment> {
 
         if chars[i] == '[' {
             // Bracket expression: ['key'] or [N].
-            let close = chars[i..].iter().position(|&c| c == ']')
+            let close = chars[i..]
+                .iter()
+                .position(|&c| c == ']')
                 .map(|p| i + p)
                 .unwrap_or(chars.len());
             let inner: String = chars[i + 1..close].iter().collect();
             i = close + 1;
 
             // Strip single quotes: ['key'] → key
-            let inner = inner.strip_prefix('\'').and_then(|s| s.strip_suffix('\''))
+            let inner = inner
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
                 .unwrap_or(&inner);
 
             if let Ok(n) = inner.parse::<i64>() {
@@ -171,14 +175,20 @@ pub fn render_forward_body(
         .unwrap_or(&mapping.source.dataset));
 
     let has_path = mapping.source.path.is_some();
-    let path_depth = mapping.source.path.as_ref()
+    let path_depth = mapping
+        .source
+        .path
+        .as_ref()
         .map(|p| p.split('.').count())
         .unwrap_or(0);
 
     // Build parent field alias → SQL expression map for nested sources.
     let mut parent_field_exprs: HashMap<String, String> = HashMap::new();
     if has_path {
-        let path_segments: Vec<&str> = mapping.source.path.as_ref()
+        let path_segments: Vec<&str> = mapping
+            .source
+            .path
+            .as_ref()
             .map(|p| p.split('.').collect())
             .unwrap_or_default();
         for (alias, pref) in &mapping.source.parent_fields {
@@ -234,9 +244,7 @@ pub fn render_forward_body(
         // cluster_field: use the source column directly, fallback to md5 singleton.
         let qcf = qi(cf);
         let fallback = format!("md5('{}' || ':' || {})", mapping.name, src_id_expr);
-        cols.push(format!(
-            "COALESCE({qcf}, {fallback}) AS _cluster_id"
-        ));
+        cols.push(format!("COALESCE({qcf}, {fallback}) AS _cluster_id"));
     } else if let Some(ref cm) = mapping.cluster_members {
         // cluster_members: LEFT JOIN happens in FROM clause (handled below).
         // _cluster_id comes from the join, fallback to md5 singleton.
@@ -278,9 +286,10 @@ pub fn render_forward_body(
             // Use declared type if available, fall back to text.
             let cast_type = fdef.field_type().unwrap_or("text");
             let null_type = fdef.field_type().unwrap_or("text");
-            let fm = mapping.fields.iter().find(|fm| {
-                fm.is_forward() && fm.target.as_deref() == Some(fname.as_str())
-            });
+            let fm = mapping
+                .fields
+                .iter()
+                .find(|fm| fm.is_forward() && fm.target.as_deref() == Some(fname.as_str()));
 
             if let Some(fm) = fm {
                 let expr = if let Some(ref e) = fm.expression {
@@ -322,7 +331,10 @@ pub fn render_forward_body(
             } else {
                 // Not mapped by this mapping — emit NULL placeholders
                 cols.push(format!("NULL::{null_type} AS {qfname}"));
-                cols.push(format!("NULL::int AS {}", qi(&format!("_priority_{fname}"))));
+                cols.push(format!(
+                    "NULL::int AS {}",
+                    qi(&format!("_priority_{fname}"))
+                ));
                 cols.push(format!("NULL::text AS {}", qi(&format!("_ts_{fname}"))));
             }
         }
@@ -462,17 +474,25 @@ mod tests {
         // Both views must have identical column sets
         for sql in &sqls {
             assert!(
-                sql.contains("_row_id::text AS _src_id")
-                    || sql.contains("_row_id AS _src_id"),
+                sql.contains("_row_id::text AS _src_id") || sql.contains("_row_id AS _src_id"),
                 "missing _src_id"
             );
             assert!(sql.contains("AS _mapping"), "missing _mapping");
-            assert!(sql.contains("AS _priority\n") || sql.contains("AS _priority,"), "missing _priority");
+            assert!(
+                sql.contains("AS _priority\n") || sql.contains("AS _priority,"),
+                "missing _priority"
+            );
             assert!(sql.contains("AS _last_modified"), "missing _last_modified");
             assert!(sql.contains("AS \"email\""), "missing email");
             assert!(sql.contains("AS \"name\""), "missing name");
-            assert!(sql.contains("AS \"_priority_email\""), "missing _priority_email");
-            assert!(sql.contains("AS \"_priority_name\""), "missing _priority_name");
+            assert!(
+                sql.contains("AS \"_priority_email\""),
+                "missing _priority_email"
+            );
+            assert!(
+                sql.contains("AS \"_priority_name\""),
+                "missing _priority_name"
+            );
             assert!(sql.contains("AS \"_ts_email\""), "missing _ts_email");
             assert!(sql.contains("AS \"_ts_name\""), "missing _ts_name");
         }

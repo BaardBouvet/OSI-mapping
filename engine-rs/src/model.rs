@@ -62,7 +62,9 @@ impl From<PrimaryKeyRaw> for PrimaryKey {
     fn from(raw: PrimaryKeyRaw) -> Self {
         match raw {
             PrimaryKeyRaw::Single(s) => PrimaryKey::Single(s),
-            PrimaryKeyRaw::List(v) if v.len() == 1 => PrimaryKey::Single(v.into_iter().next().unwrap()),
+            PrimaryKeyRaw::List(v) if v.len() == 1 => {
+                PrimaryKey::Single(v.into_iter().next().unwrap())
+            }
             PrimaryKeyRaw::List(v) => PrimaryKey::Composite(v),
         }
     }
@@ -117,7 +119,12 @@ impl PrimaryKey {
                 sorted.sort();
                 sorted
                     .iter()
-                    .map(|col| format!("({src_alias}._src_id::jsonb->>'{col}') AS {}", crate::qi(col)))
+                    .map(|col| {
+                        format!(
+                            "({src_alias}._src_id::jsonb->>'{col}') AS {}",
+                            crate::qi(col)
+                        )
+                    })
                     .collect()
             }
         }
@@ -354,9 +361,7 @@ impl LinkField {
                     .map(|(l, p)| (l.clone(), p.to_string()))
                     .collect()
             }
-            LinkField::Map(map) => {
-                map.iter().map(|(l, p)| (l.clone(), p.clone())).collect()
-            }
+            LinkField::Map(map) => map.iter().map(|(l, p)| (l.clone(), p.clone())).collect(),
         }
     }
 }
@@ -388,8 +393,12 @@ enum ClusterMembersRaw {
     },
 }
 
-fn default_cluster_id() -> String { "_cluster_id".to_string() }
-fn default_src_id() -> String { "_src_id".to_string() }
+fn default_cluster_id() -> String {
+    "_cluster_id".to_string()
+}
+fn default_src_id() -> String {
+    "_src_id".to_string()
+}
 
 impl From<ClusterMembersRaw> for ClusterMembers {
     fn from(raw: ClusterMembersRaw) -> Self {
@@ -404,7 +413,11 @@ impl From<ClusterMembersRaw> for ClusterMembers {
                 cluster_id: "_cluster_id".to_string(),
                 source_key: "_src_id".to_string(),
             },
-            ClusterMembersRaw::Full { table, cluster_id, source_key } => ClusterMembers {
+            ClusterMembersRaw::Full {
+                table,
+                cluster_id,
+                source_key,
+            } => ClusterMembers {
                 table,
                 cluster_id,
                 source_key,
@@ -416,7 +429,9 @@ impl From<ClusterMembersRaw> for ClusterMembers {
 impl ClusterMembers {
     /// Resolved table name — uses the default if not specified.
     pub fn table_name(&self, mapping_name: &str) -> String {
-        self.table.clone().unwrap_or_else(|| format!("_cluster_members_{mapping_name}"))
+        self.table
+            .clone()
+            .unwrap_or_else(|| format!("_cluster_members_{mapping_name}"))
     }
 }
 

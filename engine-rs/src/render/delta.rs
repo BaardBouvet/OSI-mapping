@@ -2,9 +2,9 @@ use anyhow::Result;
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
 
+use super::forward::{parse_path_segments, PathSegment};
 use crate::model::{Mapping, Source};
 use crate::{qi, sql_escape};
-use super::forward::{PathSegment, parse_path_segments};
 
 /// A tree node for rebuilding nested JSONB from extracted fields.
 enum JsonNode {
@@ -58,10 +58,15 @@ impl JsonNode {
                     JsonNode::Object(m) => m,
                     _ => {
                         *self = JsonNode::Object(IndexMap::new());
-                        match self { JsonNode::Object(m) => m, _ => unreachable!() }
+                        match self {
+                            JsonNode::Object(m) => m,
+                            _ => unreachable!(),
+                        }
                     }
                 };
-                let child = map.entry(k.clone()).or_insert_with(|| JsonNode::Object(IndexMap::new()));
+                let child = map
+                    .entry(k.clone())
+                    .or_insert_with(|| JsonNode::Object(IndexMap::new()));
                 child.insert(&keys[1..], full_name);
             }
             PathSegment::Index(n) => {
@@ -69,10 +74,15 @@ impl JsonNode {
                     JsonNode::Array(a) => a,
                     _ => {
                         *self = JsonNode::Array(BTreeMap::new());
-                        match self { JsonNode::Array(a) => a, _ => unreachable!() }
+                        match self {
+                            JsonNode::Array(a) => a,
+                            _ => unreachable!(),
+                        }
                     }
                 };
-                let child = arr.entry(*n).or_insert_with(|| JsonNode::Object(IndexMap::new()));
+                let child = arr
+                    .entry(*n)
+                    .or_insert_with(|| JsonNode::Object(IndexMap::new()));
                 child.insert(&keys[1..], full_name);
             }
         }
@@ -85,14 +95,12 @@ impl JsonNode {
 /// Takes the list of output columns and the mappings, detects `source_path`
 /// fields, groups them by physical root column, and returns modified SELECT
 /// expressions with JSONB reconstruction replacing individual path columns.
-fn delta_output_exprs(
-    out_cols: &[String],
-    mappings: &[&Mapping],
-) -> Vec<String> {
+fn delta_output_exprs(out_cols: &[String], mappings: &[&Mapping]) -> Vec<String> {
     // Collect source_path info: physical_root → JsonNode tree.
     let mut json_trees: IndexMap<String, JsonNode> = IndexMap::new();
     // Track which source_names belong to which root.
-    let mut root_for_name: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut root_for_name: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     for m in mappings {
         for fm in &m.fields {
@@ -190,7 +198,11 @@ fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) 
             if pk_columns.contains(src) {
                 return None;
             }
-            Some(format!("_base->>'{}' IS NOT DISTINCT FROM {}::text", sql_escape(src), qi(src)))
+            Some(format!(
+                "_base->>'{}' IS NOT DISTINCT FROM {}::text",
+                sql_escape(src),
+                qi(src)
+            ))
         })
         .collect();
 
@@ -222,10 +234,10 @@ fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) 
     }
     // When all reverse-mapped source fields are PK columns, there's nothing
     // to compare — existing rows are always noops.
-    let has_non_pk_reverse = mapping.fields.iter().any(|fm| {
-        fm.is_reverse()
-            && fm.source_name().map_or(false, |s| !pk_columns.contains(s))
-    });
+    let has_non_pk_reverse = mapping
+        .fields
+        .iter()
+        .any(|fm| fm.is_reverse() && fm.source_name().is_some_and(|s| !pk_columns.contains(s)));
     if !has_non_pk_reverse {
         branches.push("ELSE 'noop'".to_string());
     } else {
@@ -326,11 +338,10 @@ pub fn render_delta_view(
     let children_with_reverse: Vec<&&Mapping> = mappings
         .iter()
         .filter(|m| {
-            m.is_child() && !m.is_nested()
+            m.is_child()
+                && !m.is_nested()
                 && m.fields.iter().any(|f| {
-                    f.is_reverse()
-                        && f.source_name()
-                            .map_or(false, |s| !pk_columns.contains(s))
+                    f.is_reverse() && f.source_name().is_some_and(|s| !pk_columns.contains(s))
                 })
         })
         .collect();
@@ -350,7 +361,14 @@ pub fn render_delta_view(
 
     // Multiple mappings without child merge: UNION ALL approach.
     let all_mappings: Vec<&Mapping> = mappings.to_vec();
-    render_delta_union_all(source_name, &view_name, &all_mappings, &reverse_fields, &pk_columns, &out_cols)
+    render_delta_union_all(
+        source_name,
+        &view_name,
+        &all_mappings,
+        &reverse_fields,
+        &pk_columns,
+        &out_cols,
+    )
 }
 
 /// Build the CASE expression for a merged child delta.
@@ -381,7 +399,13 @@ fn merged_action_case(
     let noop_parts: Vec<String> = all_reverse_fields
         .iter()
         .filter(|f| !pk_columns.contains(f.as_str()))
-        .map(|src| format!("_base->>'{}' IS NOT DISTINCT FROM {}::text", sql_escape(src), qi(src)))
+        .map(|src| {
+            format!(
+                "_base->>'{}' IS NOT DISTINCT FROM {}::text",
+                sql_escape(src),
+                qi(src)
+            )
+        })
         .collect();
 
     let mut branches = Vec::new();
@@ -422,6 +446,7 @@ fn merged_action_case(
 ///
 /// The merged `_base` combines JSONB from primary + all children, enabling
 /// unified noop detection across all fields.
+#[allow(clippy::too_many_arguments)]
 fn render_delta_with_children(
     source_name: &str,
     view_name: &str,
@@ -447,7 +472,8 @@ fn render_delta_with_children(
         alias: String,
         fields: Vec<String>,
     }
-    let mut claimed: std::collections::HashSet<String> = primary_fields.iter().map(|s| s.to_string()).collect();
+    let mut claimed: std::collections::HashSet<String> =
+        primary_fields.iter().map(|s| s.to_string()).collect();
     let mut child_infos: Vec<ChildInfo> = Vec::new();
     for (i, m) in child_mappings.iter().enumerate() {
         let alias = format!("_e{}", i + 1);
@@ -478,7 +504,14 @@ fn render_delta_with_children(
             .chain(child_mappings.iter())
             .map(|m| **m)
             .collect();
-        return render_delta_union_all(source_name, view_name, &all, reverse_fields, pk_columns, out_cols);
+        return render_delta_union_all(
+            source_name,
+            view_name,
+            &all,
+            reverse_fields,
+            pk_columns,
+            out_cols,
+        );
     }
 
     // Field → alias map for sourcing columns in the merged CTE.
@@ -512,10 +545,8 @@ fn render_delta_with_children(
                     .filter_map(|fm| fm.source_name())
                     .collect();
                 // Primary-only out_cols (without child-unique fields).
-                let mut projected: Vec<String> = vec![
-                    "_src_id".to_string(),
-                    "\"_cluster_id\"".to_string(),
-                ];
+                let mut projected: Vec<String> =
+                    vec!["_src_id".to_string(), "\"_cluster_id\"".to_string()];
                 if let Some(src) = source_meta {
                     for col in src.primary_key.columns() {
                         projected.push(qi(col));
@@ -549,14 +580,17 @@ fn render_delta_with_children(
             cols.push(qi(f));
         }
         cols.push("_base".to_string());
-        ctes.push(format!("{} AS (SELECT {} FROM {})", info.alias, cols.join(", "), rev));
+        ctes.push(format!(
+            "{} AS (SELECT {} FROM {})",
+            info.alias,
+            cols.join(", "),
+            rev
+        ));
     }
 
     // Merged CTE: LEFT JOIN children on _src_id, merge _base.
-    let mut merged_cols: Vec<String> = vec![
-        "_p._src_id".to_string(),
-        "_p.\"_cluster_id\"".to_string(),
-    ];
+    let mut merged_cols: Vec<String> =
+        vec!["_p._src_id".to_string(), "_p.\"_cluster_id\"".to_string()];
     if let Some(src) = source_meta {
         for col in src.primary_key.columns() {
             merged_cols.push(format!("_p.{}", qi(col)));
@@ -595,7 +629,15 @@ fn render_delta_with_children(
         .collect();
     let action_expr = merged_action_case(primary_mappings, pk_columns, reverse_fields);
     let mut outer_cols: Vec<String> = vec![format!("{action_expr} AS _action")];
-    outer_cols.extend(delta_output_exprs(out_cols, &all_mappings_for_output.iter().collect::<Vec<_>>().iter().map(|m| **m).collect::<Vec<_>>()));
+    outer_cols.extend(delta_output_exprs(
+        out_cols,
+        &all_mappings_for_output
+            .iter()
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|m| **m)
+            .collect::<Vec<_>>(),
+    ));
 
     // Include target fields for reverse_filter pass-through from primary.
     // These are already projected in the primary reverse view; we just need
@@ -649,9 +691,8 @@ fn render_delta_union_all(
                 if col == "_cluster_id"
                     || col == "_base"
                     || pk_columns.contains(col.as_str())
+                    || m_fields.contains(col.as_str())
                 {
-                    projected.push(qi(col));
-                } else if m_fields.contains(col.as_str()) {
                     projected.push(qi(col));
                 } else {
                     projected.push(format!("NULL::text AS {}", qi(col)));
@@ -830,7 +871,11 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
             // The child CTE groups by _parent_key which corresponds to the
             // child's parent_fk_field. We join it to this node's identity column —
             // which is the first item_field (typically the PK-like field).
-            let join_col = node.item_fields.first().map(|s| s.as_str()).unwrap_or("_src_id");
+            let join_col = node
+                .item_fields
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("_src_id");
             joins.push(format!(
                 "LEFT JOIN {child_alias} ON {child_alias}._parent_key = n.{qjoin}::text",
                 child_alias = cr.alias,
@@ -838,7 +883,11 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
             ));
         }
 
-        let first_item = qi(node.item_fields.first().map(|s| s.as_str()).unwrap_or("_src_id"));
+        let first_item = qi(node
+            .item_fields
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("_src_id"));
         all_ctes.push(format!(
             "{alias} AS (\n\
              SELECT n.{qgroup} AS _parent_key, \
@@ -892,7 +941,12 @@ fn render_delta_with_nested(
     }
 
     // Determine the parent PK column(s) for joining.
-    let parent_pk_col: String = pk_columns.iter().next().copied().unwrap_or("_src_id").to_string();
+    let parent_pk_col: String = pk_columns
+        .iter()
+        .next()
+        .copied()
+        .unwrap_or("_src_id")
+        .to_string();
 
     // Build the noop detection CASE.
     let mut noop_parts: Vec<String> = Vec::new();
@@ -902,7 +956,8 @@ fn render_delta_with_nested(
                 if !pk_columns.contains(src) {
                     noop_parts.push(format!(
                         "p._base->>'{}' IS NOT DISTINCT FROM p.{}::text",
-                        sql_escape(src), qi(src)
+                        sql_escape(src),
+                        qi(src)
                     ));
                 }
             }

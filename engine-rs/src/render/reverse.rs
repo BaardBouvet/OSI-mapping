@@ -20,14 +20,22 @@ fn pk_base_expr_map(
     // Resolve the type for a PK column.
     let type_for_pk = |pk_col: &str| -> Option<&str> {
         // 1. Check if PK maps to a typed identity field on the target.
-        let from_target = mapping.fields.iter()
+        let from_target = mapping
+            .fields
+            .iter()
             .find(|f| f.source.as_deref() == Some(pk_col))
             .and_then(|fm| fm.target.as_deref())
             .and_then(|tgt_name| target?.fields.get(tgt_name))
             .and_then(|fdef| {
-                if fdef.strategy() == Strategy::Identity { fdef.field_type.as_deref() } else { None }
+                if fdef.strategy() == Strategy::Identity {
+                    fdef.field_type.as_deref()
+                } else {
+                    None
+                }
             });
-        if from_target.is_some() { return from_target; }
+        if from_target.is_some() {
+            return from_target;
+        }
 
         // 2. Check source-level fields type declaration.
         source_meta
@@ -48,14 +56,17 @@ fn pk_base_expr_map(
         PrimaryKey::Composite(cols) => {
             let mut sorted: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
             sorted.sort();
-            sorted.iter().map(|col| {
-                let raw = format!("({src_alias}._src_id::jsonb->>'{col}')");
-                let base = match type_for_pk(col) {
-                    Some(t) => format!("{raw}::{t}"),
-                    None => raw,
-                };
-                (col.to_string(), base)
-            }).collect()
+            sorted
+                .iter()
+                .map(|col| {
+                    let raw = format!("({src_alias}._src_id::jsonb->>'{col}')");
+                    let base = match type_for_pk(col) {
+                        Some(t) => format!("{raw}::{t}"),
+                        None => raw,
+                    };
+                    (col.to_string(), base)
+                })
+                .collect()
         }
     }
 }
@@ -99,7 +110,9 @@ pub fn render_reverse_view(
     // Determine which PK columns have reverse field mappings.
     // These will be handled in the field loop with COALESCE(pk_extraction, field_expr)
     // so that insert rows (where _src_id is NULL) get resolved values.
-    let pk_with_reverse: std::collections::HashSet<&str> = mapping.fields.iter()
+    let pk_with_reverse: std::collections::HashSet<&str> = mapping
+        .fields
+        .iter()
         .filter(|f| f.is_reverse() && f.source.is_some())
         .filter_map(|f| f.source.as_deref())
         .filter(|s| pk_base_map.contains_key(*s))
@@ -157,9 +170,7 @@ pub fn render_reverse_view(
                         .unwrap_or_default();
 
                     let qtgt = qi(tgt);
-                    let mut match_parts = vec![
-                        format!("ref_match._src_id = r.{qtgt}::text"),
-                    ];
+                    let mut match_parts = vec![format!("ref_match._src_id = r.{qtgt}::text")];
                     for f in &identity_fields {
                         match_parts.push(format!("ref_match.{}::text = r.{qtgt}::text", qi(f)));
                     }
@@ -177,7 +188,7 @@ pub fn render_reverse_view(
                     let return_expr = match &fm.references_field {
                         Some(rf) => format!("ref_local.{}", qi(rf)),
                         None if is_parent_field => {
-                            let ref_is_nested = ref_mapping.map_or(false, |m| m.is_child());
+                            let ref_is_nested = ref_mapping.is_some_and(|m| m.is_child());
                             if ref_is_nested && identity_fields.len() == 1 {
                                 format!("ref_local.{}", qi(identity_fields[0]))
                             } else if ref_is_nested && identity_fields.contains(&tgt) {
@@ -198,13 +209,17 @@ pub fn render_reverse_view(
                                 match &ref_source.primary_key {
                                     PrimaryKey::Single(pk_col) => {
                                         // Find the field mapping where this PK column is the source
-                                        let target_field_name = rm.fields.iter()
+                                        let target_field_name = rm
+                                            .fields
+                                            .iter()
                                             .find(|f| f.source.as_deref() == Some(pk_col.as_str()))
                                             .and_then(|f| f.target.as_deref())?;
                                         // Check if that target field has a type declaration
                                         let ref_tgt = _all_targets.get(rm.target.name())?;
                                         let fdef = ref_tgt.fields.get(target_field_name)?;
-                                        if fdef.field_type.is_some() && fdef.strategy() == Strategy::Identity {
+                                        if fdef.field_type.is_some()
+                                            && fdef.strategy() == Strategy::Identity
+                                        {
                                             Some(target_field_name)
                                         } else {
                                             None
@@ -265,7 +280,9 @@ pub fn render_reverse_view(
                 if rf.contains(field_name.as_str()) {
                     // Check if already projected (as a source alias).
                     let qfn = qi(field_name);
-                    let already = select_exprs.iter().any(|e| e.ends_with(&format!(" AS {qfn}")) || e == &qfn);
+                    let already = select_exprs
+                        .iter()
+                        .any(|e| e.ends_with(&format!(" AS {qfn}")) || e == &qfn);
                     if !already {
                         select_exprs.push(format!("r.{qfn}"));
                     }
@@ -285,7 +302,9 @@ pub fn render_reverse_view(
     ];
     // Add identity/collect target fields referenced via COALESCE(id.{tgt}, r.{tgt})
     for fm in &mapping.fields {
-        if !fm.is_reverse() { continue; }
+        if !fm.is_reverse() {
+            continue;
+        }
         if let Some(ref tgt) = fm.target {
             let field_def = target.and_then(|t| t.fields.get(tgt.as_str()));
             let strategy = field_def.map(|f| f.strategy());

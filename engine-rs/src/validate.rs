@@ -142,9 +142,7 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
         if !name_re.is_match(name) {
             result.error(
                 "Schema",
-                format!(
-                    "target name '{name}' must match ^[a-z][a-z0-9_]*$"
-                ),
+                format!("target name '{name}' must match ^[a-z][a-z0-9_]*$"),
             );
         }
     }
@@ -191,7 +189,7 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
             // source_path must navigate into the column (dot or bracket after root)
             if let Some(ref sp) = fm.source_path {
                 let has_dot = sp.contains('.');
-                let has_bracket_after_root = sp.find('[').map_or(false, |pos| pos > 0);
+                let has_bracket_after_root = sp.find('[').is_some_and(|pos| pos > 0);
                 if !has_dot && !has_bracket_after_root {
                     result.error(
                         "Schema",
@@ -355,15 +353,13 @@ fn pass_strategy_consistency(doc: &MappingDocument, result: &mut ValidationResul
             let strategy = fdef.strategy();
 
             // 4a: expression strategy must have expression on target field
-            if strategy == Strategy::Expression {
-                if fdef.expression().is_none() {
-                    result.error(
-                        "Strategy",
-                        format!(
-                            "Target '{tname}.{fname}': strategy 'expression' requires an 'expression'"
-                        ),
-                    );
-                }
+            if strategy == Strategy::Expression && fdef.expression().is_none() {
+                result.error(
+                    "Strategy",
+                    format!(
+                        "Target '{tname}.{fname}': strategy 'expression' requires an 'expression'"
+                    ),
+                );
             }
 
             // 4b: link_group requires identity strategy
@@ -371,8 +367,7 @@ fn pass_strategy_consistency(doc: &MappingDocument, result: &mut ValidationResul
                 result.error(
                     "Strategy",
                     format!(
-                        "Target '{tname}.{fname}': link_group requires strategy 'identity', got '{:?}'",
-                        strategy
+                        "Target '{tname}.{fname}': link_group requires strategy 'identity', got '{strategy:?}'"
                     ),
                 );
             }
@@ -385,8 +380,7 @@ fn pass_strategy_consistency(doc: &MappingDocument, result: &mut ValidationResul
                 result.warning(
                     "Strategy",
                     format!(
-                        "Target '{tname}.{fname}': group is typically used with 'last_modified' strategy, got '{:?}'",
-                        strategy
+                        "Target '{tname}.{fname}': group is typically used with 'last_modified' strategy, got '{strategy:?}'"
                     ),
                 );
             }
@@ -482,9 +476,7 @@ fn pass_field_coverage(doc: &MappingDocument, result: &mut ValidationResult) {
             if !contributed.contains(&(tname.as_str(), fname.as_str())) {
                 result.warning(
                     "Field",
-                    format!(
-                        "Target '{tname}.{fname}': no mapping contributes to this field"
-                    ),
+                    format!("Target '{tname}.{fname}': no mapping contributes to this field"),
                 );
             }
         }
@@ -510,10 +502,7 @@ fn pass_test_datasets(doc: &MappingDocument, result: &mut ValidationResult) {
 
     for (i, tc) in doc.tests.iter().enumerate() {
         let default_desc = format!("test[{i}]");
-        let desc = tc
-            .description
-            .as_deref()
-            .unwrap_or(&default_desc);
+        let desc = tc.description.as_deref().unwrap_or(&default_desc);
 
         for ds in tc.input.keys() {
             if !source_datasets.contains(ds.as_str()) {
@@ -583,9 +572,12 @@ fn pass_source_primary_keys(doc: &MappingDocument, result: &mut ValidationResult
             for fm in &m.fields {
                 if let Some(src_col) = fm.source.as_deref() {
                     if pk_cols.contains(&src_col) {
-                        let is_identity = fm.target.as_deref().and_then(|tgt| {
-                            target_def.and_then(|t| t.fields.get(tgt))
-                        }).map(|f| f.strategy() == Strategy::Identity).unwrap_or(false);
+                        let is_identity = fm
+                            .target
+                            .as_deref()
+                            .and_then(|tgt| target_def.and_then(|t| t.fields.get(tgt)))
+                            .map(|f| f.strategy() == Strategy::Identity)
+                            .unwrap_or(false);
                         if !is_identity {
                             result.warning(
                                 "PrimaryKey",
@@ -617,9 +609,7 @@ fn pass_source_primary_keys(doc: &MappingDocument, result: &mut ValidationResult
                 let Some(obj) = row.as_object() else {
                     result.error(
                         "PrimaryKey",
-                        format!(
-                            "'{desc}' dataset '{dataset}' row[{row_idx}] must be an object"
-                        ),
+                        format!("'{desc}' dataset '{dataset}' row[{row_idx}] must be an object"),
                     );
                     continue;
                 };
@@ -650,8 +640,7 @@ fn pass_source_primary_keys(doc: &MappingDocument, result: &mut ValidationResult
                     result.error(
                         "PrimaryKey",
                         format!(
-                            "'{desc}' dataset '{dataset}' has duplicate primary key value '{}'",
-                            key
+                            "'{desc}' dataset '{dataset}' has duplicate primary key value '{key}'"
                         ),
                     );
                 }
@@ -718,11 +707,7 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
         }
 
         for fm in &m.fields {
-            let label = fm
-                .target
-                .as_deref()
-                .or(fm.source.as_deref())
-                .unwrap_or("?");
+            let label = fm.target.as_deref().or(fm.source.as_deref()).unwrap_or("?");
 
             if let Some(ref expr) = fm.expression {
                 check_expr(
@@ -745,12 +730,7 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
 }
 
 /// Validate expression safety and syntax, reporting errors as diagnostics.
-fn check_expr(
-    expr: &str,
-    context: ExprContext,
-    location: &str,
-    result: &mut ValidationResult,
-) {
+fn check_expr(expr: &str, context: ExprContext, location: &str, result: &mut ValidationResult) {
     if expr.trim().is_empty() {
         result.error("SQL", format!("{location}: empty expression"));
         return;
@@ -865,8 +845,18 @@ fn pass_origin_cluster(doc: &MappingDocument, result: &mut ValidationResult) {
 // ──────────────────────────────────────────────────────────────────────
 
 fn pass_default_type_compat(doc: &MappingDocument, result: &mut ValidationResult) {
-    let numeric_types: HashSet<&str> = ["integer", "int", "numeric", "bigint", "smallint", "real", "double precision", "float"]
-        .into_iter().collect();
+    let numeric_types: HashSet<&str> = [
+        "integer",
+        "int",
+        "numeric",
+        "bigint",
+        "smallint",
+        "real",
+        "double precision",
+        "float",
+    ]
+    .into_iter()
+    .collect();
     let boolean_types: HashSet<&str> = ["boolean", "bool"].into_iter().collect();
 
     for (tname, tdef) in &doc.targets {
@@ -885,8 +875,7 @@ fn pass_default_type_compat(doc: &MappingDocument, result: &mut ValidationResult
                         result.warning(
                             "DefaultType",
                             format!(
-                                "target '{tname}' field '{fname}': default {:?} is not numeric but type is '{field_type}'",
-                                default_val
+                                "target '{tname}' field '{fname}': default {default_val:?} is not numeric but type is '{field_type}'"
                             ),
                         );
                     }
@@ -899,8 +888,7 @@ fn pass_default_type_compat(doc: &MappingDocument, result: &mut ValidationResult
                         result.warning(
                             "DefaultType",
                             format!(
-                                "target '{tname}' field '{fname}': default {:?} is not boolean but type is '{field_type}'",
-                                default_val
+                                "target '{tname}' field '{fname}': default {default_val:?} is not boolean but type is '{field_type}'"
                             ),
                         );
                     }
@@ -1054,11 +1042,7 @@ fn pass_column_refs(doc: &MappingDocument, result: &mut ValidationResult) {
         }
 
         for fm in &m.fields {
-            let label = fm
-                .target
-                .as_deref()
-                .or(fm.source.as_deref())
-                .unwrap_or("?");
+            let label = fm.target.as_deref().or(fm.source.as_deref()).unwrap_or("?");
 
             // expression: — source columns available
             if let Some(ref expr) = fm.expression {
@@ -1096,10 +1080,7 @@ fn check_column_refs(
     }
     for ident in extract_identifiers(expr) {
         if !available.contains(ident.as_str()) {
-            result.warning(
-                "ColumnRef",
-                format!("{location}: unknown column '{ident}'"),
-            );
+            result.warning("ColumnRef", format!("{location}: unknown column '{ident}'"));
         }
     }
 }
@@ -1137,8 +1118,7 @@ mod tests {
                 Ok(doc) => {
                     let result = validate(&doc);
                     if result.has_errors() {
-                        let errs: Vec<String> =
-                            result.errors().map(|d| d.to_string()).collect();
+                        let errs: Vec<String> = result.errors().map(|d| d.to_string()).collect();
                         failures.push(format!("{name}: {}", errs.join("; ")));
                         total_errors += result.error_count();
                     }
@@ -1160,8 +1140,8 @@ mod tests {
 
     #[test]
     fn validate_hello_world() {
-        let yaml = std::fs::read_to_string(examples_dir().join("hello-world/mapping.yaml"))
-            .unwrap();
+        let yaml =
+            std::fs::read_to_string(examples_dir().join("hello-world/mapping.yaml")).unwrap();
         let doc = parser::parse_str(&yaml).unwrap();
         let result = validate(&doc);
         assert!(
@@ -1199,7 +1179,8 @@ mappings:
         assert!(result.has_errors());
         let msgs: Vec<String> = result.errors().map(|d| d.message.clone()).collect();
         assert!(
-            msgs.iter().any(|m| m.contains("'crm'") && m.contains("2 times")),
+            msgs.iter()
+                .any(|m| m.contains("'crm'") && m.contains("2 times")),
             "expected duplicate name error, got: {msgs:?}"
         );
     }
@@ -1225,7 +1206,8 @@ mappings:
         assert!(result.has_errors());
         let msgs: Vec<String> = result.errors().map(|d| d.message.clone()).collect();
         assert!(
-            msgs.iter().any(|m| m.contains("nonexistent") && m.contains("not found")),
+            msgs.iter()
+                .any(|m| m.contains("nonexistent") && m.contains("not found")),
             "expected target ref error, got: {msgs:?}"
         );
     }
@@ -1252,7 +1234,8 @@ mappings:
         assert!(result.has_errors());
         let msgs: Vec<String> = result.errors().map(|d| d.message.clone()).collect();
         assert!(
-            msgs.iter().any(|m| m.contains("phone_number") && m.contains("not found")),
+            msgs.iter()
+                .any(|m| m.contains("phone_number") && m.contains("not found")),
             "expected field coverage error, got: {msgs:?}"
         );
     }
@@ -1283,7 +1266,9 @@ mappings:
         assert!(!result.has_errors());
         let warns: Vec<String> = result.warnings().map(|d| d.message.clone()).collect();
         assert!(
-            warns.iter().any(|m| m.contains("phone") && m.contains("no mapping")),
+            warns
+                .iter()
+                .any(|m| m.contains("phone") && m.contains("no mapping")),
             "expected orphan field warning, got: {warns:?}"
         );
     }

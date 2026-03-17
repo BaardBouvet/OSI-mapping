@@ -61,15 +61,13 @@ pub fn validate_expression(expr: &str, context: ExprContext) -> Result<(), Strin
 // ── Keyword detection ────────────────────────────────────────────────
 
 static PROHIBITED_KEYWORDS: &[&str] = &[
-    "SELECT", "FROM", "JOIN", "WHERE", "GROUP", "HAVING", "LIMIT", "ORDER",
-    "DISTINCT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
-    "TRUNCATE", "BEGIN", "COMMIT", "ROLLBACK", "GRANT", "REVOKE", "COPY",
-    "EXECUTE",
+    "SELECT", "FROM", "JOIN", "WHERE", "GROUP", "HAVING", "LIMIT", "ORDER", "DISTINCT", "INSERT",
+    "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "BEGIN", "COMMIT", "ROLLBACK",
+    "GRANT", "REVOKE", "COPY", "EXECUTE",
 ];
 
 /// Regex that matches `'...'` including escaped quotes (`''`).
-static LITERAL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"'(?:[^']|'')*'").unwrap());
+static LITERAL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"'(?:[^']|'')*'").unwrap());
 
 fn strip_string_literals(expr: &str) -> String {
     LITERAL_RE.replace_all(expr, "''").to_string()
@@ -81,7 +79,7 @@ fn contains_prohibited_keyword(expr: &str, exempt: &[&str]) -> Option<String> {
         if exempt.contains(&kw) {
             continue;
         }
-        let pattern = format!(r"(?i)\b{}\b", kw);
+        let pattern = format!(r"(?i)\b{kw}\b");
         if Regex::new(&pattern).unwrap().is_match(&stripped) {
             return Some(kw.to_string());
         }
@@ -91,9 +89,7 @@ fn contains_prohibited_keyword(expr: &str, exempt: &[&str]) -> Option<String> {
 
 // ── Internal view references ────────────────────────────────────────
 
-static INTERNAL_PREFIXES: &[&str] = &[
-    "_fwd_", "_id_", "_resolved_", "_rev_", "_delta_", "_grp_",
-];
+static INTERNAL_PREFIXES: &[&str] = &["_fwd_", "_id_", "_resolved_", "_rev_", "_delta_", "_grp_"];
 
 fn contains_internal_view_ref(expr: &str) -> Option<String> {
     let stripped = strip_string_literals(expr);
@@ -177,15 +173,13 @@ fn check_balanced_quotes(expr: &str) -> Result<(), String> {
 static SQL_KEYWORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         // Prohibited keywords (from Phase 1)
-        "SELECT", "FROM", "JOIN", "WHERE", "GROUP", "HAVING", "LIMIT", "ORDER",
-        "DISTINCT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
-        "TRUNCATE", "BEGIN", "COMMIT", "ROLLBACK", "GRANT", "REVOKE", "COPY",
-        "EXECUTE",
+        "SELECT", "FROM", "JOIN", "WHERE", "GROUP", "HAVING", "LIMIT", "ORDER", "DISTINCT",
+        "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "BEGIN", "COMMIT",
+        "ROLLBACK", "GRANT", "REVOKE", "COPY", "EXECUTE",
         // Operators & SQL grammar words
-        "AND", "OR", "NOT", "IS", "IN", "AS", "ON", "BY", "BETWEEN", "LIKE",
-        "ILIKE", "CASE", "WHEN", "THEN", "ELSE", "END", "NULL", "TRUE", "FALSE",
-        "ASC", "DESC", "NULLS", "FIRST", "LAST", "ALL", "ANY", "SOME", "EXISTS",
-        "CAST", "FILTER",
+        "AND", "OR", "NOT", "IS", "IN", "AS", "ON", "BY", "BETWEEN", "LIKE", "ILIKE", "CASE",
+        "WHEN", "THEN", "ELSE", "END", "NULL", "TRUE", "FALSE", "ASC", "DESC", "NULLS", "FIRST",
+        "LAST", "ALL", "ANY", "SOME", "EXISTS", "CAST", "FILTER",
     ]
     .into_iter()
     .collect()
@@ -197,31 +191,92 @@ static SQL_KEYWORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 static SQL_FUNCTIONS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         // Aggregate functions
-        "MIN", "MAX", "SUM", "AVG", "COUNT", "BOOL_OR", "BOOL_AND",
-        "STRING_AGG", "ARRAY_AGG", "JSONB_AGG", "JSON_AGG",
+        "MIN",
+        "MAX",
+        "SUM",
+        "AVG",
+        "COUNT",
+        "BOOL_OR",
+        "BOOL_AND",
+        "STRING_AGG",
+        "ARRAY_AGG",
+        "JSONB_AGG",
+        "JSON_AGG",
         // String functions
-        "SPLIT_PART", "SUBSTRING", "SUBSTR", "LENGTH", "CHAR_LENGTH",
-        "UPPER", "LOWER", "TRIM", "LTRIM", "RTRIM", "REPLACE", "CONCAT",
-        "CONCAT_WS", "LEFT", "RIGHT", "LPAD", "RPAD", "REVERSE",
-        "REGEXP_REPLACE", "REGEXP_MATCH", "REGEXP_MATCHES",
+        "SPLIT_PART",
+        "SUBSTRING",
+        "SUBSTR",
+        "LENGTH",
+        "CHAR_LENGTH",
+        "UPPER",
+        "LOWER",
+        "TRIM",
+        "LTRIM",
+        "RTRIM",
+        "REPLACE",
+        "CONCAT",
+        "CONCAT_WS",
+        "LEFT",
+        "RIGHT",
+        "LPAD",
+        "RPAD",
+        "REVERSE",
+        "REGEXP_REPLACE",
+        "REGEXP_MATCH",
+        "REGEXP_MATCHES",
         // Date/time functions
-        "TO_DATE", "TO_CHAR", "TO_TIMESTAMP", "TO_NUMBER",
-        "DATE_PART", "DATE_TRUNC", "AGE", "NOW", "CURRENT_DATE",
-        "CURRENT_TIMESTAMP", "EXTRACT",
+        "TO_DATE",
+        "TO_CHAR",
+        "TO_TIMESTAMP",
+        "TO_NUMBER",
+        "DATE_PART",
+        "DATE_TRUNC",
+        "AGE",
+        "NOW",
+        "CURRENT_DATE",
+        "CURRENT_TIMESTAMP",
+        "EXTRACT",
         // Type conversion
-        "COALESCE", "NULLIF", "GREATEST", "LEAST",
+        "COALESCE",
+        "NULLIF",
+        "GREATEST",
+        "LEAST",
         // Math
-        "ABS", "CEIL", "CEILING", "FLOOR", "ROUND", "TRUNC", "MOD",
-        "POWER", "SQRT", "LOG", "LN", "EXP", "SIGN",
+        "ABS",
+        "CEIL",
+        "CEILING",
+        "FLOOR",
+        "ROUND",
+        "TRUNC",
+        "MOD",
+        "POWER",
+        "SQRT",
+        "LOG",
+        "LN",
+        "EXP",
+        "SIGN",
         // Hash / crypto
-        "MD5", "SHA256", "ENCODE", "DECODE",
+        "MD5",
+        "SHA256",
+        "ENCODE",
+        "DECODE",
         // JSONB functions
-        "JSONB_BUILD_OBJECT", "JSONB_BUILD_ARRAY", "JSONB_EXTRACT_PATH",
-        "JSONB_EXTRACT_PATH_TEXT", "JSONB_ARRAY_ELEMENTS",
-        "JSONB_ARRAY_ELEMENTS_TEXT", "JSON_EXTRACT_PATH_TEXT",
-        "JSONB_TYPEOF", "JSONB_EACH", "JSONB_EACH_TEXT",
-        "JSONB_OBJECT_KEYS", "JSONB_SET", "JSONB_STRIP_NULLS",
-        "ROW_NUMBER", "RANK", "DENSE_RANK",
+        "JSONB_BUILD_OBJECT",
+        "JSONB_BUILD_ARRAY",
+        "JSONB_EXTRACT_PATH",
+        "JSONB_EXTRACT_PATH_TEXT",
+        "JSONB_ARRAY_ELEMENTS",
+        "JSONB_ARRAY_ELEMENTS_TEXT",
+        "JSON_EXTRACT_PATH_TEXT",
+        "JSONB_TYPEOF",
+        "JSONB_EACH",
+        "JSONB_EACH_TEXT",
+        "JSONB_OBJECT_KEYS",
+        "JSONB_SET",
+        "JSONB_STRIP_NULLS",
+        "ROW_NUMBER",
+        "RANK",
+        "DENSE_RANK",
     ]
     .into_iter()
     .collect()
@@ -230,18 +285,37 @@ static SQL_FUNCTIONS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 /// Common SQL type names used after `::` casts.
 static SQL_TYPES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
-        "TEXT", "INT", "INTEGER", "BIGINT", "SMALLINT", "NUMERIC", "DECIMAL",
-        "REAL", "FLOAT", "DOUBLE", "BOOLEAN", "BOOL", "DATE", "TIME",
-        "TIMESTAMP", "TIMESTAMPTZ", "INTERVAL", "UUID", "JSONB", "JSON",
-        "BYTEA", "VARCHAR", "CHAR", "CHARACTER",
+        "TEXT",
+        "INT",
+        "INTEGER",
+        "BIGINT",
+        "SMALLINT",
+        "NUMERIC",
+        "DECIMAL",
+        "REAL",
+        "FLOAT",
+        "DOUBLE",
+        "BOOLEAN",
+        "BOOL",
+        "DATE",
+        "TIME",
+        "TIMESTAMP",
+        "TIMESTAMPTZ",
+        "INTERVAL",
+        "UUID",
+        "JSONB",
+        "JSON",
+        "BYTEA",
+        "VARCHAR",
+        "CHAR",
+        "CHARACTER",
     ]
     .into_iter()
     .collect()
 });
 
 /// Regex matching a double-quoted identifier: `"something"`.
-static DQUOTE_IDENT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""([^"]+)""#).unwrap());
+static DQUOTE_IDENT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""([^"]+)""#).unwrap());
 
 /// Regex matching a bare identifier: letters/underscore start, then
 /// letters/digits/underscore. Does NOT match numbers-only.
@@ -323,17 +397,25 @@ mod tests {
 
     #[test]
     fn accepts_simple_function_call() {
-        assert!(validate_expression("SPLIT_PART(name, ' ', 1)", ExprContext::ForwardExpression).is_ok());
+        assert!(
+            validate_expression("SPLIT_PART(name, ' ', 1)", ExprContext::ForwardExpression).is_ok()
+        );
     }
 
     #[test]
     fn accepts_cast() {
-        assert!(validate_expression("TO_DATE(dob, 'DD/MM/YY')", ExprContext::ForwardExpression).is_ok());
+        assert!(
+            validate_expression("TO_DATE(dob, 'DD/MM/YY')", ExprContext::ForwardExpression).is_ok()
+        );
     }
 
     #[test]
     fn accepts_concatenation() {
-        assert!(validate_expression("first_name || ' ' || last_name", ExprContext::ReverseExpression).is_ok());
+        assert!(validate_expression(
+            "first_name || ' ' || last_name",
+            ExprContext::ReverseExpression
+        )
+        .is_ok());
     }
 
     #[test]
@@ -348,12 +430,18 @@ mod tests {
 
     #[test]
     fn accepts_coalesce() {
-        assert!(validate_expression("COALESCE(phone, '__CLEARED__')", ExprContext::ForwardExpression).is_ok());
+        assert!(validate_expression(
+            "COALESCE(phone, '__CLEARED__')",
+            ExprContext::ForwardExpression
+        )
+        .is_ok());
     }
 
     #[test]
     fn accepts_is_not_null() {
-        assert!(validate_expression("deleted_at IS NOT NULL", ExprContext::ForwardExpression).is_ok());
+        assert!(
+            validate_expression("deleted_at IS NOT NULL", ExprContext::ForwardExpression).is_ok()
+        );
     }
 
     #[test]
@@ -376,7 +464,8 @@ mod tests {
         assert!(validate_expression(
             "string_agg(distinct type, ',' order by type)",
             ExprContext::TargetExpression,
-        ).is_ok());
+        )
+        .is_ok());
     }
 
     #[test]
@@ -386,17 +475,29 @@ mod tests {
 
     #[test]
     fn accepts_nullif() {
-        assert!(validate_expression("NULLIF(phone, '__CLEARED__')", ExprContext::ReverseExpression).is_ok());
+        assert!(validate_expression(
+            "NULLIF(phone, '__CLEARED__')",
+            ExprContext::ReverseExpression
+        )
+        .is_ok());
     }
 
     #[test]
     fn accepts_default_expression() {
-        assert!(validate_expression("SPLIT_PART(full_name, ' ', 1)", ExprContext::DefaultExpression).is_ok());
+        assert!(validate_expression(
+            "SPLIT_PART(full_name, ' ', 1)",
+            ExprContext::DefaultExpression
+        )
+        .is_ok());
     }
 
     #[test]
     fn accepts_regex_replace() {
-        assert!(validate_expression("REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')", ExprContext::ForwardExpression).is_ok());
+        assert!(validate_expression(
+            "REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')",
+            ExprContext::ForwardExpression
+        )
+        .is_ok());
     }
 
     #[test]
@@ -411,31 +512,39 @@ mod tests {
 
     #[test]
     fn rejects_semicolon() {
-        let err = validate_expression("name; DROP TABLE users", ExprContext::ForwardExpression).unwrap_err();
+        let err = validate_expression("name; DROP TABLE users", ExprContext::ForwardExpression)
+            .unwrap_err();
         assert!(err.contains("semicolon"), "{err}");
     }
 
     #[test]
     fn rejects_select() {
-        let err = validate_expression("(SELECT min(phone) FROM phones)", ExprContext::ReverseExpression).unwrap_err();
+        let err = validate_expression(
+            "(SELECT min(phone) FROM phones)",
+            ExprContext::ReverseExpression,
+        )
+        .unwrap_err();
         assert!(err.contains("SELECT"), "{err}");
     }
 
     #[test]
     fn rejects_drop() {
-        let err = validate_expression("DROP TABLE users", ExprContext::ForwardExpression).unwrap_err();
+        let err =
+            validate_expression("DROP TABLE users", ExprContext::ForwardExpression).unwrap_err();
         assert!(err.contains("DROP"), "{err}");
     }
 
     #[test]
     fn rejects_insert() {
-        let err = validate_expression("INSERT INTO t VALUES (1)", ExprContext::ForwardExpression).unwrap_err();
+        let err = validate_expression("INSERT INTO t VALUES (1)", ExprContext::ForwardExpression)
+            .unwrap_err();
         assert!(err.contains("INSERT"), "{err}");
     }
 
     #[test]
     fn rejects_internal_view_fwd() {
-        let err = validate_expression("_fwd_contact.name", ExprContext::ForwardExpression).unwrap_err();
+        let err =
+            validate_expression("_fwd_contact.name", ExprContext::ForwardExpression).unwrap_err();
         assert!(err.contains("_fwd_"), "{err}");
     }
 
@@ -444,9 +553,13 @@ mod tests {
         let err = validate_expression(
             r#"(SELECT min("phone") FROM "_resolved_phone_entry")"#,
             ExprContext::ReverseExpression,
-        ).unwrap_err();
+        )
+        .unwrap_err();
         // Could match SELECT first or _resolved_, both are violations
-        assert!(err.contains("SELECT") || err.contains("_resolved_"), "{err}");
+        assert!(
+            err.contains("SELECT") || err.contains("_resolved_"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -474,13 +587,15 @@ mod tests {
 
     #[test]
     fn order_rejected_outside_aggregate_context() {
-        let err = validate_expression("name ORDER BY id", ExprContext::ForwardExpression).unwrap_err();
+        let err =
+            validate_expression("name ORDER BY id", ExprContext::ForwardExpression).unwrap_err();
         assert!(err.contains("ORDER"), "{err}");
     }
 
     #[test]
     fn rejects_delta_prefix() {
-        let err = validate_expression("_delta_contact.name", ExprContext::ForwardExpression).unwrap_err();
+        let err =
+            validate_expression("_delta_contact.name", ExprContext::ForwardExpression).unwrap_err();
         assert!(err.contains("_delta_"), "{err}");
     }
 
@@ -491,7 +606,8 @@ mod tests {
 
     #[test]
     fn rejects_grant() {
-        let err = validate_expression("GRANT ALL ON t TO public", ExprContext::ForwardExpression).unwrap_err();
+        let err = validate_expression("GRANT ALL ON t TO public", ExprContext::ForwardExpression)
+            .unwrap_err();
         assert!(err.contains("GRANT"), "{err}");
     }
 

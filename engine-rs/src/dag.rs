@@ -95,7 +95,10 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
         let fwd = ViewNode::Forward(mname.clone());
         edges.entry(fwd.clone()).or_default();
         if !edges[&fwd].contains(&ViewNode::Source(src.clone())) {
-            edges.get_mut(&fwd).unwrap().push(ViewNode::Source(src.clone()));
+            edges
+                .get_mut(&fwd)
+                .unwrap()
+                .push(ViewNode::Source(src.clone()));
         }
 
         // Identity view depends on forward views.
@@ -110,15 +113,16 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             let cm_table = cm.table_name(mname);
             edges.entry(ViewNode::Source(cm_table.clone())).or_default();
             if !edges[&fwd].contains(&ViewNode::Source(cm_table.clone())) {
-                edges.get_mut(&fwd).unwrap().push(ViewNode::Source(cm_table));
+                edges
+                    .get_mut(&fwd)
+                    .unwrap()
+                    .push(ViewNode::Source(cm_table));
             }
         }
 
         // Resolved view depends on identity view
         let res = ViewNode::Resolved(tname.to_string());
-        edges
-            .entry(res.clone())
-            .or_default();
+        edges.entry(res.clone()).or_default();
         if !edges[&res].contains(&id) {
             edges.get_mut(&res).unwrap().push(id.clone());
         }
@@ -134,7 +138,9 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
         // Reverse + delta views (auto-derived from field directions).
         if mapping.needs_sync() {
             let rev = ViewNode::Reverse(mname.clone());
-            edges.entry(rev.clone()).or_default()
+            edges
+                .entry(rev.clone())
+                .or_default()
                 .push(ViewNode::Resolved(tname.to_string()));
 
             // Delta is per-source-dataset (combines all reverse views for this source).
@@ -190,12 +196,17 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
                 ViewNode::Reverse(mapping.name.clone()),
                 ViewNode::Delta(mapping.source.dataset.clone()),
             ));
-        }    }
+        }
+    }
 
     // Topological sort (Kahn's algorithm).
     let order = topological_sort(&edges);
 
-    ViewDag { edges, order, join_edges }
+    ViewDag {
+        edges,
+        order,
+        join_edges,
+    }
 }
 
 fn topological_sort(edges: &BTreeMap<ViewNode, Vec<ViewNode>>) -> Vec<ViewNode> {
@@ -274,7 +285,9 @@ pub fn to_dot(dag: &ViewDag) -> String {
             ViewNode::Reverse(_) | ViewNode::Delta(_) => "box",
             _ => "box",
         };
-        out.push_str(&format!("  \"{name}\" [label=\"{label}\" shape={shape}];\n"));
+        out.push_str(&format!(
+            "  \"{name}\" [label=\"{label}\" shape={shape}];\n"
+        ));
         for dep in deps {
             // Skip solid edge if a join edge exists for the same pair
             // (will be rendered dotted below).
@@ -282,9 +295,7 @@ pub fn to_dot(dag: &ViewDag) -> String {
             if join_set.contains(&(dep_name.clone(), name.clone())) {
                 continue;
             }
-            out.push_str(&format!(
-                "  \"{dep_name}\" -> \"{name}\";\n",
-            ));
+            out.push_str(&format!("  \"{dep_name}\" -> \"{name}\";\n",));
         }
     }
 
@@ -319,7 +330,7 @@ mod tests {
         let dag = build_dag(&doc);
 
         // Should have source, forward, identity, resolved, analytics, sync nodes
-        assert!(dag.order.len() > 0);
+        assert!(!dag.order.is_empty());
 
         // Source tables
         assert!(dag.edges.contains_key(&ViewNode::Source("crm".into())));
@@ -330,11 +341,17 @@ mod tests {
         assert!(dag.edges.contains_key(&ViewNode::Forward("erp".into())));
 
         // Identity and resolved for contact
-        assert!(dag.edges.contains_key(&ViewNode::Identity("contact".into())));
-        assert!(dag.edges.contains_key(&ViewNode::Resolved("contact".into())));
+        assert!(dag
+            .edges
+            .contains_key(&ViewNode::Identity("contact".into())));
+        assert!(dag
+            .edges
+            .contains_key(&ViewNode::Resolved("contact".into())));
 
         // Analytics view for contact
-        assert!(dag.edges.contains_key(&ViewNode::Analytics("contact".into())));
+        assert!(dag
+            .edges
+            .contains_key(&ViewNode::Analytics("contact".into())));
 
         // Reverse + delta views (hello-world has sync: true)
         assert!(dag.edges.contains_key(&ViewNode::Reverse("crm".into())));
