@@ -2,133 +2,244 @@
 
 **Status:** Design
 
-Analysis and design for target fields whose values are computed from other
-targets — cross-target aggregation (`employee_count` on department) and
-recursive self-traversal (employee hierarchy path).
+Cross-target aggregation and recursive self-traversal on target fields,
+computed late (post-resolution) so aggregated values flow through reverse
+views to source systems. Includes the "missing bottom" example as the
+motivating use case.
+
+## Three capabilities in one plan
+
+| Capability | YAML syntax | Pipeline layer | Flows to reverse? |
+|------------|-------------|----------------|-------------------|
+| **Child-target aggregation** | `from:` + `match:` on target field | `_enriched_` (new) | Yes |
+| **Recursive self-traversal** | `traverse:` on target | Analytics | No |
+| **Missing-bottom example** | Uses child-target aggregation | — | — |
+
+These are tightly coupled: the missing-bottom example requires child-target
+aggregation, and both aggregation patterns extend the same `TargetFieldDef`
+model with computed values that don't come from source mappings.
+
+---
+
+# Part 1 — Child-target aggregation
 
 ## Problem
 
-Today every target field resolves in isolation: the resolution view aggregates
-contributions from forward views for that single target and nothing else. Two
-common use cases need values derived from **other resolved targets**:
+Today every target field resolves in isolation from a single target's forward
+contributions. There is no way for a `line_item` field to aggregate values
+from a related `shipment` target. The only workaround is raw SQL subqueries
+in `expression:`, which the expression safety validator correctly rejects.
 
-1. **Cross-target aggregation** — a `department` target wants an
-   `employee_count` field showing how many resolved employees reference it.
-2. **Recursive self-traversal** — an `employee` target wants a
-   `hierarchy_path` field like `CEO / VP Sales / Regional Manager / Alice`
-   built by walking the `manager` self-reference chain.
+## Design constraints
 
-Neither is expressible today. Expression strings are validated as column-level
-SQL snippets and cannot contain subqueries or reference other views.
+1. **No raw SQL subqueries.** Expression safety prohibits `SELECT`/`FROM` in
+   user-authored expressions. The engine must generate the subquery internally
+   from declarative YAML.
+2. **Late binding.** The aggregation must use resolved (post-identity-resolution)
+   child entities, not raw source data. This guarantees correct results even
+   when child data comes from multiple sources.
+3. **Reverse flow.** Aggregated values must flow through reverse/delta views
+   so source systems receive the summaries. Analytics-only computation
+   doesn't satisfy this — those values never reach sources.
+4. **No denormalization in forward views.** Forward views should not embed
+   child-level aggregation subqueries. Forward extraction stays pure:
+   normalize source columns, nothing more.
+5. **DAG safety.** Cross-target references create view dependencies. Circular
+   aggregation must be detected and rejected at compile time.
 
-## Existing related work
+## Where in the pipeline?
 
-- **EXPRESSION-SAFETY-PLAN Phase 3** describes `lookup:` on field mappings
-  for cross-target access in **reverse views only** (mapping-level, not
-  target-level). It generates correlated subqueries against `_resolved_`.
-- **References** create DAG dependencies (`_resolved_A` depends on `_id_B`)
-  but only affect reverse FK translation — resolution views never join other
-  targets.
-- **Identity views** use `WITH RECURSIVE` for connected-component discovery,
-  so the engine already emits recursive CTEs.
+| Layer | Pros | Cons |
+|-------|------|------|
+| Forward view | Source-local; simple SQL | Denormalizes; pre-resolution; wrong for multi-source children |
+| Resolution view | Post-identity-linking | Violates per-target isolation; DAG changes |
+| **Post-resolution wrapper** | Late-binding; resolved data; flows to reverse | New view layer |
+| Analytics view | Clean separation | Doesn't flow to reverse views |
+| Reverse view (inline) | No new layers | Duplicates subquery per mapping; can't be noop-compared |
 
-## Use case 1 — Cross-target aggregation
+**Recommendation: post-resolution wrapper.** Introduce a thin view
+`_enriched_{target}` between resolution and reverse. It reads from
+`_resolved_{target}` and adds cross-target aggregated columns via
+`LEFT JOIN LATERAL` subqueries. Reverse views then read from
+`_enriched_{target}` instead of `_resolved_{target}`.
 
-### Scenario
+Targets without cross-target fields skip the enriched layer — their reverse
+views continue reading `_resolved_` directly.
 
-```yaml
-targets:
-  department:
-    fields:
-      name: { strategy: identity }
-      location: { strategy: coalesce }
-      employee_count: ???
-
-  employee:
-    fields:
-      email: { strategy: identity }
-      name: { strategy: coalesce }
-      department:
-        strategy: coalesce
-        references: department
+```
+_resolved_shipment ─────────────────────────┐
+                                            ↓
+_resolved_line_item → _enriched_line_item → _rev_b_items
+                                          → _rev_a_items
 ```
 
-Desired: `employee_count` = number of resolved employees whose `department`
-field points to this department entity.
+### Why not the resolution view?
 
-### Where does the computation live?
+Resolution aggregates forward contributions per target using `GROUP BY
+_entity_id_resolved`. Injecting a correlated subquery against another
+target's resolution view would make the resolution DAG cross-target,
+complicating the topological sort and risking cycles. Keeping resolution
+per-target-only is a core design invariant.
 
-| Layer | SQL | Pros | Cons |
-|-------|-----|------|------|
-| Resolution view | Subquery in aggregation | Single view | Resolution becomes cross-target; DAG changes; circular risk |
-| Analytics view | `LEFT JOIN LATERAL (SELECT count(*) ...)` | Clean separation; no pipeline impact | New view type; analytics currently trivial |
-| Separate post-resolution view | Dedicated `_computed_{target}` view | Explicit DAG node; clear dependency | More views; consumers need to know which view to query |
+### Why not the analytics view?
 
-**Recommendation: analytics view.** The analytics view is already the
-consumer-facing layer. Adding computed columns there keeps the resolution
-pipeline pure (per-target only) and avoids cross-target contamination of the
-core aggregation logic.
+Analytics is the consumer-facing layer. Placing cross-target aggregation
+there means values don't flow to reverse/delta views. For the missing-bottom
+pattern, Warehouse B needs `total_shipped` in its items — that requires the
+value to exist in the reverse pipeline.
 
-### Proposed YAML
+The enriched layer gives us both: reverse views read it, and the analytics
+view can also read from `_enriched_` instead of `_resolved_` to expose the
+same values to consumers.
+
+### Why not inline in reverse views?
+
+Each reverse view would need its own copy of the aggregation subquery.
+The subquery result would not appear in `_base` (the noop snapshot), so
+delta detection couldn't compare it — every sync cycle would produce
+spurious updates.
+
+## Proposed YAML
+
+Extend `TargetFieldDef` with `from:` and `match:` properties. When present,
+the field becomes a cross-target aggregate computed in the enriched layer.
 
 ```yaml
 targets:
-  department:
+  line_item:
     fields:
-      name: { strategy: identity }
-      location: { strategy: coalesce }
-    computed:
-      employee_count:
-        aggregate: count
-        from: employee
+      item_name: { strategy: identity }
+      order_id: { strategy: coalesce, references: order }
+      qty: { strategy: coalesce, type: numeric }
+
+      # Cross-target aggregation — computed from resolved shipments
+      total_shipped:
+        strategy: expression
+        expression: "COALESCE(sum(qty), 0)"
+        from: shipment
         match:
-          department: _cluster_id    # employee.department = department._cluster_id
+          item_name: item_name
+          order_id: order_id
+        type: numeric
+
+      last_ship_date:
+        strategy: expression
+        expression: "max(ship_date)"
+        from: shipment
+        match:
+          item_name: item_name
+          order_id: order_id
 ```
 
-`computed:` lives alongside `fields:` but is NOT part of resolution. It
-produces columns in the **analytics view only**.
+### Property definitions
 
-### Generated SQL
+| Property | Type | Context | Description |
+|----------|------|---------|-------------|
+| `from` | string | `strategy: expression` | Target name to aggregate from |
+| `match` | object | with `from` | Join conditions: `{remote_field: local_field}` pairs |
+
+When `from:` is present:
+- `strategy` must be `expression`
+- `expression` is a SQL aggregate evaluated over matching rows from the
+  remote target's resolved view
+- `match` defines the equi-join between remote and local fields
+- The field is implicitly `direction: forward_only` — it has no source
+  column, so it cannot participate in reverse-to-source flow (but it does
+  appear in the reverse view as a resolved value pushed to sources)
+
+When `from:` is absent, `strategy: expression` works as today — aggregating
+the target's own forward contributions in the resolution view.
+
+## Generated SQL
+
+### Enriched view
 
 ```sql
--- Analytics view for department (with computed fields)
-CREATE OR REPLACE VIEW "department" AS
+CREATE OR REPLACE VIEW "_enriched_line_item" AS
 SELECT
-  r._entity_id AS _cluster_id,
-  r."name",
-  r."location",
-  COALESCE(c_employee_count.val, 0) AS "employee_count"
-FROM "_resolved_department" r
+  r.*,
+  COALESCE(_agg_shipment.total_shipped, 0) AS "total_shipped",
+  _agg_shipment.last_ship_date AS "last_ship_date"
+FROM "_resolved_line_item" r
 LEFT JOIN LATERAL (
-  SELECT count(*) AS val
-  FROM "employee" e
-  WHERE e."department" = r._entity_id
-) c_employee_count ON true;
+  SELECT
+    COALESCE(sum(s."qty"), 0) AS total_shipped,
+    max(s."ship_date") AS last_ship_date
+  FROM "_resolved_shipment" s
+  WHERE s."item_name" = r."item_name"
+    AND s."order_id" = r."order_id"
+) _agg_shipment ON true;
 ```
 
-Note: references the `employee` **analytics view** (which itself references
-`_resolved_employee`). This creates a DAG dependency:
-`analytics(department)` depends on `analytics(employee)`.
+When multiple fields share the same `from:` and `match:`, they are grouped
+into a single lateral join. Each field's `expression:` becomes a column in
+the subquery's SELECT list.
 
-### DAG impact
+### Reverse / analytics view changes
+
+```sql
+-- Reverse and analytics read from enriched when available
+FROM "_enriched_line_item" r   -- instead of "_resolved_line_item"
+```
+
+No other changes to reverse view generation. The enriched columns appear as
+regular resolved fields.
+
+## DAG impact
+
+The enriched view adds one edge per `from:` reference:
 
 ```
-_resolved_department ─────────────────────┐
-                                          ↓
-_resolved_employee → employee (analytics) → department (analytics)
+_resolved_shipment → _enriched_line_item → _rev_b_items
+                                         → _rev_a_items
+                                         → line_item (analytics)
 ```
 
-Today analytics views have no inter-dependencies. Computed fields add edges
-between analytics views. The existing topological sort handles this — it
-already supports cross-target edges.
+**No cycle risk.** `from:` always references `_resolved_{target}`, never
+`_enriched_{target}`. Even circular `from:` references between two targets
+are safe — each enriched view depends only on the other target's resolved
+(pre-enrichment) view.
 
-Circular `computed:` references (department counts employees, employee counts
-departments) would be detected as a cycle in topological sort and rejected
-at compile time.
+## Validation rules
 
-## Use case 2 — Recursive self-traversal
+1. `from:` value must name an existing target.
+2. `match:` keys must be fields on the `from` target; values must be fields
+   on the current target.
+3. `from:` requires `strategy: expression` and a non-empty `expression:`.
+4. `from:` fields must not also have `source:` — they are computed, not
+   mapped from source data.
+5. `from:` fields are implicitly `direction: forward_only`.
+6. `expression:` on `from:` fields is validated as a SQL aggregate snippet
+   (same rules as today's `TargetExpression` context).
 
-### Scenario
+## Noop detection for enriched fields
+
+Fields computed via `from:` have no source value and thus no `_base` entry.
+If `_base` has no entry, the `IS NOT DISTINCT FROM` check yields
+`NULL IS NOT DISTINCT FROM new_value` — which is `false` when `new_value`
+is non-null, correctly flagging the row as an update. On subsequent syncs,
+`_base` will contain the previously-synced aggregate. This seems correct
+without special handling.
+
+---
+
+# Part 2 — Recursive self-traversal
+
+## Problem
+
+An `employee` target with a `manager` self-reference can express the
+relationship, but cannot derive values from it — e.g., a full hierarchy path
+like `CEO / VP Sales / Regional Manager / Alice` or a `depth` field. These
+require recursive graph traversal that no current mapping primitive supports.
+
+## Where in the pipeline?
+
+Hierarchy paths and depth values are **consumer-facing analytics**. They
+don't need to flow back to source systems via reverse views — sources
+already have their own hierarchy representation. Place this in the
+**analytics view** layer.
+
+## Proposed YAML
 
 ```yaml
 targets:
@@ -140,146 +251,235 @@ targets:
         strategy: coalesce
         references: employee       # self-reference
 
-    computed:
+    traverse:
       hierarchy_path:
-        traverse:
-          follow: manager          # FK field to walk
-          collect: name            # field to collect at each level
-          separator: " / "
-          direction: root_first    # CEO / VP / Manager / Self
-          max_depth: 10
+        follow: manager            # FK field to walk
+        collect: name              # field to collect at each level
+        separator: " / "
+        direction: root_first      # CEO / VP / Manager / Self
+        max_depth: 10
+
+      depth:
+        follow: manager
+        aggregate: count           # count steps to root
+        max_depth: 10
 ```
 
-### Generated SQL
+### `traverse:` properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `follow` | string | yes | FK field with self-reference (`references: same_target`) |
+| `collect` | string | for string/array | Field to gather at each traversal step |
+| `separator` | string | no | Join collected values (default: `" / "`) |
+| `aggregate` | string | no | `string` (default), `array`, `count`, `sum` |
+| `direction` | string | no | `root_first` (default) or `leaf_first` |
+| `max_depth` | integer | no | Safety limit (default: 10) |
+
+## Generated SQL
 
 ```sql
 CREATE OR REPLACE VIEW "employee" AS
 WITH RECURSIVE hierarchy AS (
   SELECT
-    _entity_id,
-    "name",
-    "manager",
-    "name"::text AS path,
-    1 AS depth
+    _entity_id, "name", "manager",
+    "name"::text AS _path,
+    1 AS _depth
   FROM "_resolved_employee"
-  WHERE "manager" IS NULL           -- roots (no manager)
+  WHERE "manager" IS NULL
 
   UNION ALL
 
   SELECT
-    e._entity_id,
-    e."name",
-    e."manager",
-    h.path || ' / ' || e."name",
-    h.depth + 1
+    e._entity_id, e."name", e."manager",
+    h._path || ' / ' || e."name",
+    h._depth + 1
   FROM "_resolved_employee" e
   JOIN hierarchy h ON e."manager" = h._entity_id
-  WHERE h.depth < 10
+  WHERE h._depth < 10
+    AND e._entity_id != ALL(h._visited)  -- cycle safety
 )
 SELECT
   r._entity_id AS _cluster_id,
-  r."email",
-  r."name",
-  r."manager",
-  COALESCE(h.path, r."name") AS "hierarchy_path"
+  r."email", r."name", r."manager",
+  COALESCE(h._path, r."name") AS "hierarchy_path",
+  COALESCE(h._depth, 1) AS "depth"
 FROM "_resolved_employee" r
 LEFT JOIN hierarchy h ON h._entity_id = r._entity_id;
 ```
 
-### Complexity
+Multiple `traverse:` fields sharing the same `follow` field share one CTE.
 
-Recursive self-traversal is significantly more complex than cross-target
-aggregation:
+## Validation rules
 
-- Requires `WITH RECURSIVE` CTE in the analytics view
-- Must detect and handle cycles (self-referencing employees)
-- `max_depth` needed as a safety valve
-- Direction control (`root_first` vs `leaf_first`)
-- Multiple traversal patterns (path, depth, subtree count, roll-up sum)
+1. `follow` must name a field on the same target with `references: self`.
+2. `collect` must name a field on the same target.
+3. `max_depth` must be a positive integer.
 
-## Proposed `computed:` properties
+---
 
-### Aggregation (cross-target)
+# Part 3 — Missing-bottom example
 
-```yaml
-computed:
-  field_name:
-    aggregate: count | sum | min | max | array_agg | bool_or
-    from: target_name            # source target
-    match:                       # join conditions
-      remote_field: local_field  # remote.field = local.field
-    filter: "optional SQL predicate on remote target"
-    field: remote_field_name     # for sum/min/max — which field to aggregate
+The motivating example for child-target aggregation.
+
+## Scenario
+
+Warehouse A tracks Order → Item → Shipment (3 levels). Warehouse B tracks
+Order → Item only (2 levels, no shipment concept). Item-level fields merge
+bidirectionally, and child-target aggregation surfaces shipment summaries
+on the parent line item.
+
+```
+Warehouse A (3 levels)              Warehouse B (2 levels)
+┌────────────────────────┐          ┌────────────────────────┐
+│ order_id: "ORD-1"      │          │ order_id: "ORD-1"      │
+│ customer: "Acme Corp"  │          │ region: "EMEA"         │
+│ items: [               │          │ items: [               │
+│   { name: "Widget",    │          │   { name: "Widget",    │
+│     qty: 10,           │          │     qty: 10,           │
+│     unit_price: 25,    │          │     warehouse_loc:     │
+│     shipments: [       │          │       "Bay 7" },       │
+│       { qty: 5, ... }, │          │   { name: "Gadget",    │
+│       { qty: 5, ... }  │          │     qty: 3,            │
+│     ] },               │          │     warehouse_loc:     │
+│   { name: "Gadget",    │          │       "Bay 12" }       │
+│     qty: 3,            │          │ ]                      │
+│     unit_price: 100,   │          └────────────────────────┘
+│     shipments: [       │
+│       { qty: 3, ... }  │
+│     ] }                │
+│ ]                      │
+└────────────────────────┘
 ```
 
-### Traversal (recursive self-reference)
+## Target model
 
-```yaml
-computed:
-  field_name:
-    traverse:
-      follow: fk_field           # FK field to walk
-      collect: field_name        # what to collect at each step
-      separator: " / "           # for string concatenation
-      aggregate: string | array | count | sum
-      direction: root_first | leaf_first
-      max_depth: 10
+```
+order                  line_item              shipment
+─────                  ─────────              ────────
+order_id (id)          item_name (id)         item_name (id)
+customer (coal)        order_id (id)          order_id (id)
+region (coal)          qty (coal)             ship_date (id)
+                       unit_price (coal)      qty (coal)
+                       warehouse_loc (coal)   carrier (coal)
+                       total_shipped (from)
+                       last_ship_date (from)
+                       fully_shipped (from)
 ```
 
-## Implementation estimate
+## What child-target aggregation gives us
 
-### Phase 1 — Cross-target aggregation (~80 lines)
+Warehouse B's resolved line_item includes `total_shipped`, `last_ship_date`,
+and `fully_shipped` — values derived from Warehouse A's shipments after
+identity resolution — without B knowing about shipments:
 
-- **Model:** `ComputedField` struct with `aggregate`, `from`, `match`, `filter`, `field`
-- **Parser:** parse `computed:` section on targets
-- **Validator:** check `from` target exists, `match` fields exist on both sides
-- **DAG:** add edges between analytics views based on `computed.from`
-- **Analytics renderer:** emit `LEFT JOIN LATERAL (SELECT ...)` for each computed field
+```
+Resolved line_item for "Widget" on ORD-1:
+  qty: 10              ← from both (match)
+  unit_price: 25       ← from A only
+  warehouse_loc: Bay 7 ← from B only
+  total_shipped: 10    ← from: shipment aggregate
+  last_ship_date: 2026-03-08  ← from: shipment aggregate
+  fully_shipped: true  ← from: shipment aggregate
+```
 
-### Phase 2 — Recursive traversal (~120 lines, separate effort)
+## Test cases
 
-- **Model:** `TraverseSpec` struct
-- **Validator:** check `follow` field has `references: self_target`, reject cycles
-- **Analytics renderer:** emit `WITH RECURSIVE` CTE
-- Phase 2 requires phase 1 infrastructure
+### Test 1: Shipment aggregates merge into B's line items
 
-## Interaction with existing plans
+**Input:**
+- Warehouse A: ORD-1 with Widget (2 shipments totaling 10) and Gadget (1 shipment of 3)
+- Warehouse B: ORD-1 with Widget (Bay 7) and Gadget (Bay 12)
 
-- **EXPRESSION-SAFETY-PLAN Phase 3 (`lookup:`)** — `lookup:` operates on
-  **reverse views** (per-mapping, for sync back to sources). `computed:`
-  operates on **analytics views** (per-target, for consumer output). They
-  are complementary, not overlapping.
-- **ANALYTICS-PROVENANCE-PLAN** — provenance views sit alongside analytics.
-  Computed fields add to the analytics view; provenance stays separate.
+**Expected:**
+- Widget: total\_shipped=10, fully\_shipped=true, last\_ship\_date=2026-03-08
+- Gadget: total\_shipped=3, fully\_shipped=true, last\_ship\_date=2026-03-05
+- Warehouse A updates: items get warehouse\_loc from B
+- Warehouse B updates: items get unit\_price, total\_shipped, last\_ship\_date,
+  fully\_shipped from A
 
-## Alternatives considered
+### Test 2: Partial shipment — not fully shipped
 
-### A — Put computed fields in resolution
+**Input:**
+- Warehouse A: ORD-2 with "Sprocket" qty=20, one shipment of 8
+- Warehouse B: ORD-2 with "Sprocket" qty=20, warehouse\_loc="Bay 3"
 
-Rejected. Resolution views aggregate forward contributions per target.
-Injecting cross-target subqueries violates this contract, complicates the
-DAG, and risks circular dependencies between resolution views
-(resolution-A needs resolution-B needs resolution-A).
+**Expected:**
+- Sprocket: total\_shipped=8, fully\_shipped=false
 
-### B — Use `lookup:` from EXPRESSION-SAFETY-PLAN
+## Three depth-mismatch patterns compared
 
-`lookup:` is designed for **mapping-level** field overrides in reverse views:
-a specific source gets a derived value from another target during sync.
-Target-level computed fields are **consumer-facing aggregations** that appear
-in every view consumer, not tied to any source mapping. Different scope,
-different layer.
+| Pattern | Example | Missing from | Engine feature |
+|---------|---------|-------------|----------------|
+| Extra ancestor | hierarchy-merge | Simpler lacks parent above | None |
+| Missing middle | depth-mismatch | Simpler lacks intermediate | reverse\_filter |
+| **Missing bottom** | **this** | **Simpler lacks leaf level** | **from: + match:** |
 
-### C — External SQL views (do nothing)
+---
 
-Always viable. The analytics view is already a SQL view — consumers
-can create their own view on top. This plan formalizes common patterns
-(count, sum, hierarchy path) so the mapping YAML is self-describing and the
-engine manages the DAG ordering automatically.
+# Model changes
 
-## Recommendation
+```rust
+// TargetFieldDef additions
+pub from: Option<String>,                          // remote target name
+pub match_fields: Option<HashMap<String, String>>,  // remote→local join
 
-Start with **Phase 1 (cross-target aggregation)** — `count` and `sum` cover
-the most common use cases and the implementation is straightforward. Defer
-Phase 2 (recursive traversal) until there's a concrete real-world mapping
-that needs it. Document "create your own SQL view" as the escape hatch for
-anything the declarative `computed:` doesn't cover.
+// New struct for traverse
+pub struct TraverseField {
+    pub follow: String,
+    pub collect: Option<String>,
+    pub separator: Option<String>,
+    pub aggregate: Option<TraverseAggregate>,  // string | array | count | sum
+    pub direction: Option<TraverseDirection>,  // root_first | leaf_first
+    pub max_depth: Option<u32>,
+}
+```
+
+# Render changes
+
+| Component | Change | Lines |
+|-----------|--------|-------|
+| New: `render_enriched()` | `_enriched_{target}` view with lateral joins | ~60 |
+| `render_reverse()` | Read from `_enriched_` when target has `from:` fields | ~5 |
+| `render_analytics()` | Read from `_enriched_` when available; add `WITH RECURSIVE` for `traverse:` | ~80 |
+
+# Implementation phases
+
+### Phase 1 — Child-target aggregation (~100 lines)
+
+- Parse `from:` and `match:` on `TargetFieldDef`
+- Validate references and field existence
+- Render `_enriched_{target}` view with grouped lateral joins
+- Switch reverse and analytics to read from enriched when present
+- Test with missing-bottom example
+
+### Phase 2 — Recursive traversal (~80 lines)
+
+- Parse `traverse:` on targets
+- Validate `follow` references self
+- Render `WITH RECURSIVE` CTE in analytics view
+- Test with employee hierarchy example
+
+### Phase 3 — Missing-bottom example
+
+- Create `examples/missing-bottom/` with mapping, tests, README
+
+# Interaction with existing plans
+
+- **EXPRESSION-SAFETY-PLAN:** `expression:` on `from:` fields is validated
+  as a SQL aggregate snippet (same rules as `TargetExpression`). The engine
+  generates the subquery; the user writes only the aggregate body.
+- **EXPRESSION-SAFETY Phase 3 (`lookup:`):** `from:` on target fields is a
+  higher-level declarative alternative. Both could coexist, but `from:`
+  covers the main aggregation use cases.
+
+# Open questions
+
+1. **Should `fully_shipped` reference `qty` from the parent?** The expression
+   `sum(qty) >= max(parent_qty)` assumes the child has a copy. An alternative:
+   a `local:` keyword in expressions, e.g., `sum(qty) >= local.qty`.
+
+2. **Should match conditions support non-equality?** Start with equi-join only.
+
+3. **Should traversal values flow to reverse views?** Current design says no.
+   If needed, a future enhancement could promote traverse to the enriched layer.

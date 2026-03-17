@@ -28,7 +28,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [PARENT-MAPPING-PLAN.md](PARENT-MAPPING-PLAN.md) | Done | Unify `embedded` + `source.path` under `parent:` with `array`/`array_path` for nested arrays. |
 | [HIERARCHY-MERGE-PLAN.md](HIERARCHY-MERGE-PLAN.md) | Done | Example: merge 2-level and 3-level project hierarchies across systems. |
 | [DEPTH-MISMATCH-PLAN.md](DEPTH-MISMATCH-PLAN.md) | Done | Example: merge when one system has a deeper intermediate level than the other. |
-| [MISSING-BOTTOM-PLAN.md](MISSING-BOTTOM-PLAN.md) | Planned | Example: merge when one system lacks the deepest level; `sql:` aggregation pattern. |
+| [COMPUTED-FIELDS-PLAN.md](COMPUTED-FIELDS-PLAN.md) | Design | Cross-target aggregation (`from:` + `match:`), recursive self-traversal (`traverse:`), and missing-bottom example. |
 | [POSITIONAL-ARRAY-PLAN.md](POSITIONAL-ARRAY-PLAN.md) | Planned | Support `_index` for nested arrays without natural identity; uses `WITH ORDINALITY`. |
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
 | [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Planned | `normalize` property on field mappings for lossy noop comparison (truncation, rounding, case folding). |
@@ -41,7 +41,6 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [NULL-WINS-PLAN.md](NULL-WINS-PLAN.md) | Maybe | `null_wins` expression on field mappings — may not implement; sentinel pattern works today. |
 | [TYPE-HIERARCHY-PLAN.md](TYPE-HIERARCHY-PLAN.md) | Design | `hierarchy:` on target fields for IS-A type relationships; `type_matches` helper in reverse_filter. |
 | [TARGET-PATH-PLAN.md](TARGET-PATH-PLAN.md) | Design | Analysis of `target_path` (dotted notation on targets) — recommends output formatting over pipeline changes. |
-| [COMPUTED-FIELDS-PLAN.md](COMPUTED-FIELDS-PLAN.md) | Design | `computed:` on targets for cross-target aggregation and recursive self-traversal in analytics views. |
 | [DBT-OUTPUT-PLAN.md](DBT-OUTPUT-PLAN.md) | Design | Generate a dbt project from mapping YAML; `ViewOutput` refactor; compatible with custom materialisations. |
 | [MATERIALIZED-VIEW-INDEX-PLAN.md](MATERIALIZED-VIEW-INDEX-PLAN.md) | Design | Opt-in materialized views with unique indexes; `NULLS NOT DISTINCT` for delta/reverse layers. |
 | [POLYGLOT-SQL-PLAN.md](POLYGLOT-SQL-PLAN.md) | Design | Multi-dialect SQL rendering via polyglot-sql; expression dialect choice; phased adoption plan. |

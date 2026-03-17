@@ -540,7 +540,7 @@ WITH RECURSIVE
 |---|---|
 | [POLYGLOT-SQL-PLAN](POLYGLOT-SQL-PLAN.md) | If adopted, dbt output benefits automatically — dbt adapters handle dialect DDL; polyglot transpiles expression snippets. The `ViewOutput` refactor benefits both. |
 | [EXPRESSION-SAFETY-PLAN](EXPRESSION-SAFETY-PLAN.md) | No direct interaction — expression validation runs before rendering. |
-| [COMPUTED-FIELDS-PLAN](COMPUTED-FIELDS-PLAN.md) | Computed fields would add post-resolution CTEs; these become additional dbt models or inline CTEs within the resolution model. |
+| [COMPUTED-FIELDS-PLAN](COMPUTED-FIELDS-PLAN.md) | Enriched views (`_enriched_`) become additional dbt models between resolution and reverse models. |
 | [ANALYTICS-PROVENANCE-PLAN](ANALYTICS-PROVENANCE-PLAN.md) | Provenance views map to additional dbt models in a `provenance/` subdirectory. |
 | [PASSTHROUGH-PLAN](PASSTHROUGH-PLAN.md) | Passthrough columns flow through forward → delta; no dbt-specific concern. |
 

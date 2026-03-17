@@ -29,11 +29,10 @@ documentation.
 | MULTI-VALUE-PLAN | ~~Pattern~~ **Done** | Example: single-vs-multi-value cardinality mismatch. Example exists and passes. |
 | HIERARCHY-MERGE-PLAN | ~~Planned~~ **Done** | Example: merging 2-level and 3-level hierarchies. Example exists and passes. |
 | DEPTH-MISMATCH-PLAN | ~~Planned~~ **Done** | Example: asymmetric nesting depth across systems. Required engine fixes for qualified `parent_fields` and compound-identity reverse references. |
-| MISSING-BOTTOM-PLAN | Planned | Example: aggregation when one system lacks the leaf level. |
 
-**Progress:** 4/5 examples done (propagated-delete, multi-value, hierarchy-merge, depth-mismatch). 42 examples total now pass E2E.
+**Progress:** 4/4 examples done (propagated-delete, multi-value, hierarchy-merge, depth-mismatch). 42 examples total now pass E2E.
 
-**Exit criteria:** Five new examples passing E2E tests.
+**Exit criteria:** ~~Five~~ Four new examples passing E2E tests.
 
 ## Phase 1 — Schema and safety ✓ COMPLETE
 
@@ -100,7 +99,7 @@ design. They may ship as 1.x minor releases.
 | PGTRICKLE-OUTPUT-PLAN | Design | External post-processor rewriting views as pg_trickle stream tables. No engine changes. |
 | MATERIALIZED-VIEW-INDEX-PLAN | Design | Opt-in `--materialize` flag with unique indexes. Operators can write DDL manually today. |
 | POLYGLOT-SQL-PLAN | Design | Multi-dialect SQL rendering. PostgreSQL-only is fine for 1.0; other dialects via dbt adapters. |
-| COMPUTED-FIELDS-PLAN | Design | Depends on EXPRESSION-SAFETY (now done); only analytics layer. Ship as 1.x. |
+| COMPUTED-FIELDS-PLAN | Design | Cross-target aggregation (`from:` + `match:`), recursive traversal (`traverse:`), and missing-bottom example. |
 | TYPE-HIERARCHY-PLAN | Design | Existing `CASE` expressions handle it today. |
 | NULL-WINS-PLAN | Maybe | Sentinel pattern works. Proper implementation deferred until PRECISION-LOSS lands. |
 | SOURCE-REMOVAL-OPTIONS | Design | Validation-only; bridge-link tooling is additive. |
@@ -110,12 +109,12 @@ design. They may ship as 1.x minor releases.
 ## Dependency graph
 
 ```
-Phase 0 (examples/patterns)        ← 4/5 done
+Phase 0 (examples/patterns)        ← COMPLETE (4/4)
     │
     ▼
 Phase 1                            ← COMPLETE
     ├── PARENT-MAPPING-PLAN ✓
-    └── EXPRESSION-SAFETY-PLAN ✓ ──▶ unblocks: COMPUTED-FIELDS (post-1.0)
+    └── EXPRESSION-SAFETY-PLAN ✓
             │
             ▼
 Phase 2
@@ -140,9 +139,9 @@ Phase 4
             │
             ▼
 Post-1.0
+    ├── COMPUTED-FIELDS-PLAN (aggregation + traversal + missing-bottom example)
     ├── DBT-OUTPUT-PLAN ──▶ MATERIALIZED-VIEW-INDEX-PLAN (indexes via dbt config)
     ├── POLYGLOT-SQL-PLAN
-    ├── COMPUTED-FIELDS-PLAN
     └── ...
 ```
 
@@ -150,10 +149,10 @@ Post-1.0
 
 | Phase | Plans | Engine changes | Theme | Progress |
 |-------|-------|---------------|-------|----------|
-| 0 | 5 | 0 | Prove patterns with examples | 4/5 done |
+| 0 | 4 | 0 | Prove patterns with examples | **COMPLETE** |
 | 1 | 2 | 2 | Lock the schema, secure expressions | **COMPLETE** |
 | 2 | 3 | 3 | Precision, positional identity, passthrough | Not started |
 | 3 | 3 | 3 | Rich types and provenance | Not started |
 | 4 | 3 | 1 | Quality, naming, polish | Not started |
 | Post | 9 | — | Deferred or not implementing | — |
-| **Total** | **25** | **9** | | |
+| **Total** | **24** | **9** | | |
