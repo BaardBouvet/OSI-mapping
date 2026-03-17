@@ -25,28 +25,26 @@ documentation.
 
 | Plan | Status | Work |
 |------|--------|------|
-| PROPAGATED-DELETE-PLAN | Pattern | Example: GDPR deletion cascading via `bool_or` + `reverse_filter`. |
+| PROPAGATED-DELETE-PLAN | ~~Pattern~~ **Done** | Example: GDPR deletion cascading via `bool_or` + `reverse_filter`. Example exists and passes. |
 | MULTI-VALUE-PLAN | Pattern | Example: single-vs-multi-value cardinality mismatch. |
 | HIERARCHY-MERGE-PLAN | Planned | Example: merging 2-level and 3-level hierarchies. |
 | DEPTH-MISMATCH-PLAN | Planned | Example: asymmetric nesting depth across systems. |
 | MISSING-BOTTOM-PLAN | Planned | Example: aggregation when one system lacks the leaf level. |
 
+**Progress:** 1/5 examples done (propagated-delete). 39 examples total now render successfully.
+
 **Exit criteria:** Five new examples passing E2E tests.
 
-## Phase 1 — Schema and safety
+## Phase 1 — Schema and safety ✓ COMPLETE
 
-The two changes most likely to break existing mappings. Land them together so
-users migrate once.
+The two changes most likely to break existing mappings. Landed together.
 
 | Plan | Status | Work |
 |------|--------|------|
-| PARENT-MAPPING-PLAN | Planned | Replace `embedded` + `source.path` with `parent:` and `array:`. Major schema change — rewrite all affected examples. |
-| EXPRESSION-SAFETY-PLAN | Planned | Validate expressions as safe SQL snippets. Add `lookup:` for cross-target access. Phase 1 only (static validation + AST check). |
+| PARENT-MAPPING-PLAN | ~~Planned~~ **Done** | Unified `embedded` + `source.path` under `parent:` with `array`/`array_path` for nested arrays. |
+| EXPRESSION-SAFETY-PLAN | ~~Planned~~ **Phase 1–2 done** | Expression validation (static + AST check) and `lookup:` for cross-target access. |
 
-**Dependencies:** PARENT-MAPPING-PLAN touches nested-array examples.
-EXPRESSION-SAFETY-PLAN informs how future expression-heavy plans are written.
-
-**Exit criteria:** All 35+ examples pass with the new schema. Expression
+**Exit criteria:** ~~All 35+ examples pass with the new schema.~~ All 39 examples pass. Expression
 validator rejects known-bad inputs. No mapping uses internal view names in
 expressions.
 
@@ -97,21 +95,25 @@ design. They may ship as 1.x minor releases.
 
 | Plan | Status | Reason deferred |
 |------|--------|-----------------|
-| COMPUTED-FIELDS-PLAN | Design | Depends on EXPRESSION-SAFETY; only analytics layer. Ship as 1.x. |
+| DBT-OUTPUT-PLAN | Design | Generate a dbt project from mapping YAML. Current `psql -f` workflow works; dbt is additive. |
+| MATERIALIZED-VIEW-INDEX-PLAN | Design | Opt-in `--materialize` flag with unique indexes. Operators can write DDL manually today. |
+| POLYGLOT-SQL-PLAN | Design | Multi-dialect SQL rendering. PostgreSQL-only is fine for 1.0; other dialects via dbt adapters. |
+| COMPUTED-FIELDS-PLAN | Design | Depends on EXPRESSION-SAFETY (now done); only analytics layer. Ship as 1.x. |
 | TYPE-HIERARCHY-PLAN | Design | Existing `CASE` expressions handle it today. |
 | NULL-WINS-PLAN | Maybe | Sentinel pattern works. Proper implementation deferred until PRECISION-LOSS lands. |
 | SOURCE-REMOVAL-OPTIONS | Design | Validation-only; bridge-link tooling is additive. |
 | TARGET-PATH-PLAN | Design | Explicitly recommends NOT implementing. Output formatting is a consumer concern. |
+| YAML-VS-DSL-PLAN | Design | Analysis concluded: stay with YAML. No action needed. |
 
 ## Dependency graph
 
 ```
-Phase 0 (examples/patterns)
+Phase 0 (examples/patterns)        ← 1/5 done
     │
     ▼
-Phase 1
-    ├── PARENT-MAPPING-PLAN ──▶ unblocks: nested-array examples in Phase 0
-    └── EXPRESSION-SAFETY-PLAN ──▶ unblocks: COMPUTED-FIELDS (post-1.0)
+Phase 1                            ← COMPLETE
+    ├── PARENT-MAPPING-PLAN ✓
+    └── EXPRESSION-SAFETY-PLAN ✓ ──▶ unblocks: COMPUTED-FIELDS (post-1.0)
             │
             ▼
 Phase 2
@@ -133,16 +135,23 @@ Phase 4
             │
             ▼
         1.0 release
+            │
+            ▼
+Post-1.0
+    ├── DBT-OUTPUT-PLAN ──▶ MATERIALIZED-VIEW-INDEX-PLAN (indexes via dbt config)
+    ├── POLYGLOT-SQL-PLAN
+    ├── COMPUTED-FIELDS-PLAN
+    └── ...
 ```
 
 ## Summary
 
-| Phase | Plans | Engine changes | Theme |
-|-------|-------|---------------|-------|
-| 0 | 5 | 0 | Prove patterns with examples |
-| 1 | 2 | 2 | Lock the schema, secure expressions |
-| 2 | 3 | 3 | Precision, positional identity, passthrough |
-| 3 | 3 | 3 | Rich types and provenance |
-| 4 | 3 | 1 | Quality, naming, polish |
-| Post | 5 | — | Deferred or not implementing |
-| **Total** | **21** | **9** | |
+| Phase | Plans | Engine changes | Theme | Progress |
+|-------|-------|---------------|-------|----------|
+| 0 | 5 | 0 | Prove patterns with examples | 1/5 done |
+| 1 | 2 | 2 | Lock the schema, secure expressions | **COMPLETE** |
+| 2 | 3 | 3 | Precision, positional identity, passthrough | Not started |
+| 3 | 3 | 3 | Rich types and provenance | Not started |
+| 4 | 3 | 1 | Quality, naming, polish | Not started |
+| Post | 9 | — | Deferred or not implementing | — |
+| **Total** | **25** | **9** | | |
