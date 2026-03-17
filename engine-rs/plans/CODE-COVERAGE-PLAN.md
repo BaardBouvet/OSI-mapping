@@ -1,6 +1,6 @@
 # Code coverage
 
-**Status:** Planned
+**Status:** Done
 
 Add code coverage measurement to the test suite and CI pipeline.
 

@@ -1,5 +1,8 @@
 # OSI Mapping Reference Engine
 
+[![CI](https://github.com/osi-project/osi-mapping/actions/workflows/ci.yml/badge.svg)](https://github.com/osi-project/osi-mapping/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/osi-project/osi-mapping/graph/badge.svg)](https://codecov.io/gh/osi-project/osi-mapping)
+
 A reference implementation that compiles OSI mapping YAML files into a **DAG of PostgreSQL views**, implementing the full forward → resolution → reverse pipeline.
 
 ## Quick Start
@@ -60,6 +63,22 @@ cargo test
 
 # Parse-only smoke test
 cargo test parse_all_examples
+```
+
+### Code Coverage
+
+```bash
+# Install cargo-llvm-cov (one time)
+cargo install cargo-llvm-cov
+
+# Quick summary (lib tests only, no Docker)
+cargo llvm-cov --lib
+
+# Full coverage including integration tests
+cargo llvm-cov --test integration --lib
+
+# HTML report (opens in browser)
+cargo llvm-cov --test integration --lib --html --open
 ```
 
 ### Project Structure

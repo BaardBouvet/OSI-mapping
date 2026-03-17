@@ -1,6 +1,6 @@
 # Code quality tooling
 
-**Status:** Planned
+**Status:** Done
 
 Enforce consistent formatting, catch common mistakes, and tighten the
 codebase with `rustfmt`, `clippy`, and related tools.

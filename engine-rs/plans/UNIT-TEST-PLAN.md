@@ -1,6 +1,6 @@
 # Unit tests for the render pipeline
 
-**Status:** Planned
+**Status:** Done
 
 Add unit tests for the SQL rendering modules to reduce reliance on the
 slow integration test suite (testcontainers + PostgreSQL).  The render
