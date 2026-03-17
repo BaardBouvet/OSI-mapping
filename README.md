@@ -1,6 +1,6 @@
 # Integration Mapping Schema
 
-[![License](https://img.shields.io/github/license/osi-project/osi-mapping)](LICENSE)
+[![License](https://img.shields.io/github/license/BaardBouvet/OSI-mapping)](LICENSE)
 [![JSON Schema](https://img.shields.io/badge/schema-Draft_2020--12-blue)](spec/mapping-schema.json)
 
 A declarative schema for defining how fields from multiple source systems map to a shared target model—and how conflicts between sources are resolved.
