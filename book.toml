@@ -10,8 +10,8 @@ build-dir = "book"
 [output.html]
 default-theme = "light"
 preferred-dark-theme = "ayu"
-git-repository-url = "https://github.com/OWNER/osi-mapping"
-edit-url-template = "https://github.com/OWNER/osi-mapping/edit/main/{path}"
+git-repository-url = "https://github.com/BaardBouvet/osi-mapping"
+edit-url-template = "https://github.com/BaardBouvet/osi-mapping/edit/main/{path}"
 
 [output.html.search]
 enable = true
