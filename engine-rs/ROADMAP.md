@@ -1,14 +1,12 @@
-# Roadmap to 1.0
+# Roadmap
 
-**Status:** Planned
-
-Sequence the remaining non-Done plans into phases that build toward a 1.0
-release. Each phase has a theme and a clear set of deliverables.
+Phases toward a 0.1 release, plus post-0.1 plans. Each phase has a theme and
+a clear set of deliverables.
 
 ## Principles
 
 1. **Schema stability first.** Any change that alters the mapping YAML schema
-   must land before 1.0 so external consumers can rely on the format.
+   must land before 0.1 so external consumers can rely on the format.
 2. **Security before features.** Expression safety is a prerequisite for
    trusting user-authored mappings in production.
 3. **Examples prove designs.** Plans that are pure examples (no engine changes)
@@ -16,7 +14,7 @@ release. Each phase has a theme and a clear set of deliverables.
 4. **Patterns don't block.** Plans with status `Pattern` document what already
    works — publish them independently.
 5. **Defer what has workarounds.** If the existing engine can handle a scenario
-   (even awkwardly), the "nice" version can wait until after 1.0.
+   (even awkwardly), the "nice" version can wait until after 0.1.
 
 ## Phase 0 — Patterns and examples (no engine changes)
 
@@ -41,7 +39,7 @@ The two changes most likely to break existing mappings. Landed together.
 | Plan | Status | Work |
 |------|--------|------|
 | PARENT-MAPPING-PLAN | ~~Planned~~ **Done** | Unified `embedded` + `source.path` under `parent:` with `array`/`array_path` for nested arrays. |
-| EXPRESSION-SAFETY-PLAN | ~~Planned~~ **Phase 1–2 done** | Expression validation (static + AST check) and `lookup:` for cross-target access. |
+| EXPRESSION-SAFETY-PLAN | ~~Planned~~ **Done** | Expression validation (static + AST check). Cross-target `lookup:` superseded by COMPUTED-FIELDS-PLAN. |
 
 **Exit criteria:** ~~All 35+ examples pass with the new schema.~~ All 39 examples pass. Expression
 validator rejects known-bad inputs. No mapping uses internal view names in
@@ -69,10 +67,9 @@ Larger features that expand the type system and analytics layer.
 |------|--------|------|
 | ANALYTICS-PROVENANCE-PLAN | Planned | `_provenance_` and `_contributions_` views for source-tracing and stewardship. |
 
-**Exit criteria:** Array fields work in forward, identity, resolution, reverse,
-and delta views.
+**Exit criteria:** `_provenance_` and `_contributions_` views render correctly and are covered by an example.
 
-## Phase 4 — Quality, docs, and release
+## Phase 4 — Quality, docs, and 0.1 release
 
 Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 
@@ -84,7 +81,6 @@ Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 | PROPTEST-PLAN | ~~Planned~~ **Done** | Property-based fuzzing: random mapping generation, structural + execution phases. |
 | CI-RELEASE-PLAN | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
 | MATERIALIZED-VIEW-INDEX-PLAN | ~~Design~~ **Done** | Opt-in `--materialize` flag with unique indexes for production deployments. |
-| PGTRICKLE-OUTPUT-PLAN | Design | External post-processor rewriting views as pg_trickle stream tables. |
 | LEARNING-GUIDE-PLAN | Planned | Progressive 7-chapter learning guide teaching mapping concepts. |
 | DOCS-SITE-PLAN | ~~Planned~~ **Done** | mdBook documentation site with search, deployed to GitHub Pages. |
 | NAMING-PLAN | Design | Rename project (recommended: "Crossfold"). Update crate, binary, repo, docs. |
@@ -93,79 +89,8 @@ Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 GitHub Releases. Documentation site live. Proptest harness runs in CI.
 Project name settled and applied across all artifacts.
 
-## Post-1.0
+## Post-0.1
 
-Plans that have workarounds today, are explicitly deferred, or require more
-design. They may ship as 1.x minor releases.
+Deferred plans live in `engine-rs/plans/`. See individual plan files for
+rationale and status.
 
-| Plan | Status | Reason deferred |
-|------|--------|-----------------|
-| TARGET-ARRAYS-PLAN | Maybe | Child targets with CRDT ordering cover this today; array-typed targets can be reconsidered post-1.0 if ergonomics demand it. |
-| COMPOSITE-TYPES-PLAN | Proposed | Replace JSONB with PostgreSQL composite types. JSONB works today; typed output is additive. |
-| SOURCE-GROUPING-PLAN | Design | `system:` property on sources for visual DOT grouping. Pure cosmetic; no functional impact. |
-| DBT-OUTPUT-PLAN | Design | Generate a dbt project from mapping YAML. Current `psql -f` workflow works; dbt is additive. |
-| POLYGLOT-SQL-PLAN | Design | Multi-dialect SQL rendering. PostgreSQL-only is fine for 1.0; other dialects via dbt adapters. |
-| COMPUTED-FIELDS-PLAN | Design | Cross-target aggregation (`from:` + `match:`), recursive traversal (`traverse:`), and missing-bottom example. |
-| TYPE-HIERARCHY-PLAN | Design | Existing `CASE` expressions handle it today. |
-| NULL-WINS-PLAN | Maybe | Sentinel pattern works. Proper implementation deferred until PRECISION-LOSS lands. |
-| SOURCE-REMOVAL-OPTIONS | Design | Validation-only; bridge-link tooling is additive. |
-| TARGET-PATH-PLAN | Design | Explicitly recommends NOT implementing. Output formatting is a consumer concern. |
-| YAML-VS-DSL-PLAN | Design | Analysis concluded: stay with YAML. No action needed. |
-
-## Dependency graph
-
-```
-Phase 0 (examples/patterns)        ← COMPLETE (4/4)
-    │
-    ▼
-Phase 1                            ← COMPLETE
-    ├── PARENT-MAPPING-PLAN ✓
-    └── EXPRESSION-SAFETY-PLAN ✓
-            │
-            ▼
-Phase 2
-    ├── PRECISION-LOSS-PLAN ──▶ unblocks: NULL-WINS (post-1.0)
-    ├── CRDT-ORDERING-PLAN
-    └── PASSTHROUGH-PLAN
-            │
-            ▼
-Phase 3
-    ├── TARGET-ARRAYS-PLAN ──▶ simplifies MULTI-VALUE pattern
-    └── ANALYTICS-PROVENANCE-PLAN
-            │
-            ▼
-Phase 4
-    ├── CODE-QUALITY-PLAN (fmt + clippy + deny)
-    ├── CODE-COVERAGE-PLAN
-    ├── UNIT-TEST-PLAN
-    ├── PROPTEST-PLAN
-    ├── CI-RELEASE-PLAN
-    ├── MATERIALIZED-VIEW-INDEX-PLAN
-    ├── PGTRICKLE-OUTPUT-PLAN
-    ├── LEARNING-GUIDE-PLAN ──▶ DOCS-SITE-PLAN
-    └── NAMING-PLAN
-            │
-            ▼
-        1.0 release
-            │
-            ▼
-Post-1.0
-    ├── COMPOSITE-TYPES-PLAN
-    ├── SOURCE-GROUPING-PLAN
-    ├── COMPUTED-FIELDS-PLAN (aggregation + traversal + missing-bottom example)
-    ├── DBT-OUTPUT-PLAN
-    ├── POLYGLOT-SQL-PLAN
-    └── ...
-```
-
-## Summary
-
-| Phase | Plans | Engine changes | Theme | Progress |
-|-------|-------|---------------|-------|----------|
-| 0 | 4 | 0 | Prove patterns with examples | **COMPLETE** |
-| 1 | 2 | 2 | Lock the schema, secure expressions | **COMPLETE** |
-| 2 | 3 | 3 | Precision, CRDT ordering, passthrough | Not started |
-| 3 | 2 | 2 | Rich types and provenance | Not started |
-| 4 | 11 | 1 | Quality, docs, CI/CD, naming, deployment | Not started |
-| Post | 11 | — | Deferred or not implementing | — |
-| **Total** | **30** | **9** | | |

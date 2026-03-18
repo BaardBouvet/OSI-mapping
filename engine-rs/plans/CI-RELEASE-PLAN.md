@@ -180,3 +180,6 @@ Maintain a `CHANGELOG.md` in the repo root. Each release section lists:
 1. Add `CHANGELOG.md`
 2. Add CI badge to README
 3. Consider Homebrew formula / AUR package for popular package managers
+4. Split `ci.yml` into fast and slow workflows once branch-based development begins:
+   - `ci.yml` — fmt + clippy + unit tests, triggered on every push and PR.
+   - `test.yml` — integration, proptests, coverage, triggered on PRs only (not every WIP push).

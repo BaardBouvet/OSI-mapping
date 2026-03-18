@@ -1,6 +1,6 @@
 # Expression safety
 
-**Status:** Phase 1–2 done
+**Status:** Done
 
 Validate that user-provided expressions are safe column-level SQL snippets.
 Prevent leaking internal view names and coupling mappings to engine internals.
@@ -198,113 +198,30 @@ unless `source.fields:` is provided).
 
 Phase 2 is optional — it's a warning pass, not a hard gate.
 
-## Phase 3 — Cross-target access via `lookup:`
-
-Some patterns may need a reverse field to reference a different target's
-resolved data (e.g., picking one value from a child target's list). Rather
-than allowing raw subqueries in expressions, provide a declarative property:
-
-```yaml
-- source: phone
-  direction: reverse_only
-  lookup:
-    target: phone_entry
-    field: phone
-    match:
-      contact_ref: email      # phone_entry.contact_ref = resolved contact.email
-    select: min               # aggregation function
-```
-
-The engine generates the correlated subquery internally:
-
-```sql
-(SELECT min("phone") FROM "_resolved_phone_entry"
- WHERE "contact_ref" = r."email") AS "phone"
-```
-
-### `lookup:` properties
-
-| Property | Required | Description |
-|----------|----------|-------------|
-| `target` | Yes | Target name to look up (engine resolves to `_resolved_{target}`) |
-| `field` | Yes | Field to retrieve from the lookup target |
-| `match` | Yes | Map of `lookup_field: local_field` join conditions |
-| `select` | No | Aggregation function: `min`, `max`, `first`, `count`. Default: `min` |
-| `filter` | No | Additional filter on the lookup target (snippet, validated) |
-
-### Self-preference via `lookup:`
-
-The COALESCE pattern from MULTI-VALUE-PLAN becomes:
-
-```yaml
-- source: phone
-  direction: reverse_only
-  lookup:
-    target: phone_entry
-    field: phone
-    match:
-      contact_ref: email
-    select: min
-    prefer_current: true    # COALESCE(match-to-_base, min(...))
-```
-
-`prefer_current: true` generates:
-
-```sql
-COALESCE(
-  (SELECT "phone" FROM "_resolved_phone_entry"
-   WHERE "contact_ref" = r."email"
-     AND "phone" = _base->>'phone'),
-  (SELECT min("phone") FROM "_resolved_phone_entry"
-   WHERE "contact_ref" = r."email")
-) AS "phone"
-```
-
-### Why `lookup:` and not relaxing expression validation
-
-- **Declarative** — the engine knows what target is referenced and can
-  validate the reference exists at compile time
-- **Stable** — view naming changes don't break mappings
-- **Self-documenting** — `lookup: { target: phone_entry, field: phone }` is
-  clearer than a raw subquery
-- **Optimizable** — the engine could choose different subquery forms (lateral
-  join, CTE) without changing the mapping
-
 ## Migration path
 
-1. **Phase 1** ships with validation on — existing examples already pass
-   (all current expressions are safe snippets). No migration needed.
-2. **Phase 3** ships `lookup:` for cases that genuinely need cross-target
-   access. Most multi-value scenarios are now handled via `primary_phone`
-   coalesce fields ([MULTI-VALUE-PLAN](MULTI-VALUE-PLAN.md)) or future
-   array-typed target fields ([TARGET-ARRAYS-PLAN](TARGET-ARRAYS-PLAN.md)).
+Phase 1 shipped with validation on — existing examples already pass
+(all current expressions are safe snippets). No migration needed.
+
+Cross-target access (`lookup:`) was originally planned as Phase 3 but is
+superseded by the `from:` / `_enriched_` approach in
+[COMPUTED-FIELDS-PLAN](COMPUTED-FIELDS-PLAN.md), which is more declarative
+and integrates cleanly with the pipeline.
 
 ## Scope of changes
 
-### Phase 1 (validation)
-- New file: `engine-rs/src/validate_expr.rs` (~150 lines)
-- Modified: `engine-rs/src/validate.rs` — call `validate_expression()` for each
-  expression field during the existing validation pass
-- Modified: `engine-rs/Cargo.toml` — add `regex` dependency (if not already present)
-
-### Phase 3 (lookup)
-- Modified: `engine-rs/src/model.rs` — add `Lookup` struct, add `lookup` field to
-  `FieldMapping`
-- Modified: `engine-rs/src/render/reverse.rs` — generate subquery from `lookup:`
-- Modified: `engine-rs/src/validate.rs` — validate lookup target/field references
-- Modified: `spec/mapping-schema.json` — add `lookup` object schema
-- New example: `examples/multi-value/mapping.yaml` (replaces raw subquery pattern)
+### Phase 1 (validation) — Done
+- New file: `engine-rs/src/validate_expr.rs`
+- Modified: `engine-rs/src/validate.rs` — calls `validate_expression()` for each expression field
+- Modified: `engine-rs/Cargo.toml` — `regex` dependency added
 
 ## Interaction with other plans
 
 - **MULTI-VALUE-PLAN**: Now uses `primary_phone` coalesce field instead of
   cross-target subqueries. `lookup:` remains available for edge cases that
   genuinely need cross-target access.
-- **TARGET-ARRAYS-PLAN**: Array-typed target fields further reduce the need
-  for cross-target queries by letting simple value lists live on the parent.
-- **MULTI-VALUE-PLAN (old)**: The earlier version used `reverse_expression`
-  subqueries against internal view names — that pattern is what originally
-  motivated `lookup:`. The current multi-value plan avoids it entirely.
+- **COMPUTED-FIELDS-PLAN**: Cross-target access (`lookup:`) is superseded by
+  the `from:` / `_enriched_` layer defined there.
 - **PRECISION-LOSS-PLAN**: `normalize` expressions are column-level snippets
   with a `%s` placeholder — Phase 1 validation applies (validate after
   placeholder substitution).

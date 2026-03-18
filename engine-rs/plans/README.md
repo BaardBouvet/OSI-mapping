@@ -34,7 +34,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
 | [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Planned | `normalize` property on field mappings for lossy noop comparison (truncation, rounding, case folding). |
 | [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
-| [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Phase 1–2 done | Validate expressions as safe SQL snippets; `lookup:` for cross-target access. |
+| [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Done | Validate expressions as safe SQL snippets; cross-target `lookup:` superseded by COMPUTED-FIELDS-PLAN. |
 | [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Maybe | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
 | [PROPTEST-PLAN.md](PROPTEST-PLAN.md) | Done | Property-based testing harness using `proptest` to fuzz the engine with random mapping documents. |
 | [ANALYTICS-PROVENANCE-PLAN.md](ANALYTICS-PROVENANCE-PLAN.md) | Planned | Provenance + contributions views — trace golden records back to source data. |

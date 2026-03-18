@@ -469,9 +469,9 @@ pub struct TraverseField {
 - **EXPRESSION-SAFETY-PLAN:** `expression:` on `from:` fields is validated
   as a SQL aggregate snippet (same rules as `TargetExpression`). The engine
   generates the subquery; the user writes only the aggregate body.
-- **EXPRESSION-SAFETY Phase 3 (`lookup:`):** `from:` on target fields is a
-  higher-level declarative alternative. Both could coexist, but `from:`
-  covers the main aggregation use cases.
+- **EXPRESSION-SAFETY-PLAN Phase 3 (`lookup:`):** Superseded by `from:` — the
+  `_enriched_` layer covers the same use cases more cleanly and integrates
+  with the full pipeline.
 
 # Open questions
 
