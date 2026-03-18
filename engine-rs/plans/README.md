@@ -34,8 +34,8 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
 | [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Design | Element-level deletion for array targets — tombstone fields or ETL-layer snapshot diff. |
 | [HARD-DELETE-PROPAGATION-PLAN.md](HARD-DELETE-PROPAGATION-PLAN.md) | Design | Hard-delete propagation via ETL-layer provenance tracking — prevents re-insertion loops. |
-| [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Design | ETL-maintained state as engine input — identity-only (delete detection) and full written state (noop, conflict, incremental delta). |
-| [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Planned | `normalize` property on field mappings for lossy noop comparison (truncation, rounding, case folding). |
+| [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Done (Phase 1) | ETL-maintained state as engine input — `written_state` table + `written_noop` opt-in for target-centric noop detection. |
+| [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Done (Phase 1) | `normalize` property on field mappings for lossy noop comparison (truncation, rounding, case folding). |
 | [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
 | [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Done | Validate expressions as safe SQL snippets; cross-target `lookup:` superseded by COMPUTED-FIELDS-PLAN. |
 | [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Maybe | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |

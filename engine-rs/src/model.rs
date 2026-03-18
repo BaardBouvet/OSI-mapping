@@ -605,6 +605,12 @@ pub struct FieldMapping {
     /// `order_prev: true` on the same mapping.
     #[serde(default)]
     pub order_next: bool,
+    /// SQL expression with `%s` placeholder applied to both sides of the
+    /// delta noop comparison.  Handles precision loss (e.g. numeric rounding,
+    /// string truncation, case folding) so that expected lossy differences
+    /// are not flagged as changes.
+    #[serde(default)]
+    pub normalize: Option<String>,
 }
 
 impl FieldMapping {

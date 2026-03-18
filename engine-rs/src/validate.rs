@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::model::{MappingDocument, Strategy};
+use crate::model::{Direction, MappingDocument, Strategy};
 use crate::validate_expr::{extract_identifiers, validate_expression, ExprContext};
 
 /// A validation diagnostic — either an error or a warning.
@@ -257,6 +257,28 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
                         "Schema",
                         format!(
                             "mapping '{}' field[{}]: 'order_prev'/'order_next' requires a 'target' field",
+                            mapping.name, i
+                        ),
+                    );
+                }
+            }
+
+            // normalize must contain %s placeholder
+            if let Some(ref norm) = fm.normalize {
+                if !norm.contains("%s") {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}' field[{}]: 'normalize' must contain a '%s' placeholder",
+                            mapping.name, i
+                        ),
+                    );
+                }
+                if fm.effective_direction() == Direction::ForwardOnly {
+                    result.warning(
+                        "Schema",
+                        format!(
+                            "mapping '{}' field[{}]: 'normalize' has no effect on forward_only fields (no delta noop comparison)",
                             mapping.name, i
                         ),
                     );

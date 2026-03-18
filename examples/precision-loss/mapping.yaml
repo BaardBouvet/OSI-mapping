@@ -1,0 +1,108 @@
+version: "1.0"
+description: >
+  Demonstrates the `normalize` property for handling precision loss.
+  System A stores price as decimal, System B stores price as integer.
+  Without `normalize`, pushing the resolved decimal back to System B
+  would produce a false update every sync because "12" ≠ "12.50".
+  With `normalize`, both sides are rounded to integer precision before
+  comparison — recognising the difference as expected loss, not a change.
+
+sources:
+  system_a:
+    primary_key: id
+  system_b:
+    primary_key: id
+
+targets:
+  product:
+    fields:
+      sku:
+        strategy: identity
+      price:
+        strategy: coalesce
+      name:
+        strategy: coalesce
+
+mappings:
+  - name: system_a
+    source: system_a
+    target: product
+    fields:
+      - source: sku
+        target: sku
+      - source: price
+        target: price
+        priority: 1
+      - source: name
+        target: name
+        priority: 1
+
+  - name: system_b
+    source: system_b
+    target: product
+    fields:
+      - source: sku
+        target: sku
+      - source: price
+        target: price
+        normalize: "trunc(%s::numeric, 0)::integer::text"
+      - source: name
+        target: name
+        normalize: "left(%s, 10)"
+
+tests:
+  - description: "System A decimal price, System B integer price — normalize prevents false update"
+    input:
+      system_a:
+        - { id: "1", sku: "WIDGET", price: "12.50", name: "Widget Pro" }
+      system_b:
+        - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro" }
+    expected:
+      system_a:
+        noops:
+          - { id: "1", sku: "WIDGET", price: "12.50", name: "Widget Pro" }
+      system_b:
+        noops:
+          - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro" }
+
+  - description: "Genuine price change still detected through normalize"
+    input:
+      system_a:
+        - { id: "1", sku: "WIDGET", price: "15.00", name: "Widget Pro" }
+      system_b:
+        - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro" }
+    expected:
+      system_a:
+        noops:
+          - { id: "1", sku: "WIDGET", price: "15.00", name: "Widget Pro" }
+      system_b:
+        updates:
+          - { id: "100", sku: "WIDGET", price: "15.00", name: "Widget Pro" }
+
+  - description: "Name truncation — long name is noop because normalize truncates both sides"
+    input:
+      system_a:
+        - { id: "1", sku: "GADGET", price: "5.00", name: "Gadget Ultra Deluxe" }
+      system_b:
+        - { id: "100", sku: "GADGET", price: "5", name: "Gadget Ult" }
+    expected:
+      system_a:
+        noops:
+          - { id: "1", sku: "GADGET", price: "5.00", name: "Gadget Ultra Deluxe" }
+      system_b:
+        noops:
+          - { id: "100", sku: "GADGET", price: "5", name: "Gadget Ult" }
+
+  - description: "Genuine name change detected — first 10 chars differ so normalize still catches it"
+    input:
+      system_a:
+        - { id: "1", sku: "GADGET", price: "5.00", name: "Super Gizmo Deluxe" }
+      system_b:
+        - { id: "100", sku: "GADGET", price: "5", name: "Gadget Ult" }
+    expected:
+      system_a:
+        noops:
+          - { id: "1", sku: "GADGET", price: "5.00", name: "Super Gizmo Deluxe" }
+      system_b:
+        updates:
+          - { id: "100", sku: "GADGET", price: "5.00", name: "Super Gizmo Deluxe" }

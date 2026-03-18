@@ -1,6 +1,6 @@
 # ETL state as engine input
 
-**Status:** Design
+**Status:** Done (Phase 1 — written_state + written_noop)
 
 The engine currently compares resolved values against `_base` (raw source
 columns captured in the forward view) to detect noops and changes. But

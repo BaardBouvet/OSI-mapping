@@ -49,6 +49,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`nested-arrays-deep`](nested-arrays-deep/README.md) | Deeply nested array structures |
 | [`nested-arrays-multiple`](nested-arrays-multiple/README.md) | Multiple nested arrays |
 | [`null-propagation`](null-propagation/README.md) | Propagating intentional NULLs via sentinel pattern |
+| [`precision-loss`](precision-loss/README.md) | Handling precision loss with `normalize` on field mappings |
 | [`propagated-delete`](propagated-delete/README.md) | GDPR-style deletion propagation via bool_or + reverse_filter |
 | [`reference-preservation`](reference-preservation/README.md) | Preserving foreign-key references |
 | [`references`](references/README.md) | Foreign-key references between targets |

@@ -296,6 +296,9 @@ async fn execute_all_examples() {
                 break;
             }
 
+            // Populate written-state tables now that identity views exist.
+            populate_written_state_tables(&client, &doc, &test.input).await;
+
             // Compare expected with actual — skip if expected is empty
             if test.expected.is_empty() {
                 eprintln!("  ✓ (empty expected)");
@@ -391,6 +394,9 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
             });
         }
 
+        // Populate written-state tables now that identity views exist.
+        populate_written_state_tables(client, &doc, &test.input).await;
+
         // Compare reverse views with expected output
         for (expected_key, expected) in &test.expected {
             // expected_key is the source dataset name.
@@ -408,10 +414,14 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
 
             // Build reverse field mapping (needed for noop verification)
             let mut reverse_fields: Vec<(String, String)> = Vec::new();
+            // Fields whose noop delta value may differ from source (normalize / written_noop).
+            let mut noop_exempt_fields: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             for mapping in &source_mappings {
                 if mapping.source.path.is_some() {
                     continue;
                 }
+                let all_exempt = mapping.written_noop;
                 for fm in &mapping.fields {
                     if fm.is_reverse() && fm.source.is_some() {
                         let pair = (
@@ -420,6 +430,9 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                         );
                         if !reverse_fields.iter().any(|(s, _)| s == &pair.0) {
                             reverse_fields.push(pair);
+                        }
+                        if all_exempt || fm.normalize.is_some() {
+                            noop_exempt_fields.insert(fm.source.clone().unwrap());
                         }
                     }
                 }
@@ -728,6 +741,10 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                 let source_row = &source_rows[0];
 
                 for (src_field, _) in &reverse_fields {
+                    // Skip fields that may legitimately differ (normalize / written_noop).
+                    if noop_exempt_fields.contains(src_field.as_str()) {
+                        continue;
+                    }
                     let noop_val: Option<String> =
                         noop_obj.get(src_field.as_str()).and_then(|v| match v {
                             serde_json::Value::String(s) => Some(s.clone()),
@@ -791,10 +808,13 @@ async fn verify_test_expected(
 
         // Build reverse field mapping (needed for noop verification)
         let mut reverse_fields: Vec<(String, String)> = Vec::new();
+        let mut noop_exempt_fields: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for mapping in &source_mappings {
             if mapping.source.path.is_some() {
                 continue;
             }
+            let all_exempt = mapping.written_noop;
             for fm in &mapping.fields {
                 if fm.is_reverse() && fm.source.is_some() {
                     let pair = (
@@ -803,6 +823,9 @@ async fn verify_test_expected(
                     );
                     if !reverse_fields.iter().any(|(s, _)| s == &pair.0) {
                         reverse_fields.push(pair);
+                    }
+                    if all_exempt || fm.normalize.is_some() {
+                        noop_exempt_fields.insert(fm.source.clone().unwrap());
                     }
                 }
             }
@@ -1055,6 +1078,9 @@ async fn verify_test_expected(
             let source_row = &source_rows[0];
 
             for (src_field, _) in &reverse_fields {
+                if noop_exempt_fields.contains(src_field.as_str()) {
+                    continue;
+                }
                 let noop_val: Option<String> =
                     noop_obj.get(src_field.as_str()).and_then(&json_to_string);
                 let source_val: Option<String> = get_text(source_row, src_field.as_str());
@@ -1644,27 +1670,52 @@ async fn ensure_written_state_tables(
                 )
                 .await
                 .unwrap();
-            // Populate from test input if provided.
+            // Skip populating here if input has data — that happens in
+            // populate_written_state_tables after views exist (so that
+            // _cluster_id seeds like "crm:1" can be resolved).
+            if input.get(&table).is_none() {
+                // No data for this table — nothing to do.
+            }
+        }
+    }
+}
+
+/// Populate written-state tables from test input AFTER views have been created.
+/// Resolves `_cluster_id` seeds (e.g. "crm:1") via the identity view.
+async fn populate_written_state_tables(
+    client: &tokio_postgres::Client,
+    doc: &osi_engine::model::MappingDocument,
+    input: &indexmap::IndexMap<String, Vec<serde_json::Value>>,
+) {
+    let qi = osi_engine::qi;
+    for mapping in &doc.mappings {
+        if let Some(ref ws) = mapping.written_state {
+            let table = ws.table_name(&mapping.name);
             if let Some(rows) = input.get(&table) {
                 for row in rows {
                     if let Some(obj) = row.as_object() {
-                        let cluster_id = obj
+                        let raw_cluster_id = obj
                             .get(&ws.cluster_id)
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
-                        let written = obj
+                        // Resolve seed like "crm:1" to actual entity hash.
+                        let cluster_id =
+                            resolve_cluster_id(client, raw_cluster_id, mapping.target.name()).await;
+                        let written_str = obj
                             .get(&ws.written)
                             .and_then(|v| v.as_str())
                             .unwrap_or("{}");
+                        let written_json: serde_json::Value =
+                            serde_json::from_str(written_str).unwrap_or(serde_json::json!({}));
                         client
                             .execute(
                                 &format!(
-                                    "INSERT INTO {} ({}, {}) VALUES ($1, $2::jsonb)",
+                                    "INSERT INTO {} ({}, {}) VALUES ($1, $2)",
                                     qi(&table),
                                     qi(&ws.cluster_id),
                                     qi(&ws.written),
                                 ),
-                                &[&cluster_id, &written],
+                                &[&cluster_id, &written_json],
                             )
                             .await
                             .unwrap();

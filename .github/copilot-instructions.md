@@ -8,6 +8,6 @@ When working on files in `engine-rs/src`, the agent must always run the followin
 
 - cargo fmt --check
 - cargo clippy --tests -- -D warnings
-- cargo test --lib
+- cargo test
 
 This ensures all code is formatted, lint-free, and passes unit tests before handoff.

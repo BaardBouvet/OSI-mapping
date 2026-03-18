@@ -208,11 +208,16 @@ fn action_case(
             if pk_columns.contains(src) {
                 return None;
             }
-            Some(format!(
-                "_base->>'{}' IS NOT DISTINCT FROM {}::text",
-                sql_escape(src),
-                qi(src)
-            ))
+            let lhs = format!("_base->>'{}'", sql_escape(src));
+            let rhs = format!("{}::text", qi(src));
+            let (lhs_n, rhs_n) = if let Some(ref norm) = fm.normalize {
+                let lhs_p = format!("({lhs})");
+                let rhs_p = format!("({rhs})");
+                (norm.replace("%s", &lhs_p), norm.replace("%s", &rhs_p))
+            } else {
+                (lhs, rhs)
+            };
+            Some(format!("{lhs_n} IS NOT DISTINCT FROM {rhs_n}"))
         })
         .collect();
 
@@ -441,6 +446,7 @@ fn merged_action_case(
     pk_columns: &std::collections::HashSet<&str>,
     all_reverse_fields: &[String],
     written_col: Option<&str>,
+    normalize_map: &std::collections::HashMap<&str, &str>,
 ) -> String {
     // Delete conditions from primary mappings only.
     let mut delete_conditions: Vec<String> = Vec::new();
@@ -462,11 +468,19 @@ fn merged_action_case(
         .iter()
         .filter(|f| !pk_columns.contains(f.as_str()))
         .map(|src| {
-            format!(
-                "_base->>'{}' IS NOT DISTINCT FROM {}::text",
-                sql_escape(src),
-                qi(src)
-            )
+            let lhs = format!("_base->>'{}'", sql_escape(src));
+            let rhs = format!("{}::text", qi(src));
+            if let Some(norm) = normalize_map.get(src.as_str()) {
+                let lhs_p = format!("({lhs})");
+                let rhs_p = format!("({rhs})");
+                format!(
+                    "{} IS NOT DISTINCT FROM {}",
+                    norm.replace("%s", &lhs_p),
+                    norm.replace("%s", &rhs_p)
+                )
+            } else {
+                format!("{lhs} IS NOT DISTINCT FROM {rhs}")
+            }
         })
         .collect();
 
@@ -721,7 +735,23 @@ fn render_delta_with_children(
     } else {
         None
     };
-    let action_expr = merged_action_case(primary_mappings, pk_columns, reverse_fields, written_col);
+    // Build normalize map from all mappings (primary + child).
+    let normalize_map: std::collections::HashMap<&str, &str> = all_mappings_for_output
+        .iter()
+        .flat_map(|m| m.fields.iter())
+        .filter_map(|fm| {
+            let src = fm.source_name()?;
+            let norm = fm.normalize.as_deref()?;
+            Some((src, norm))
+        })
+        .collect();
+    let action_expr = merged_action_case(
+        primary_mappings,
+        pk_columns,
+        reverse_fields,
+        written_col,
+        &normalize_map,
+    );
     let mut outer_cols: Vec<String> = vec![format!("{action_expr} AS _action")];
     let mut out_exprs = delta_output_exprs(
         out_cols,
