@@ -459,3 +459,15 @@ composes with existing GROUP BY without double-pass.
    [null-propagation example](../../examples/null-propagation/) works today
    with zero engine changes. If sentinel coordination across mappings proves
    manageable, this plan may never need implementation.
+
+4. **Can the ETL state table pattern help here?** No. The
+   `synced_entities` / `synced_elements` pattern from
+   [ELEMENT-DELETION-PLAN](ELEMENT-DELETION-PLAN.md) and
+   [HARD-DELETE-PROPAGATION-PLAN](HARD-DELETE-PROPAGATION-PLAN.md) solves
+   lifecycle detection: "was this present before?" That's a temporal
+   question. Null-wins is a semantic question: "is this source's NULL
+   authoritative?" A field that has been NULL since day one (batch import
+   with no phone data) and a field that was intentionally cleared both
+   show the same NULL — the state table can't distinguish them. The
+   answer depends on the source's authority, not on history. Per-field
+   `null_wins` on the mapping is the correct level of abstraction.

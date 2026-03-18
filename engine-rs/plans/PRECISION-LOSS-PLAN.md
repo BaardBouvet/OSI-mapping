@@ -547,3 +547,10 @@ Phase 2 prevents precision degradation of the golden record. Both use the same
 Low. Single new optional property on FieldMapping. Only affects the
 `action_case()` function in delta.rs. All existing examples have no
 `normalize` and behave identically. No breakage possible.
+
+## Relationship to other plans
+
+- **[ETL-STATE-INPUT-PLAN](ETL-STATE-INPUT-PLAN.md)** — Phase 2 introduces
+  `_written_{mapping}` (full row state from ETL). Composing `normalize` with
+  `_written` enables correct noop detection for lossy targets: compare
+  `normalize(resolved)` against what the target actually stored last time.

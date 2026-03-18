@@ -32,6 +32,9 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [POSITIONAL-ARRAY-PLAN.md](POSITIONAL-ARRAY-PLAN.md) | Superseded | Superseded by CRDT-ORDERING-PLAN — used position as identity, fragile for multi-source. |
 | [CRDT-ORDERING-PLAN.md](CRDT-ORDERING-PLAN.md) | Done | CRDT ordering for array elements: `order: true` + optional `order_prev`/`order_next` linked-list merge. |
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
+| [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Design | Element-level deletion for array targets — tombstone fields or ETL-layer snapshot diff. |
+| [HARD-DELETE-PROPAGATION-PLAN.md](HARD-DELETE-PROPAGATION-PLAN.md) | Design | Hard-delete propagation via ETL-layer provenance tracking — prevents re-insertion loops. |
+| [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Design | ETL-maintained state as engine input — identity-only (delete detection) and full written state (noop, conflict, incremental delta). |
 | [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Planned | `normalize` property on field mappings for lossy noop comparison (truncation, rounding, case folding). |
 | [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
 | [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Done | Validate expressions as safe SQL snippets; cross-target `lookup:` superseded by COMPUTED-FIELDS-PLAN. |
@@ -40,6 +43,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [ANALYTICS-PROVENANCE-PLAN.md](ANALYTICS-PROVENANCE-PLAN.md) | Planned | Provenance + contributions views — trace golden records back to source data. |
 | [PASSTHROUGH-PLAN.md](PASSTHROUGH-PLAN.md) | Planned | Carry unmapped source columns through to delta output for ETL context. |
 | [NULL-WINS-PLAN.md](NULL-WINS-PLAN.md) | Maybe | `null_wins` expression on field mappings — may not implement; sentinel pattern works today. |
+| [OUTPUT-CONTRACT-PLAN.md](OUTPUT-CONTRACT-PLAN.md) | Maybe | Tracks hardcoded consumer-facing output columns (`_cluster_id`, `_action`, `_src_id`); configurable aliases via `output.columns`. |
 | [NATURAL-KEYS-PLAN.md](NATURAL-KEYS-PLAN.md) | Done | Natural keys (email, business codes, composite PKs) work correctly today — no engine changes needed. |
 | [TYPE-HIERARCHY-PLAN.md](TYPE-HIERARCHY-PLAN.md) | Design | `hierarchy:` on target fields for IS-A type relationships; `type_matches` helper in reverse_filter. |
 | [TARGET-PATH-PLAN.md](TARGET-PATH-PLAN.md) | Design | Analysis of `target_path` (dotted notation on targets) — recommends output formatting over pipeline changes. |
@@ -50,6 +54,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [LEARNING-GUIDE-PLAN.md](LEARNING-GUIDE-PLAN.md) | Planned | Progressive learning guide teaching mapping concepts from first principles. |
 | [DOCS-SITE-PLAN.md](DOCS-SITE-PLAN.md) | Done | Publish documentation as a static site using mdBook (`book.toml`) with GitHub Pages. |
 | [CI-RELEASE-PLAN.md](CI-RELEASE-PLAN.md) | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
+| [CONSUMER-NAMING-PLAN.md](CONSUMER-NAMING-PLAN.md) | Planned | Rename `_delta_` → `sync_` and `_cluster_members_` → `cluster_members_` for consumer-facing consistency. |
 | [CODE-COVERAGE-PLAN.md](CODE-COVERAGE-PLAN.md) | Done | Code coverage via cargo-llvm-cov with Codecov reporting. |
 | [CODE-QUALITY-PLAN.md](CODE-QUALITY-PLAN.md) | Done | Enforce rustfmt, clippy, cargo-deny; one-time codebase cleanup. |
 | [PGTRICKLE-OUTPUT-PLAN.md](PGTRICKLE-OUTPUT-PLAN.md) | Design | External post-processor that rewrites engine views as pg_trickle stream tables; per-view config. |

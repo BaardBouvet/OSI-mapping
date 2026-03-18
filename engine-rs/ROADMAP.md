@@ -83,11 +83,13 @@ Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 | MATERIALIZED-VIEW-INDEX-PLAN | ~~Design~~ **Done** | Opt-in `--materialize` flag with unique indexes for production deployments. |
 | LEARNING-GUIDE-PLAN | Planned | Progressive 7-chapter learning guide teaching mapping concepts. |
 | DOCS-SITE-PLAN | ~~Planned~~ **Done** | mdBook documentation site with search, deployed to GitHub Pages. |
+| CONSUMER-NAMING-PLAN | Planned | Rename consumer-facing `_delta_` → `sync_` and `_cluster_members_` → `cluster_members_` for naming consistency before 1.0. |
 | NAMING-PLAN | Design | Rename project (recommended: "Crossfold"). Update crate, binary, repo, docs. |
 
 **Exit criteria:** CI pipeline green on every push. Pre-built binaries on
 GitHub Releases. Documentation site live. Proptest harness runs in CI.
 Project name settled and applied across all artifacts.
+Consumer-facing naming consistency applied (`sync_{source}` and `cluster_members_{mapping}`).
 
 ## Post-0.1
 
