@@ -35,11 +35,12 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Planned | `normalize` property on field mappings for lossy noop comparison (truncation, rounding, case folding). |
 | [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
 | [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Phase 1–2 done | Validate expressions as safe SQL snippets; `lookup:` for cross-target access. |
-| [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Planned | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
+| [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Maybe | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
 | [PROPTEST-PLAN.md](PROPTEST-PLAN.md) | Done | Property-based testing harness using `proptest` to fuzz the engine with random mapping documents. |
 | [ANALYTICS-PROVENANCE-PLAN.md](ANALYTICS-PROVENANCE-PLAN.md) | Planned | Provenance + contributions views — trace golden records back to source data. |
 | [PASSTHROUGH-PLAN.md](PASSTHROUGH-PLAN.md) | Planned | Carry unmapped source columns through to delta output for ETL context. |
 | [NULL-WINS-PLAN.md](NULL-WINS-PLAN.md) | Maybe | `null_wins` expression on field mappings — may not implement; sentinel pattern works today. |
+| [NATURAL-KEYS-PLAN.md](NATURAL-KEYS-PLAN.md) | Done | Natural keys (email, business codes, composite PKs) work correctly today — no engine changes needed. |
 | [TYPE-HIERARCHY-PLAN.md](TYPE-HIERARCHY-PLAN.md) | Design | `hierarchy:` on target fields for IS-A type relationships; `type_matches` helper in reverse_filter. |
 | [TARGET-PATH-PLAN.md](TARGET-PATH-PLAN.md) | Design | Analysis of `target_path` (dotted notation on targets) — recommends output formatting over pipeline changes. |
 | [DBT-OUTPUT-PLAN.md](DBT-OUTPUT-PLAN.md) | Design | Generate a dbt project from mapping YAML; `ViewOutput` refactor; compatible with custom materialisations. |

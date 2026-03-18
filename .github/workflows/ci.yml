@@ -2,7 +2,21 @@ name: CI
 on:
   push:
     branches: [main]
+    paths:
+      - 'engine-rs/src/**'
+      - 'engine-rs/tests/**'
+      - 'engine-rs/Cargo.toml'
+      - 'engine-rs/Cargo.lock'
+      - 'examples/**'
+      - '.github/workflows/ci.yml'
   pull_request:
+    paths:
+      - 'engine-rs/src/**'
+      - 'engine-rs/tests/**'
+      - 'engine-rs/Cargo.toml'
+      - 'engine-rs/Cargo.lock'
+      - 'examples/**'
+      - '.github/workflows/ci.yml'
 
 env:
   CARGO_TERM_COLOR: always

@@ -67,7 +67,6 @@ Larger features that expand the type system and analytics layer.
 
 | Plan | Status | Work |
 |------|--------|------|
-| TARGET-ARRAYS-PLAN | Planned | Array-typed target fields (`text[]`, `integer[]`). Eliminates child targets for simple value lists. Full pipeline impact. |
 | ANALYTICS-PROVENANCE-PLAN | Planned | `_provenance_` and `_contributions_` views for source-tracing and stewardship. |
 
 **Exit criteria:** Array fields work in forward, identity, resolution, reverse,
@@ -101,6 +100,7 @@ design. They may ship as 1.x minor releases.
 
 | Plan | Status | Reason deferred |
 |------|--------|-----------------|
+| TARGET-ARRAYS-PLAN | Maybe | Child targets with CRDT ordering cover this today; array-typed targets can be reconsidered post-1.0 if ergonomics demand it. |
 | COMPOSITE-TYPES-PLAN | Proposed | Replace JSONB with PostgreSQL composite types. JSONB works today; typed output is additive. |
 | SOURCE-GROUPING-PLAN | Design | `system:` property on sources for visual DOT grouping. Pure cosmetic; no functional impact. |
 | DBT-OUTPUT-PLAN | Design | Generate a dbt project from mapping YAML. Current `psql -f` workflow works; dbt is additive. |

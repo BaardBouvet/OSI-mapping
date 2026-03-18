@@ -1,15 +1,16 @@
-# Natural Keys Analysis
+# Natural keys
 
-**Question:** Does the engine need special handling for natural keys (email,
-business codes, composite business identifiers) vs surrogate keys (auto-increment
-IDs, UUIDs)?
+**Status:** Done
 
-**Conclusion:** No. The engine handles natural keys correctly today. No new
-feature is needed.
+Investigation into whether the engine needs special handling for natural keys
+(email addresses, business codes, composite business identifiers) versus
+surrogate keys (auto-increment IDs, UUIDs).
+
+**Conclusion:** No engine changes needed. Natural keys work correctly today.
 
 ---
 
-## Key Separation: Row Identity vs Entity Identity
+## Key separation: row identity vs entity identity
 
 The engine already separates two concerns that natural keys conflate in
 traditional database design:
@@ -35,9 +36,9 @@ systems into a single resolved entity. This is completely independent of the PK.
 
 ---
 
-## Natural Key Patterns
+## Natural key patterns
 
-Both patterns below work identically in the engine:
+Both patterns work identically in the engine:
 
 ### Pattern A: Natural key as PK + identity field
 
@@ -102,7 +103,7 @@ drive matching.
 
 ---
 
-## The One Assumption: PK Stability
+## The one assumption: PK stability
 
 The engine assumes `_src_id` is stable for the lifetime of a source row. If a
 PK value changes, the engine sees it as a delete (old `_src_id` disappears)
@@ -119,9 +120,9 @@ If `email` is the PK and Alice changes her email:
 
 Since the email is also the identity field, the new row won't match the old
 entity (different identity value), so this is genuinely a different entity from
-the engine's perspective. This is actually **correct behavior** — the engine
-can't distinguish "email changed" from "old user left, new user arrived"
-without CDC or a stable surrogate.
+the engine's perspective — correct behavior. The engine can't distinguish
+"email changed" from "old user left, new user arrived" without CDC or a stable
+surrogate.
 
 ### When this doesn't matter
 
@@ -137,9 +138,7 @@ causes the entity to split or re-link through transitive closure as appropriate.
 
 ---
 
-## Existing Examples Using Natural Keys
-
-The engine already handles natural keys across multiple examples:
+## Existing examples using natural keys
 
 | Example | PK | Natural? | Notes |
 |---------|-----|----------|-------|
@@ -154,11 +153,9 @@ All work correctly without any natural-key-specific handling.
 
 ---
 
-## Pipeline Flow for Natural Keys
+## Pipeline flow for natural keys
 
-The natural key flows through each stage identically to a surrogate:
-
-| Stage | `_src_id` Role | Natural Key Behavior |
+| Stage | `_src_id` role | Natural key behavior |
 |-------|---------------|---------------------|
 | **Forward** | Normalized to TEXT | `email::text` or `jsonb_build_object(...)::text` |
 | **Identity** | Part of `md5(_mapping ':' _src_id ':' identity_fields)` | Opaque — value doesn't matter |
@@ -179,4 +176,3 @@ against `_base`. This means a PK value can never trigger a spurious update.
 This is standard database design advice, not an engine limitation.
 
 The engine enforces no policy here — it works correctly with either approach.
-The choice is about what "row identity" means in your source system.
