@@ -7,6 +7,9 @@ description: >
   With `normalize`, both sides are rounded to integer precision before
   comparison — recognising the difference as expected loss, not a change.
 
+  Phase 2 (echo-aware resolution) also prevents a low-precision echo
+  from winning `last_modified` resolution and degrading the golden record.
+
 sources:
   system_a:
     primary_key: id
@@ -19,9 +22,9 @@ targets:
       sku:
         strategy: identity
       price:
-        strategy: coalesce
+        strategy: last_modified
       name:
-        strategy: coalesce
+        strategy: last_modified
 
 mappings:
   - name: system_a
@@ -32,10 +35,10 @@ mappings:
         target: sku
       - source: price
         target: price
-        priority: 1
+        last_modified: updated_at
       - source: name
         target: name
-        priority: 1
+        last_modified: updated_at
 
   - name: system_b
     source: system_b
@@ -46,17 +49,19 @@ mappings:
       - source: price
         target: price
         normalize: "trunc(%s::numeric, 0)::integer::text"
+        last_modified: updated_at
       - source: name
         target: name
         normalize: "left(%s, 10)"
+        last_modified: updated_at
 
 tests:
   - description: "System A decimal price, System B integer price — normalize prevents false update"
     input:
       system_a:
-        - { id: "1", sku: "WIDGET", price: "12.50", name: "Widget Pro" }
+        - { id: "1", sku: "WIDGET", price: "12.50", name: "Widget Pro", updated_at: "2024-01-15T10:00:00Z" }
       system_b:
-        - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro" }
+        - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro", updated_at: "2024-01-10T10:00:00Z" }
     expected:
       system_a:
         noops:
@@ -68,9 +73,9 @@ tests:
   - description: "Genuine price change still detected through normalize"
     input:
       system_a:
-        - { id: "1", sku: "WIDGET", price: "15.00", name: "Widget Pro" }
+        - { id: "1", sku: "WIDGET", price: "15.00", name: "Widget Pro", updated_at: "2024-01-15T10:00:00Z" }
       system_b:
-        - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro" }
+        - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro", updated_at: "2024-01-10T10:00:00Z" }
     expected:
       system_a:
         noops:
@@ -82,9 +87,9 @@ tests:
   - description: "Name truncation — long name is noop because normalize truncates both sides"
     input:
       system_a:
-        - { id: "1", sku: "GADGET", price: "5.00", name: "Gadget Ultra Deluxe" }
+        - { id: "1", sku: "GADGET", price: "5.00", name: "Gadget Ultra Deluxe", updated_at: "2024-01-15T10:00:00Z" }
       system_b:
-        - { id: "100", sku: "GADGET", price: "5", name: "Gadget Ult" }
+        - { id: "100", sku: "GADGET", price: "5", name: "Gadget Ult", updated_at: "2024-01-10T10:00:00Z" }
     expected:
       system_a:
         noops:
@@ -96,9 +101,9 @@ tests:
   - description: "Genuine name change detected — first 10 chars differ so normalize still catches it"
     input:
       system_a:
-        - { id: "1", sku: "GADGET", price: "5.00", name: "Super Gizmo Deluxe" }
+        - { id: "1", sku: "GADGET", price: "5.00", name: "Super Gizmo Deluxe", updated_at: "2024-01-15T10:00:00Z" }
       system_b:
-        - { id: "100", sku: "GADGET", price: "5", name: "Gadget Ult" }
+        - { id: "100", sku: "GADGET", price: "5", name: "Gadget Ult", updated_at: "2024-01-10T10:00:00Z" }
     expected:
       system_a:
         noops:
@@ -106,3 +111,31 @@ tests:
       system_b:
         updates:
           - { id: "100", sku: "GADGET", price: "5.00", name: "Super Gizmo Deluxe" }
+
+  - description: "Echo-aware resolution — newer low-precision echo does not degrade golden record"
+    input:
+      system_a:
+        - { id: "1", sku: "WIDGET", price: "12.50", name: "Widget Pro", updated_at: "2024-01-10T10:00:00Z" }
+      system_b:
+        - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro", updated_at: "2024-01-20T10:00:00Z" }
+    expected:
+      system_a:
+        noops:
+          - { id: "1", sku: "WIDGET", price: "12.50", name: "Widget Pro" }
+      system_b:
+        noops:
+          - { id: "100", sku: "WIDGET", price: "12", name: "Widget Pro" }
+
+  - description: "Genuine change from low-precision system — different normalized value wins if newer"
+    input:
+      system_a:
+        - { id: "1", sku: "WIDGET", price: "12.50", name: "Widget Pro", updated_at: "2024-01-10T10:00:00Z" }
+      system_b:
+        - { id: "100", sku: "WIDGET", price: "15", name: "Widget Pro", updated_at: "2024-01-20T10:00:00Z" }
+    expected:
+      system_a:
+        updates:
+          - { id: "1", sku: "WIDGET", price: "15", name: "Widget Pro" }
+      system_b:
+        noops:
+          - { id: "100", sku: "WIDGET", price: "15", name: "Widget Pro" }

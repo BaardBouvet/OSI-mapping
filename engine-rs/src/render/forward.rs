@@ -152,9 +152,16 @@ pub fn render_forward_view(
     source_meta: Option<&Source>,
     target: Option<&Target>,
     nested_base_cols: &[String],
+    normalize_fields: &HashMap<String, String>,
 ) -> Result<String> {
     let view_name = qi(&format!("_fwd_{}", mapping.name));
-    let body = render_forward_body(mapping, source_meta, target, nested_base_cols)?;
+    let body = render_forward_body(
+        mapping,
+        source_meta,
+        target,
+        nested_base_cols,
+        normalize_fields,
+    )?;
     Ok(format!(
         "-- Forward: {name}\nCREATE OR REPLACE VIEW {view_name} AS\n{body};\n",
         name = mapping.name,
@@ -169,6 +176,7 @@ pub fn render_forward_body(
     source_meta: Option<&Source>,
     target: Option<&Target>,
     nested_base_cols: &[String],
+    normalize_fields: &HashMap<String, String>,
 ) -> Result<String> {
     let source = qi(source_meta
         .map(|s| s.table_name(&mapping.source.dataset))
@@ -360,6 +368,23 @@ pub fn render_forward_body(
                     }
                     None => format!("NULL::text AS {}", qi(&format!("_ts_{fname}"))),
                 });
+
+                // Echo-aware normalize columns (Phase 2 precision-loss).
+                // When any mapping declares `normalize` for this target field,
+                // all forward views emit a canonical normalized value so the
+                // resolution view can detect and suppress echo values.
+                if let Some(canonical_norm) = normalize_fields.get(fname) {
+                    let norm_expr = canonical_norm.replace("%s", &format!("({expr})"));
+                    cols.push(format!(
+                        "{norm_expr} AS {}",
+                        qi(&format!("_normalize_{fname}"))
+                    ));
+                    let has_own = fm.normalize.is_some();
+                    cols.push(format!(
+                        "{has_own} AS {}",
+                        qi(&format!("_has_normalize_{fname}"))
+                    ));
+                }
             } else {
                 // Not mapped by this mapping — emit NULL placeholders
                 cols.push(format!("NULL::{null_type} AS {qfname}"));
@@ -368,6 +393,18 @@ pub fn render_forward_body(
                     qi(&format!("_priority_{fname}"))
                 ));
                 cols.push(format!("NULL::text AS {}", qi(&format!("_ts_{fname}"))));
+
+                // Echo-aware NULL placeholders for normalize columns.
+                if normalize_fields.contains_key(fname) {
+                    cols.push(format!(
+                        "NULL::text AS {}",
+                        qi(&format!("_normalize_{fname}"))
+                    ));
+                    cols.push(format!(
+                        "NULL::boolean AS {}",
+                        qi(&format!("_has_normalize_{fname}"))
+                    ));
+                }
             }
         }
     } else {
@@ -516,7 +553,7 @@ mod tests {
         let sqls: Vec<String> = doc
             .mappings
             .iter()
-            .map(|m| render_forward_body(m, None, Some(target), &[]).unwrap())
+            .map(|m| render_forward_body(m, None, Some(target), &[], &HashMap::new()).unwrap())
             .collect();
 
         // Both views must have identical column sets
@@ -573,7 +610,7 @@ mappings:
         );
         let m = &doc.mappings[1];
         let target = doc.targets.get("line").unwrap();
-        let sql = render_forward_body(m, None, Some(target), &[]).unwrap();
+        let sql = render_forward_body(m, None, Some(target), &[], &HashMap::new()).unwrap();
         assert!(
             sql.contains("jsonb_array_elements"),
             "should have LATERAL jsonb_array_elements for nested array"
@@ -615,7 +652,8 @@ mappings:
 "#,
         );
         let target = doc.targets.get("t").unwrap();
-        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[]).unwrap();
+        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[], &HashMap::new())
+            .unwrap();
         assert!(
             sql.contains("regexp_replace"),
             "expression should appear in forward SQL"
@@ -641,7 +679,8 @@ mappings:
 "#,
         );
         let target = doc.targets.get("t").unwrap();
-        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[]).unwrap();
+        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[], &HashMap::new())
+            .unwrap();
         assert!(
             sql.contains("WHERE status = 'active'"),
             "filter should appear as WHERE clause"
@@ -675,7 +714,7 @@ mappings:
         );
         let m = &doc.mappings[1];
         let target = doc.targets.get("line").unwrap();
-        let sql = render_forward_body(m, None, Some(target), &[]).unwrap();
+        let sql = render_forward_body(m, None, Some(target), &[], &HashMap::new()).unwrap();
         // parent_id is a parent_field alias — should resolve to root column "id"
         assert!(
             sql.contains("\"id\""),
@@ -702,7 +741,8 @@ mappings:
 "#,
         );
         let target = doc.targets.get("t").unwrap();
-        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[]).unwrap();
+        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[], &HashMap::new())
+            .unwrap();
         assert!(
             sql.contains("jsonb_build_object(")
                 && sql.contains("'email'")
@@ -744,7 +784,8 @@ mappings:
 "#,
         );
         let target = doc.targets.get("item").unwrap();
-        let sql = render_forward_body(&doc.mappings[1], None, Some(target), &[]).unwrap();
+        let sql = render_forward_body(&doc.mappings[1], None, Some(target), &[], &HashMap::new())
+            .unwrap();
         assert!(
             sql.contains("WITH ORDINALITY AS item(value, idx)"),
             "should emit WITH ORDINALITY: {sql}"
@@ -792,7 +833,8 @@ mappings:
 "#,
         );
         let target = doc.targets.get("step").unwrap();
-        let sql = render_forward_body(&doc.mappings[1], None, Some(target), &[]).unwrap();
+        let sql = render_forward_body(&doc.mappings[1], None, Some(target), &[], &HashMap::new())
+            .unwrap();
         assert!(
             sql.contains("LAG(") && sql.contains("OVER ("),
             "should emit LAG window function: {sql}"

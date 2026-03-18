@@ -1,6 +1,6 @@
 # Precision loss
 
-**Status:** Done (Phase 1 — normalize on field mappings)
+**Status:** Done (Phase 1 — normalize on field mappings, Phase 2 — echo-aware resolution)
 
 Handle lossy transformations between systems: numeric precision reduction,
 string truncation, case folding, date format degradation, and other situations

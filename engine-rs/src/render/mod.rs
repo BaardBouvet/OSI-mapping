@@ -136,8 +136,30 @@ pub fn render_sql(
                 } else {
                     vec![]
                 };
-                let mut view_sql =
-                    forward::render_forward_view(mapping, source_meta, target, &nested_base_cols)?;
+                // Collect canonical normalize expressions across all mappings
+                // targeting the same entity so forward views emit consistent
+                // _normalize columns for echo-aware resolution (Phase 2).
+                let normalize_fields: std::collections::HashMap<String, String> = {
+                    let mut map = std::collections::HashMap::new();
+                    for m in &doc.mappings {
+                        if m.target.name() == target_name {
+                            for fm in &m.fields {
+                                if let (Some(ref tgt), Some(ref norm)) = (&fm.target, &fm.normalize)
+                                {
+                                    map.entry(tgt.clone()).or_insert_with(|| norm.clone());
+                                }
+                            }
+                        }
+                    }
+                    map
+                };
+                let mut view_sql = forward::render_forward_view(
+                    mapping,
+                    source_meta,
+                    target,
+                    &nested_base_cols,
+                    &normalize_fields,
+                )?;
                 if materialize {
                     view_sql = materialize_view_sql(&view_sql);
                     let vn = node.view_name();

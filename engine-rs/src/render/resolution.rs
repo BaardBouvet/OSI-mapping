@@ -1,6 +1,6 @@
 use anyhow::Result;
 use indexmap::IndexMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::model::{Strategy, Target};
 use crate::qi;
@@ -80,6 +80,38 @@ pub fn render_resolution_view(
         .flat_map(|fields| fields.iter().map(|(f, _)| f.as_str()))
         .collect();
 
+    // ── Phase 2: echo-aware resolution for precision-loss ───────────
+    // When a mapping declares `normalize` on a field with `last_modified`
+    // strategy, a lower-precision source can produce a rounded echo of
+    // the higher-precision value.  The echo CTE deduplicates these so
+    // the higher-precision source wins within a normalized-value group.
+    let mut normalize_map: HashMap<String, String> = HashMap::new();
+    for m in mappings {
+        for fm in &m.fields {
+            if let (Some(ref tgt), Some(ref norm)) = (&fm.target, &fm.normalize) {
+                normalize_map
+                    .entry(tgt.clone())
+                    .or_insert_with(|| norm.clone());
+            }
+        }
+    }
+    let echo_fields: Vec<String> = target
+        .fields
+        .iter()
+        .filter(|(fname, fdef)| {
+            fdef.strategy() == Strategy::LastModified
+                && normalize_map.contains_key(*fname)
+                && !grouped_fields.contains(fname.as_str())
+        })
+        .map(|(fname, _)| fname.clone())
+        .collect();
+    let has_echo = !echo_fields.is_empty();
+    let src_view = if has_echo {
+        qi("_echo")
+    } else {
+        id_view.clone()
+    };
+
     for (group_name, fields) in &groups {
         let cte_alias = format!("_grp_{group_name}");
 
@@ -128,7 +160,7 @@ pub fn render_resolution_view(
             "{cte_alias} AS (\n    \
              SELECT DISTINCT ON (_entity_id_resolved)\n      \
              {cols}\n    \
-             FROM {id_view}\n    \
+             FROM {src_view}\n    \
              WHERE {where_clause}\n    \
              ORDER BY _entity_id_resolved, {order_expr}\n  )",
             cte_alias = qi(&cte_alias),
@@ -137,12 +169,41 @@ pub fn render_resolution_view(
         ));
     }
 
+    // Prepend echo CTE (reads from the raw identity view; all subsequent
+    // CTEs and the main query read from _echo instead).
+    if has_echo {
+        let echo_rank_exprs: Vec<String> = echo_fields
+            .iter()
+            .map(|fname| {
+                format!(
+                    "ROW_NUMBER() OVER (\n        \
+                     PARTITION BY _entity_id_resolved, {}\n        \
+                     ORDER BY {} ASC, COALESCE({}, _last_modified) DESC NULLS LAST\n      \
+                     ) AS {}",
+                    qi(&format!("_normalize_{fname}")),
+                    qi(&format!("_has_normalize_{fname}")),
+                    qi(&format!("_ts_{fname}")),
+                    qi(&format!("_echo_rank_{fname}"))
+                )
+            })
+            .collect();
+        group_ctes.insert(
+            0,
+            format!(
+                "{} AS (\n    SELECT *,\n      {}\n    FROM {}\n  )",
+                qi("_echo"),
+                echo_rank_exprs.join(",\n      "),
+                id_view,
+            ),
+        );
+    }
+
     // ── Main aggregation expressions ────────────────────────────────
     let has_groups = !groups.is_empty();
 
     let mut agg_exprs: Vec<String> = Vec::new();
     if has_groups {
-        agg_exprs.push(format!("{id_view}._entity_id_resolved AS _entity_id"));
+        agg_exprs.push(format!("{src_view}._entity_id_resolved AS _entity_id"));
     } else {
         agg_exprs.push("_entity_id_resolved AS _entity_id".to_string());
     }
@@ -197,11 +258,22 @@ pub fn render_resolution_view(
                     "0 ASC".to_string()
                 }
             ),
-            Strategy::LastModified => format!(
-                "(array_agg({qfname} ORDER BY COALESCE({}, _last_modified) DESC NULLS LAST) \
-                 FILTER (WHERE {qfname} IS NOT NULL))[1]",
-                qi(&format!("_ts_{fname}"))
-            ),
+            Strategy::LastModified => {
+                if echo_fields.contains(fname) {
+                    format!(
+                        "(array_agg({qfname} ORDER BY COALESCE({}, _last_modified) DESC NULLS LAST) \
+                         FILTER (WHERE {qfname} IS NOT NULL AND {} = 1))[1]",
+                        qi(&format!("_ts_{fname}")),
+                        qi(&format!("_echo_rank_{fname}"))
+                    )
+                } else {
+                    format!(
+                        "(array_agg({qfname} ORDER BY COALESCE({}, _last_modified) DESC NULLS LAST) \
+                         FILTER (WHERE {qfname} IS NOT NULL))[1]",
+                        qi(&format!("_ts_{fname}"))
+                    )
+                }
+            }
             Strategy::Expression => {
                 let default_e = format!("max({qfname})");
                 let agg_expr = fdef.expression().unwrap_or(&default_e);
@@ -247,7 +319,7 @@ pub fn render_resolution_view(
         .map(|g| {
             let cte_alias = qi(&format!("_grp_{g}"));
             format!(
-                "LEFT JOIN {cte_alias} ON {cte_alias}._entity_id_resolved = {id_view}._entity_id_resolved"
+                "LEFT JOIN {cte_alias} ON {cte_alias}._entity_id_resolved = {src_view}._entity_id_resolved"
             )
         })
         .collect();
@@ -259,7 +331,7 @@ pub fn render_resolution_view(
 
         // Inner aggregation query.
         let eid_ref = if has_groups {
-            format!("{id_view}._entity_id_resolved")
+            format!("{src_view}._entity_id_resolved")
         } else {
             "_entity_id_resolved".to_string()
         };
@@ -270,9 +342,9 @@ pub fn render_resolution_view(
         };
 
         let from_clause = if joins.is_empty() {
-            id_view
+            src_view
         } else {
-            format!("{id_view}\n  {}", joins.join("\n  "))
+            format!("{src_view}\n  {}", joins.join("\n  "))
         };
 
         if has_default_expr {
