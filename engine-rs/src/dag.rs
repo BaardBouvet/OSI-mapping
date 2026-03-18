@@ -180,6 +180,18 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
             } else if !edges[&delta].contains(&rev) {
                 edges.get_mut(&delta).unwrap().push(rev);
             }
+
+            // written_state table feeds the delta view.
+            if let Some(ref ws) = mapping.written_state {
+                let ws_table = ws.table_name(mname);
+                edges.entry(ViewNode::Source(ws_table.clone())).or_default();
+                if !edges[&delta].contains(&ViewNode::Source(ws_table.clone())) {
+                    edges
+                        .get_mut(&delta)
+                        .unwrap()
+                        .push(ViewNode::Source(ws_table));
+                }
+            }
         }
     }
 

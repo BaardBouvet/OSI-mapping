@@ -280,6 +280,16 @@ pub struct Mapping {
     /// Column in the source table holding a pre-populated cluster ID.
     #[serde(default)]
     pub cluster_field: Option<String>,
+    /// ETL written-state table for target-centric noop detection.
+    /// `true` uses defaults; an object overrides table/column names.
+    #[serde(default)]
+    pub written_state: Option<WrittenState>,
+    /// When true and `written_state` is declared, the delta CASE compares
+    /// resolved fields against the last-written values for noop detection.
+    /// Off by default — opt-in because it assumes the ETL is the sole
+    /// writer to the target.
+    #[serde(default)]
+    pub written_noop: bool,
 }
 
 impl Mapping {
@@ -432,6 +442,72 @@ impl ClusterMembers {
         self.table
             .clone()
             .unwrap_or_else(|| format!("_cluster_members_{mapping_name}"))
+    }
+}
+
+/// ETL written-state table — stores field values the ETL last wrote to the target.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(from = "WrittenStateRaw")]
+pub struct WrittenState {
+    /// Table name. Default: `_written_{mapping_name}`.
+    pub table: Option<String>,
+    /// Cluster ID column. Default: `_cluster_id`.
+    pub cluster_id: String,
+    /// Written-state JSONB column. Default: `_written`.
+    pub written: String,
+}
+
+/// Raw deserialization target for `written_state: true | { ... }`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WrittenStateRaw {
+    Bool(bool),
+    Full {
+        #[serde(default)]
+        table: Option<String>,
+        #[serde(default = "default_cluster_id")]
+        cluster_id: String,
+        #[serde(default = "default_written")]
+        written: String,
+    },
+}
+
+fn default_written() -> String {
+    "_written".to_string()
+}
+
+impl From<WrittenStateRaw> for WrittenState {
+    fn from(raw: WrittenStateRaw) -> Self {
+        match raw {
+            WrittenStateRaw::Bool(true) => WrittenState {
+                table: None,
+                cluster_id: "_cluster_id".to_string(),
+                written: "_written".to_string(),
+            },
+            WrittenStateRaw::Bool(false) => WrittenState {
+                table: None,
+                cluster_id: "_cluster_id".to_string(),
+                written: "_written".to_string(),
+            },
+            WrittenStateRaw::Full {
+                table,
+                cluster_id,
+                written,
+            } => WrittenState {
+                table,
+                cluster_id,
+                written,
+            },
+        }
+    }
+}
+
+impl WrittenState {
+    /// Resolved table name — uses the default if not specified.
+    pub fn table_name(&self, mapping_name: &str) -> String {
+        self.table
+            .clone()
+            .unwrap_or_else(|| format!("_written_{mapping_name}"))
     }
 }
 

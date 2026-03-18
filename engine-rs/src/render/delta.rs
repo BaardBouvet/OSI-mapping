@@ -177,7 +177,14 @@ struct NestedCteResult {
 
 /// Build the CASE expression that classifies a row from a single mapping's
 /// reverse view as insert / delete / noop / update.
-fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) -> String {
+///
+/// When `written_col` is `Some`, a second noop branch compares resolved fields
+/// against the `_ws.{written_col}` JSONB column (target-centric noop).
+fn action_case(
+    mapping: &Mapping,
+    pk_columns: &std::collections::HashSet<&str>,
+    written_col: Option<&str>,
+) -> String {
     // Delete conditions from reverse_required + reverse_filter.
     let mut delete_conditions: Vec<String> = Vec::new();
     for fm in &mapping.fields {
@@ -234,6 +241,33 @@ fn action_case(mapping: &Mapping, pk_columns: &std::collections::HashSet<&str>) 
     }
     if !noop_parts.is_empty() {
         branches.push(format!("WHEN {} THEN 'noop'", noop_parts.join(" AND ")));
+    }
+    // Target-centric noop: compare resolved fields against _written.
+    if let Some(wcol) = written_col {
+        let written_noop_parts: Vec<String> = mapping
+            .fields
+            .iter()
+            .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
+            .filter_map(|fm| {
+                let src = fm.source_name()?;
+                if pk_columns.contains(src) {
+                    return None;
+                }
+                Some(format!(
+                    "_ws.{}->>'{}' IS NOT DISTINCT FROM {}::text",
+                    qi(wcol),
+                    sql_escape(src),
+                    qi(src)
+                ))
+            })
+            .collect();
+        if !written_noop_parts.is_empty() {
+            branches.push(format!(
+                "WHEN _ws.{} IS NOT NULL AND {} THEN 'noop'",
+                qi(wcol),
+                written_noop_parts.join(" AND ")
+            ));
+        }
     }
     // When all reverse-mapped source fields are PK columns, there's nothing
     // to compare — existing rows are always noops.
@@ -320,16 +354,40 @@ pub fn render_delta_view(
 
     if mappings.len() == 1 {
         // Single mapping: simple SELECT with CASE from the one reverse view.
-        let action_expr = action_case(mappings[0], &pk_columns);
+        let mapping = mappings[0];
+        let written_col = if mapping.written_noop {
+            mapping.written_state.as_ref().map(|ws| ws.written.as_str())
+        } else {
+            None
+        };
+        let action_expr = action_case(mapping, &pk_columns, written_col);
         let mut cols: Vec<String> = vec![format!("{action_expr} AS _action")];
-        cols.extend(delta_output_exprs(&out_cols, mappings));
+        let mut out_exprs = delta_output_exprs(&out_cols, mappings);
+        let rev_view = qi(&format!("_rev_{}", mapping.name));
+        // Qualify _cluster_id to avoid ambiguity with LEFT JOINed _written.
+        if mapping.written_state.is_some() {
+            let qi_cluster = qi("_cluster_id");
+            if let Some(pos) = out_exprs.iter().position(|e| e == &qi_cluster) {
+                out_exprs[pos] = format!("{rev_view}.{qi_cluster}");
+            }
+        }
+        cols.extend(out_exprs);
 
-        let rev_view = qi(&format!("_rev_{}", mappings[0].name));
+        let mut from = rev_view.clone();
+        if let Some(ref ws) = mapping.written_state {
+            let ws_table = qi(&ws.table_name(&mapping.name));
+            let ws_cluster = qi(&ws.cluster_id);
+            from.push_str(&format!(
+                "\nLEFT JOIN {ws_table} AS _ws ON _ws.{ws_cluster} = {rev_view}.{}",
+                qi("_cluster_id")
+            ));
+        }
+
         let sql = format!(
             "-- Delta: {source_name} (change detection)\n\
              CREATE OR REPLACE VIEW {view_name} AS\n\
              SELECT\n  {columns}\n\
-             FROM {rev_view};\n",
+             FROM {from};\n",
             columns = cols.join(",\n  "),
         );
         return Ok(sql);
@@ -382,6 +440,7 @@ fn merged_action_case(
     primary_mappings: &[&&Mapping],
     pk_columns: &std::collections::HashSet<&str>,
     all_reverse_fields: &[String],
+    written_col: Option<&str>,
 ) -> String {
     // Delete conditions from primary mappings only.
     let mut delete_conditions: Vec<String> = Vec::new();
@@ -430,6 +489,29 @@ fn merged_action_case(
 
     if !noop_parts.is_empty() {
         branches.push(format!("WHEN {} THEN 'noop'", noop_parts.join(" AND ")));
+    }
+
+    // Target-centric noop: compare resolved fields against _written.
+    if let Some(wcol) = written_col {
+        let written_noop_parts: Vec<String> = all_reverse_fields
+            .iter()
+            .filter(|f| !pk_columns.contains(f.as_str()))
+            .map(|src| {
+                format!(
+                    "_ws.{}->>'{}' IS NOT DISTINCT FROM {}::text",
+                    qi(wcol),
+                    sql_escape(src),
+                    qi(src)
+                )
+            })
+            .collect();
+        if !written_noop_parts.is_empty() {
+            branches.push(format!(
+                "WHEN _ws.{} IS NOT NULL AND {} THEN 'noop'",
+                qi(wcol),
+                written_noop_parts.join(" AND ")
+            ));
+        }
     }
 
     let has_non_pk_reverse = all_reverse_fields
@@ -630,9 +712,18 @@ fn render_delta_with_children(
         .chain(child_mappings.iter())
         .map(|m| **m)
         .collect();
-    let action_expr = merged_action_case(primary_mappings, pk_columns, reverse_fields);
+    // Use written_state from the first primary mapping that declares it.
+    let primary_ws = primary_mappings
+        .iter()
+        .find_map(|m| m.written_state.as_ref());
+    let written_col = if primary_mappings.iter().any(|m| m.written_noop) {
+        primary_ws.map(|ws| ws.written.as_str())
+    } else {
+        None
+    };
+    let action_expr = merged_action_case(primary_mappings, pk_columns, reverse_fields, written_col);
     let mut outer_cols: Vec<String> = vec![format!("{action_expr} AS _action")];
-    outer_cols.extend(delta_output_exprs(
+    let mut out_exprs = delta_output_exprs(
         out_cols,
         &all_mappings_for_output
             .iter()
@@ -640,7 +731,15 @@ fn render_delta_with_children(
             .iter()
             .map(|m| **m)
             .collect::<Vec<_>>(),
-    ));
+    );
+    // Qualify _cluster_id when _written is joined.
+    if primary_ws.is_some() {
+        let qi_cluster = qi("_cluster_id");
+        if let Some(pos) = out_exprs.iter().position(|e| e == &qi_cluster) {
+            out_exprs[pos] = format!("_merged.{qi_cluster}");
+        }
+    }
+    outer_cols.extend(out_exprs);
 
     // Include target fields for reverse_filter pass-through from primary.
     // These are already projected in the primary reverse view; we just need
@@ -657,12 +756,22 @@ fn render_delta_with_children(
         }
     }
 
+    let mut from = "_merged".to_string();
+    if let Some(ws) = primary_ws {
+        let ws_table = qi(&ws.table_name(&primary_mappings[0].name));
+        let ws_cluster = qi(&ws.cluster_id);
+        from.push_str(&format!(
+            "\nLEFT JOIN {ws_table} AS _ws ON _ws.{ws_cluster} = _merged.{}",
+            qi("_cluster_id")
+        ));
+    }
+
     let sql = format!(
         "-- Delta: {source_name} (change detection)\n\
          CREATE OR REPLACE VIEW {view_name} AS\n\
          WITH\n  {ctes}\n\
          SELECT\n  {columns}\n\
-         FROM _merged;\n",
+         FROM {from};\n",
         ctes = ctes.join(",\n  "),
         columns = outer_cols.join(",\n  "),
     );
@@ -682,7 +791,13 @@ fn render_delta_union_all(
     let selects: Vec<String> = mappings
         .iter()
         .map(|m| {
-            let case_expr = action_case(m, pk_columns);
+            let written_col = if m.written_noop {
+                m.written_state.as_ref().map(|ws| ws.written.as_str())
+            } else {
+                None
+            };
+            let case_expr = action_case(m, pk_columns, written_col);
+            let rev_view = qi(&format!("_rev_{}", m.name));
             let m_fields: std::collections::HashSet<&str> = m
                 .fields
                 .iter()
@@ -691,7 +806,9 @@ fn render_delta_union_all(
                 .collect();
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
             for col in out_cols {
-                if col == "_cluster_id"
+                if col == "_cluster_id" && m.written_state.is_some() {
+                    projected.push(format!("{rev_view}.{}", qi(col)));
+                } else if col == "_cluster_id"
                     || col == "_base"
                     || pk_columns.contains(col.as_str())
                     || m_fields.contains(col.as_str())
@@ -701,11 +818,16 @@ fn render_delta_union_all(
                     projected.push(format!("NULL::text AS {}", qi(col)));
                 }
             }
-            format!(
-                "SELECT {} FROM {}",
-                projected.join(", "),
-                qi(&format!("_rev_{}", m.name))
-            )
+            let mut from = rev_view.clone();
+            if let Some(ref ws) = m.written_state {
+                let ws_table = qi(&ws.table_name(&m.name));
+                let ws_cluster = qi(&ws.cluster_id);
+                from.push_str(&format!(
+                    " LEFT JOIN {ws_table} AS _ws ON _ws.{ws_cluster} = {rev_view}.{}",
+                    qi("_cluster_id")
+                ));
+            }
+            format!("SELECT {} FROM {}", projected.join(", "), from)
         })
         .collect();
 
@@ -1226,6 +1348,114 @@ mappings:
         assert!(
             norm_count >= 2,
             "_osi_text_norm should appear on both sides of noop comparison, found {norm_count}"
+        );
+    }
+
+    #[test]
+    fn written_state_adds_noop_branch() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    written_state: true
+    written_noop: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        // Should LEFT JOIN the _written table.
+        assert!(
+            sql.contains("LEFT JOIN \"_written_s\""),
+            "delta should LEFT JOIN _written table:\n{sql}"
+        );
+        // Should have _ws._written noop comparison.
+        assert!(
+            sql.contains("_ws.\"_written\""),
+            "delta should reference _ws._written for noop detection:\n{sql}"
+        );
+        // Should still have _base noop comparison (fast path).
+        assert!(
+            sql.contains("_base"),
+            "delta should keep _base noop as fast path:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn written_state_without_noop_no_comparison() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    written_state: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        // Should LEFT JOIN the _written table (still needed for delete detection).
+        assert!(
+            sql.contains("LEFT JOIN \"_written_s\""),
+            "delta should LEFT JOIN _written table:\n{sql}"
+        );
+        // Should NOT have _ws._written noop comparison — written_noop is off.
+        assert!(
+            !sql.contains("_ws.\"_written\""),
+            "delta should NOT reference _ws._written without written_noop:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn written_state_union_all() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t1: { fields: { name: { strategy: coalesce } } }
+  t2: { fields: { email: { strategy: coalesce } } }
+mappings:
+  - name: s_t1
+    source: s
+    target: t1
+    written_state: true
+    written_noop: true
+    fields: [{ source: name, target: name }]
+  - name: s_t2
+    source: s
+    target: t2
+    fields: [{ source: email, target: email }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        // Only s_t1 has written_state — its branch should have LEFT JOIN.
+        assert!(
+            sql.contains("LEFT JOIN \"_written_s_t1\""),
+            "s_t1 branch should LEFT JOIN _written:\n{sql}"
+        );
+        // s_t2 does NOT have written_state — no LEFT JOIN for it.
+        assert!(
+            !sql.contains("_written_s_t2"),
+            "s_t2 branch should not reference _written:\n{sql}"
         );
     }
 }

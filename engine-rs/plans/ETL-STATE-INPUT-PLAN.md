@@ -218,10 +218,16 @@ writes), it stores the intended values. This is still better than no state.
 
 ## What the engine reads
 
-### For noop detection (replacing _base comparison)
+### For noop detection (opt-in via `written_noop`)
 
-When `_written_{mapping}` is declared, the delta CASE compares against
-`_written` instead of `_base`:
+The `_written` noop is **not enabled by default**. It requires
+`written_noop: true` on the mapping because it assumes the ETL is the
+sole writer to the target. If an external actor modifies the target after
+the ETL write, `_written` becomes stale and the engine incorrectly
+classifies the row as noop.
+
+When `written_noop: true` is set together with `written_state`, the delta
+CASE adds a second noop branch after the `_base` fast path:
 
 ```sql
 -- Without _written (current):
@@ -289,13 +295,16 @@ mappings:
     source: system_b
     target: customer
     written_state: true
+    written_noop: true            # opt-in: use _written for noop detection
     on_hard_delete: suppress      # from HARD-DELETE-PROPAGATION-PLAN
     fields: [...]
 ```
 
-`written_state: true` enables the full pipeline: hard-delete detection,
-noop-against-target, conflict detection. No separate `synced_entities`
-property needed — `_written_{mapping}` subsumes it.
+`written_state: true` declares the ETL-maintained table. It enables
+hard-delete detection (row existence) and provides the data for conflict
+detection. `written_noop: true` is a separate opt-in that adds the
+target-centric noop branch — only appropriate when the ETL is the sole
+writer to the target.
 
 Like `cluster_members`, supports custom table/column names:
 

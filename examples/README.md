@@ -66,6 +66,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`value-groups`](value-groups/README.md) | Field group resolution |
 | [`vocabulary-custom`](vocabulary-custom/README.md) | Custom vocabulary definitions |
 | [`vocabulary-standard`](vocabulary-standard/README.md) | Standard vocabulary usage |
+| [`noop-written-state`](noop-written-state/README.md) | Target-centric noop detection via ETL written state |
 
 Each example directory contains a local `README.md` and a `mapping.yaml` with the full definition including test cases.
 

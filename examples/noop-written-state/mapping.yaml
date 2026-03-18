@@ -1,0 +1,79 @@
+version: "1.0"
+description: >
+  Target-centric noop detection via written state.
+  When a lower-priority source changes but the resolved value still
+  matches what was previously written, the engine detects a noop using
+  the _written table instead of producing a redundant update.
+
+sources:
+  crm:
+    primary_key: id
+  erp:
+    primary_key: id
+
+targets:
+  customer:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+
+mappings:
+  - name: crm
+    source: crm
+    target: customer
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+        priority: 1
+
+  - name: erp
+    source: erp
+    target: customer
+    written_state: true
+    written_noop: true
+    fields:
+      - source: contact_email
+        target: email
+      - source: contact_name
+        target: name
+        priority: 2
+
+tests:
+  - description: >
+      ERP's own value differs from the resolved winner — written state
+      prevents a redundant update. CRM wins name resolution (priority 1),
+      so the resolved name is always "Alice". ERP's source has "Bob" —
+      that never changes, it's just what ERP has natively. The _base
+      comparison fails every cycle (ERP's "Bob" ≠ resolved "Alice"),
+      which without written_state would emit an update on every sync.
+      With _written showing we already wrote "Alice", the engine
+      correctly classifies this as noop.
+    input:
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+      erp:
+        - { id: "100", contact_email: "alice@example.com", contact_name: "Bob" }
+      _written_erp:
+        - { _cluster_id: "crm:1", _written: '{"contact_name": "Alice", "contact_email": "alice@example.com"}' }
+    expected:
+      erp: {}
+
+  - description: >
+      Same data but no prior written state — ERP gets an update.
+      Without a row in _written_erp the engine cannot confirm that the
+      target already has the resolved value, so the _base mismatch
+      (ERP's native "Bob" ≠ resolved "Alice") produces an update.
+      This is the first sync cycle for this entity.
+    input:
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+      erp:
+        - { id: "100", contact_email: "alice@example.com", contact_name: "Bob" }
+    expected:
+      erp:
+        updates:
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }

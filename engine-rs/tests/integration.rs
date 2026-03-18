@@ -256,6 +256,7 @@ async fn execute_all_examples() {
 
             load_test_data(&client, &test.input).await;
             ensure_cluster_members_tables(&client, &doc, &test.input).await;
+            ensure_written_state_tables(&client, &doc, &test.input).await;
             ensure_source_columns(&client, &doc, &test.input).await;
 
             // Drop stale views in reverse order to avoid dependency errors.
@@ -366,6 +367,9 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
 
         // Ensure cluster_members tables exist (may not be in test input)
         ensure_cluster_members_tables(client, &doc, &test.input).await;
+
+        // Ensure written_state tables exist with proper JSONB types
+        ensure_written_state_tables(client, &doc, &test.input).await;
 
         // Ensure source tables have all required columns (even if source data was empty)
         ensure_source_columns(client, &doc, &test.input).await;
@@ -1614,6 +1618,63 @@ async fn ensure_cluster_members_tables(
     }
 }
 
+async fn ensure_written_state_tables(
+    client: &tokio_postgres::Client,
+    doc: &osi_engine::model::MappingDocument,
+    input: &indexmap::IndexMap<String, Vec<serde_json::Value>>,
+) {
+    for mapping in &doc.mappings {
+        if let Some(ref ws) = mapping.written_state {
+            let table = ws.table_name(&mapping.name);
+            let qi = osi_engine::qi;
+            // Always (re)create with proper types — JSONB not TEXT.
+            client
+                .execute(&format!("DROP TABLE IF EXISTS {} CASCADE", qi(&table)), &[])
+                .await
+                .unwrap();
+            client
+                .execute(
+                    &format!(
+                        "CREATE TABLE {} ({} TEXT PRIMARY KEY, {} JSONB NOT NULL, _written_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+                        qi(&table),
+                        qi(&ws.cluster_id),
+                        qi(&ws.written),
+                    ),
+                    &[],
+                )
+                .await
+                .unwrap();
+            // Populate from test input if provided.
+            if let Some(rows) = input.get(&table) {
+                for row in rows {
+                    if let Some(obj) = row.as_object() {
+                        let cluster_id = obj
+                            .get(&ws.cluster_id)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let written = obj
+                            .get(&ws.written)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("{}");
+                        client
+                            .execute(
+                                &format!(
+                                    "INSERT INTO {} ({}, {}) VALUES ($1, $2::jsonb)",
+                                    qi(&table),
+                                    qi(&ws.cluster_id),
+                                    qi(&ws.written),
+                                ),
+                                &[&cluster_id, &written],
+                            )
+                            .await
+                            .unwrap();
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn execute_views(client: &tokio_postgres::Client, sql: &str) {
     for stmt in split_sql_statements(sql) {
         let stmt: String = stmt
@@ -1694,6 +1755,7 @@ async fn dump_hello_world_intermediates() {
 
     load_test_data(&client, &doc.tests[0].input).await;
     ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
+    ensure_written_state_tables(&client, &doc, &doc.tests[0].input).await;
     execute_views(&client, &sql).await;
 
     let views = [
@@ -1761,6 +1823,7 @@ async fn dump_composite_keys_intermediates() {
 
     load_test_data(&client, &doc.tests[0].input).await;
     ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
+    ensure_written_state_tables(&client, &doc, &doc.tests[0].input).await;
     execute_views(&client, &sql).await;
 
     let views = [
@@ -1802,6 +1865,7 @@ async fn dump_relationship_embedded_intermediates() {
 
     load_test_data(&client, &doc.tests[0].input).await;
     ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
+    ensure_written_state_tables(&client, &doc, &doc.tests[0].input).await;
     ensure_source_columns(&client, &doc, &doc.tests[0].input).await;
     execute_views(&client, &sql).await;
 
@@ -1825,6 +1889,7 @@ async fn dump_references_intermediates() {
 
     load_test_data(&client, &doc.tests[0].input).await;
     ensure_cluster_members_tables(&client, &doc, &doc.tests[0].input).await;
+    ensure_written_state_tables(&client, &doc, &doc.tests[0].input).await;
     execute_views(&client, &sql).await;
 
     let views = [

@@ -339,6 +339,25 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         }
     }
 
+    // Check if this is a written_state table
+    for mapping in &doc.mappings {
+        if let Some(ref ws) = mapping.written_state {
+            if ws.table_name(&mapping.name) == table_name {
+                return format!(
+                    "-- Input table: {table_name} (written state)\n\
+                     CREATE TABLE IF NOT EXISTS {} (\n  \
+                                             {} TEXT PRIMARY KEY,\n  \
+                                             {} JSONB NOT NULL,\n  \
+                                             _written_at TIMESTAMPTZ NOT NULL DEFAULT now()\n\
+                     );\n",
+                    qi(table_name),
+                    qi(&ws.cluster_id),
+                    qi(&ws.written)
+                );
+            }
+        }
+    }
+
     // Source dataset table — collect all referenced columns.
     let mut columns: Vec<String> = Vec::new();
 
