@@ -1218,6 +1218,41 @@ fn check_column_refs(
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Pass 0 — JSON Schema validation (structural, accumulates all errors)
+// ──────────────────────────────────────────────────────────────────────
+
+/// Embedded JSON Schema for mapping documents.
+const MAPPING_SCHEMA_JSON: &str = include_str!("../../spec/mapping-schema.json");
+
+/// Validate a raw YAML value against the mapping JSON schema.
+///
+/// Returns a list of diagnostics for every schema violation found.
+/// This runs _before_ serde deserialization so it can report all
+/// structural errors at once (unknown fields, type mismatches, missing
+/// required properties, etc.).
+pub fn validate_schema(value: &serde_json::Value) -> Vec<Diagnostic> {
+    let schema: serde_json::Value =
+        serde_json::from_str(MAPPING_SCHEMA_JSON).expect("embedded schema is valid JSON");
+    let validator = jsonschema::validator_for(&schema).expect("embedded schema is valid");
+    validator
+        .iter_errors(value)
+        .map(|error| {
+            let path = error.instance_path().to_string();
+            let location = if path.is_empty() {
+                String::new()
+            } else {
+                format!(" at {path}")
+            };
+            Diagnostic {
+                level: Level::Error,
+                pass: "JSONSchema",
+                message: format!("{error}{location}"),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1643,6 +1678,68 @@ mappings:
             errs.iter()
                 .any(|m| m.contains("must not use strategy 'identity'")),
             "expected identity rejection, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_schema_all_examples() {
+        let examples = examples_dir();
+        let mut failures = Vec::new();
+
+        for entry in std::fs::read_dir(&examples).expect("examples dir") {
+            let entry = entry.unwrap();
+            if !entry.file_type().unwrap().is_dir() {
+                continue;
+            }
+            let mapping = entry.path().join("mapping.yaml");
+            if !mapping.exists() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let yaml = std::fs::read_to_string(&mapping).unwrap();
+            let value: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+            let errors = validate_schema(&value);
+            if !errors.is_empty() {
+                let msgs: Vec<String> = errors.iter().map(|d| d.message.clone()).collect();
+                failures.push(format!("{name}: {}", msgs.join("; ")));
+            }
+        }
+
+        if !failures.is_empty() {
+            panic!(
+                "Schema validation failed for {} example(s):\n{}",
+                failures.len(),
+                failures.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn schema_rejects_unknown_field() {
+        let yaml = r#"
+version: "1.0"
+targets:
+  contact:
+    fields:
+      email: { strategy: identity }
+mappings:
+  - name: crm
+    source: crm
+    target: contact
+    bogus_field: true
+    fields:
+      - { source: email, target: email }
+"#;
+        let value: serde_json::Value = serde_yaml::from_str(yaml).unwrap();
+        let errors = validate_schema(&value);
+        assert!(
+            !errors.is_empty(),
+            "unknown field 'bogus_field' should produce schema error"
+        );
+        let msgs: Vec<String> = errors.iter().map(|d| d.message.clone()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("bogus_field")),
+            "error should mention 'bogus_field', got: {msgs:?}"
         );
     }
 }

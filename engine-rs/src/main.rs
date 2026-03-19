@@ -94,15 +94,34 @@ fn main() -> Result<()> {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| filepath.display().to_string());
 
-                let (errors, warnings) = match osi_engine::parser::parse_file(filepath) {
-                    Ok(doc) => {
-                        let result = osi_engine::validate::validate(&doc);
-                        let errors: Vec<String> = result.errors().map(|d| d.to_string()).collect();
-                        let warnings: Vec<String> =
-                            result.warnings().map(|d| d.to_string()).collect();
-                        (errors, warnings)
+                let (errors, warnings) = {
+                    // Pass 0: JSON Schema validation on raw YAML value.
+                    let yaml_text = std::fs::read_to_string(filepath)?;
+                    let mut schema_errors: Vec<String> = Vec::new();
+                    if let Ok(value) = serde_yaml::from_str::<serde_json::Value>(&yaml_text) {
+                        schema_errors = osi_engine::validate::validate_schema(&value)
+                            .into_iter()
+                            .map(|d| d.to_string())
+                            .collect();
                     }
-                    Err(e) => (vec![format!("[Parse] {e:#}")], vec![]),
+
+                    // Pass 1+: parse and run semantic validation.
+                    match osi_engine::parser::parse_file(filepath) {
+                        Ok(doc) => {
+                            let result = osi_engine::validate::validate(&doc);
+                            let mut errors: Vec<String> =
+                                result.errors().map(|d| d.to_string()).collect();
+                            errors.extend(schema_errors);
+                            let warnings: Vec<String> =
+                                result.warnings().map(|d| d.to_string()).collect();
+                            (errors, warnings)
+                        }
+                        Err(e) => {
+                            let mut errors = schema_errors;
+                            errors.push(format!("[Parse] {e:#}"));
+                            (errors, vec![])
+                        }
+                    }
                 };
 
                 total_errors += errors.len();
