@@ -445,7 +445,6 @@ mod tests {
       - name: a_steps
         source: a
         target: step
-        sync: true
         fields:
           - { source: id, target: recipe }
           - { source: instruction, target: instruction }
@@ -453,7 +452,6 @@ mod tests {
       - name: b_steps
         source: b
         target: step
-        sync: true
         fields:
           - { source: id, target: recipe }
           - { source: instruction, target: instruction }

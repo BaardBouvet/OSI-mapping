@@ -296,7 +296,7 @@ mappings:
     fields: [...]
 ```
 
-### Written state (written_state / written_noop)
+### Written state (written_state / derive_noop)
 
 For target-centric noop detection — prevents redundant writes when source changes don't affect the resolved value:
 
@@ -306,7 +306,7 @@ mappings:
     source: erp
     target: contact
     written_state: true      # creates _written_erp table
-    written_noop: true       # compare resolved vs last-written
+    derive_noop: true        # compare resolved vs last-written
     fields: [...]
 ```
 

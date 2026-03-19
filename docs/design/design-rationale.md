@@ -148,7 +148,7 @@ Both produce the same result: rows sharing the same `_cluster_id` are linked by 
 
 **Why:** The default noop check compares resolved values against `_base` (the raw source snapshot). This answers "did the source change?" but not "does the target need to change?" When a lower-priority source changes but the resolved value is unchanged (because a higher-priority source still wins), `_base` mismatch produces a redundant update every cycle. Comparing against `_written` (what the ETL last wrote) catches this: if the target already has the correct value, no write is needed.
 
-**Two-flag design:** `written_state: true` enables the infrastructure (LEFT JOIN in delta) and hard-delete detection (row existence). `written_noop: true` is a separate opt-in for target-centric noop, because it assumes the ETL is the sole writer. If external actors modify the target, `_written` becomes stale and noops would be incorrect.
+**Two-flag design:** `written_state: true` enables the infrastructure (LEFT JOIN in delta) and hard-delete detection (row existence). `derive_noop: true` is a separate opt-in for target-centric noop, because it assumes the ETL is the sole writer. If external actors modify the target, `_written` becomes stale and noops would be incorrect.
 
 **Table contract:** After each sync cycle, the ETL writes `(_cluster_id, _written JSONB)` reflecting what it actually sent to the target. Insert → add row. Update → replace JSONB. Delete → remove row. Noop → no change.
 

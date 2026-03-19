@@ -179,6 +179,8 @@ name: coalesce
 
 Most recently changed value wins. Requires a `last_modified` timestamp on the mapping or field mapping.
 
+When a mapping has no timestamp (both per-field `_ts_{field}` and mapping-level `_last_modified` are NULL), its contribution sorts last — any mapping with an actual timestamp wins. If all contributions have NULL timestamps, the implicit row order (mapping declaration order) determines the winner, behaving like coalesce without priority.
+
 ```yaml
 name: last_modified
 ```
@@ -357,13 +359,16 @@ Maps fields from one source dataset to one target entity.
 | `last_modified` | [TimestampRef](#timestampref) | no | Mapping-level timestamp for last_modified resolution |
 | `filter` | string | no | Forward filter: SQL WHERE condition |
 | `reverse_filter` | string | no | Reverse filter: SQL WHERE condition |
-| `include_base` | boolean | no | Include original values in reverse output (default: false) |
+
 | `links` | array of [LinkRef](#linkref) | no | External identity edges from a linking table |
 | `link_key` | string | no | Column in linking table providing pre-computed cluster ID (IVM-safe) |
 | `cluster_members` | boolean / object | no | ETL feedback table for insert tracking |
 | `cluster_field` | string | no | Source column holding a pre-populated cluster ID |
 | `written_state` | boolean / object | no | ETL-maintained table tracking last-written values |
-| `written_noop` | boolean | no | Target-centric noop detection via written state |
+| `derive_noop` | boolean | no | Target-centric noop detection via written state |
+| `derive_tombstones` | boolean | no | Element-level deletion propagation via written state |
+| `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
+| `passthrough` | array of strings | no | Source columns carried through to delta output |
 
 ```yaml
 mappings:
@@ -460,20 +465,6 @@ SQL WHERE conditions that control which rows flow through the mapping.
 
 **Examples:** [route](../examples/route/), [route-combined](../examples/route-combined/), [route-multiple](../examples/route-multiple/), [types](../examples/types/), [inserts-and-deletes](../examples/inserts-and-deletes/)
 
-### `include_base`
-
-When true, reverse output includes `_base_` columns with original source values alongside resolved values. Enables optimistic locking and concurrent modification detection.
-
-```yaml
-  - name: crm
-    source: crm
-    target: contact
-    include_base: true
-    fields: [...]
-```
-
-**Examples:** [concurrent-detection](../examples/concurrent-detection/)
-
 ### `links`
 
 External identity edges from a linking table. Each link references a column in the linking table and a source mapping. The engine generates pairwise edges fed into the identity view's connected-components algorithm.
@@ -567,13 +558,15 @@ ETL-maintained table tracking what was last written to the target system. Enable
 | `table` | `_written_{mapping}` | Table name |
 | `cluster_id` | `_cluster_id` | Cluster ID column |
 | `written` | `_written` | JSONB column holding last-written field values |
+| `written_at` | `_written_at` | Row-level write timestamp column |
+| `written_ts` | `_written_ts` | JSONB column holding per-field timestamps |
 
 ```yaml
   - name: erp
     source: erp
     target: contact
     written_state: true              # all defaults
-    written_noop: true               # opt-in target-centric noop
+    derive_noop: true                # opt-in target-centric noop
     fields: [...]
 
   - name: legacy
@@ -594,9 +587,9 @@ The delta view LEFT JOINs the table: when the source-centric `_base` comparison 
 - Delete: remove row
 - Noop: no change
 
-**Examples:** [noop-written-state](../examples/noop-written-state/)
+**Examples:** [derive-noop](../examples/derive-noop/)
 
-### `written_noop`
+### `derive_noop`
 
 When `true` (requires `written_state`), the delta CASE adds a target-centric noop branch after the source-centric `_base` check. If the resolved values match the last-written JSONB, the row is classified as noop even though the source changed.
 
@@ -607,11 +600,42 @@ Appropriate when the ETL is the sole writer to the target. If external actors mo
     source: erp
     target: contact
     written_state: true
-    written_noop: true
+    derive_noop: true
     fields: [...]
 ```
 
-**Examples:** [noop-written-state](../examples/noop-written-state/)
+**Examples:** [derive-noop](../examples/derive-noop/)
+
+### `derive_tombstones`
+
+When `true` (requires `written_state`), elements in the previously-written JSONB array that are absent from the current forward view are excluded from all sources' reconstructed arrays. Propagates element-level deletions across sources without explicit tombstone records.
+
+```yaml
+  - name: blog_cms
+    source: blog_cms
+    target: recipe
+    written_state: true
+    derive_tombstones: true
+    fields: [...]
+```
+
+**Examples:** [derive-tombstones](../examples/derive-tombstones/)
+
+### `derive_timestamps`
+
+When `true` (requires `written_state`), derives per-field `_ts_{field}` timestamps by comparing current source values against `_written` JSONB. Changed fields get the source's own timestamp (falling back to `_written_at`); unchanged fields carry forward their per-field timestamp from `_written_ts`. On bootstrap (no written state), timestamps fall back to the source timestamp or NULL.
+
+```yaml
+  - name: csv_import
+    source: csv_import
+    target: customer
+    written_state: true
+    derive_timestamps: true
+    cluster_field: cluster_id
+    fields: [...]
+```
+
+**Examples:** [derive-timestamps](../examples/derive-timestamps/)
 
 ---
 

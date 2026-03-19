@@ -3,6 +3,7 @@ use serde::{Deserialize, Deserializer};
 
 /// Top-level mapping document.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MappingDocument {
     pub version: String,
     #[serde(default)]
@@ -19,6 +20,7 @@ pub struct MappingDocument {
 
 /// Source dataset metadata.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Source {
     #[serde(default)]
     pub table: Option<String>,
@@ -30,6 +32,7 @@ pub struct Source {
 
 /// Per-column metadata on a source dataset.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceFieldDef {
     /// SQL type for this column (e.g., "integer", "numeric").
     /// Used to cast PK columns in the reverse view when no target field type
@@ -159,6 +162,7 @@ impl Source {
 
 /// A target entity definition.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Target {
     #[serde(default)]
     pub description: Option<String>,
@@ -167,6 +171,7 @@ pub struct Target {
 
 /// Target field definition.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TargetFieldDef {
     pub strategy: Strategy,
     #[serde(default)]
@@ -237,6 +242,7 @@ pub enum Strategy {
 
 /// A source-to-target mapping.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Mapping {
     pub name: String,
     #[serde(default)]
@@ -360,6 +366,7 @@ impl Mapping {
 
 /// A link reference — connects a field in a linking table to a source mapping.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LinkRef {
     /// Column(s) in the linking table referencing the target source's PK.
     pub field: LinkField,
@@ -601,6 +608,7 @@ impl<'de> Deserialize<'de> for TargetRef {
 
 /// A single field mapping.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FieldMapping {
     #[serde(default)]
     pub source: Option<String>,
@@ -767,6 +775,7 @@ pub enum ParentFieldRef {
 
 /// A test case.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TestCase {
     #[serde(default)]
     pub description: Option<String>,
@@ -781,6 +790,7 @@ pub struct TestCase {
 
 /// Expected output for a single source dataset.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TestExpected {
     #[serde(default)]
     pub updates: Vec<serde_json::Value>,
@@ -788,4 +798,9 @@ pub struct TestExpected {
     pub inserts: Vec<serde_json::Value>,
     #[serde(default)]
     pub deletes: Vec<serde_json::Value>,
+    /// Rows expected to be noops — listed for documentation/assertion.
+    /// Not yet consumed by the test harness (implicit noops are verified
+    /// by checking that unlisted rows appear in the delta as noops).
+    #[serde(default)]
+    pub noops: Vec<serde_json::Value>,
 }

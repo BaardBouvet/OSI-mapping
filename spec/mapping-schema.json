@@ -236,9 +236,17 @@
             { "$ref": "#/$defs/WrittenStateConfig" }
           ]
         },
-        "written_noop": {
+        "derive_noop": {
           "type": "boolean",
           "description": "When true (requires written_state), adds a target-centric noop branch: compares resolved values against the last-written JSONB instead of only against _base. Appropriate when the ETL is the sole writer to the target."
+        },
+        "derive_tombstones": {
+          "type": "boolean",
+          "description": "When true (requires written_state), elements in the previously-written JSONB array that are absent from the current forward view are excluded from all sources' reconstructed arrays. Propagates element-level deletions across sources."
+        },
+        "derive_timestamps": {
+          "type": "boolean",
+          "description": "When true (requires written_state), derives per-field _ts_{field} timestamps by comparing current source values against _written JSONB. Changed fields get _written_at; unchanged fields carry forward their timestamp from _written_ts."
         },
         "passthrough": {
           "type": "array",
@@ -317,6 +325,16 @@
           "type": "string",
           "default": "_written",
           "description": "JSONB column holding the last-written field values."
+        },
+        "written_at": {
+          "type": "string",
+          "default": "_written_at",
+          "description": "Row-level write timestamp column."
+        },
+        "written_ts": {
+          "type": "string",
+          "default": "_written_ts",
+          "description": "JSONB column holding per-field timestamps."
         }
       }
     },
@@ -461,8 +479,17 @@
             "properties": {
               "updates": { "type": "array", "items": { "type": "object" }, "description": "Rows whose resolved values differ from input — the source must be updated." },
               "inserts": { "type": "array", "items": { "type": "object" }, "description": "New rows to create in this source (originated from other sources)." },
-              "deletes": { "type": "array", "items": { "type": "object" }, "description": "Rows to remove from this source (failed reverse_required or filter)." }
+              "deletes": { "type": "array", "items": { "type": "object" }, "description": "Rows to remove from this source (failed reverse_required or filter)." },
+              "noops": { "type": "array", "items": { "type": "object" }, "description": "Rows expected to be noops — listed for documentation/assertion." }
             }
+          }
+        },
+        "analytics": {
+          "type": "object",
+          "description": "Expected analytics (target) view contents, keyed by target name. Each value is an array of expected row objects.",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "object" }
           }
         }
       }
