@@ -362,6 +362,8 @@ Maps fields from one source dataset to one target entity.
 | `link_key` | string | no | Column in linking table providing pre-computed cluster ID (IVM-safe) |
 | `cluster_members` | boolean / object | no | ETL feedback table for insert tracking |
 | `cluster_field` | string | no | Source column holding a pre-populated cluster ID |
+| `written_state` | boolean / object | no | ETL-maintained table tracking last-written values |
+| `written_noop` | boolean | no | Target-centric noop detection via written state |
 
 ```yaml
 mappings:
@@ -554,6 +556,63 @@ Column in the source table holding a pre-populated cluster ID from ETL feedback.
 
 The forward view uses: `COALESCE(entity_cluster_id, md5(...)) AS _cluster_id`. A mapping should declare `cluster_members` or `cluster_field`, not both.
 
+### `written_state`
+
+ETL-maintained table tracking what was last written to the target system. Enables target-centric noop detection (via `written_noop`) and provides the infrastructure for hard-delete detection. Follows the same pattern as `cluster_members`: the engine reads the table but never writes to it — the ETL updates it after each sync cycle.
+
+`true` uses defaults; an object overrides table/column names.
+
+| Property | Default | Description |
+|---|---|---|
+| `table` | `_written_{mapping}` | Table name |
+| `cluster_id` | `_cluster_id` | Cluster ID column |
+| `written` | `_written` | JSONB column holding last-written field values |
+
+```yaml
+  - name: erp
+    source: erp
+    target: contact
+    written_state: true              # all defaults
+    written_noop: true               # opt-in target-centric noop
+    fields: [...]
+
+  - name: legacy
+    source: legacy
+    target: contact
+    written_state:                   # custom names
+      table: legacy_write_log
+      cluster_id: entity_id
+      written: last_payload
+    fields: [...]
+```
+
+The delta view LEFT JOINs the table: when the source-centric `_base` comparison detects a change, a second noop branch compares resolved values against `_written` to avoid redundant writes.
+
+**Table contract:** After each sync cycle, the ETL writes what it actually sent to the target:
+- Insert: add row with `(_cluster_id, _written JSONB)`
+- Update: replace `_written` JSONB with newly written values
+- Delete: remove row
+- Noop: no change
+
+**Examples:** [noop-written-state](../examples/noop-written-state/)
+
+### `written_noop`
+
+When `true` (requires `written_state`), the delta CASE adds a target-centric noop branch after the source-centric `_base` check. If the resolved values match the last-written JSONB, the row is classified as noop even though the source changed.
+
+Appropriate when the ETL is the sole writer to the target. If external actors modify the target after the ETL write, `_written` becomes stale and the engine may incorrectly suppress updates.
+
+```yaml
+  - name: erp
+    source: erp
+    target: contact
+    written_state: true
+    written_noop: true
+    fields: [...]
+```
+
+**Examples:** [noop-written-state](../examples/noop-written-state/)
+
 ---
 
 ## LinkRef
@@ -603,6 +662,7 @@ Maps a single source field to a single target field.
 | `order_prev` | boolean | no | Derive previous element key (adjacency metadata) |
 | `order_next` | boolean | no | Derive next element key (adjacency metadata) |
 | `references` | string | no | Mapping name for FK reverse resolution (see below) |
+| `normalize` | string | no | SQL expression with `%s` placeholder for precision-loss noop comparison |
 | `description` | string | no | Human-readable description |
 
 \* At least one of `source` or `target` must be present.
@@ -768,6 +828,33 @@ Overrides the mapping-level timestamp for a specific field. Useful when differen
 ```
 
 **Examples:** [value-groups](../examples/value-groups/)
+
+### `normalize`
+
+SQL expression with a `%s` placeholder, applied to both sides of the delta noop comparison. Handles precision loss when a target system has lower fidelity than the golden record — numeric rounding, string truncation, case folding.
+
+The same expression is substituted into both the `_base` (source snapshot) and the reverse-projected value before comparison. If both normalize to the same result, the difference is classified as expected loss (noop) rather than a change.
+
+```yaml
+# Integer-precision system — truncate before comparing
+- source: price
+  target: price
+  normalize: "trunc(%s::numeric, 0)::integer::text"
+
+# 40-char VARCHAR system — truncate before comparing
+- source: name
+  target: name
+  normalize: "left(%s, 40)"
+
+# Uppercase-only system — case-fold before comparing
+- source: name
+  target: name
+  normalize: "upper(%s)"
+```
+
+When `normalize` is declared on a field with `last_modified` strategy, the engine also uses it for echo-aware resolution: a lower-precision source whose normalized value matches a higher-precision source is not allowed to win resolution and degrade the golden record.
+
+**Examples:** [precision-loss](../examples/precision-loss/)
 
 ---
 

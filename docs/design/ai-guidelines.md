@@ -296,6 +296,65 @@ mappings:
     fields: [...]
 ```
 
+### Written state (written_state / written_noop)
+
+For target-centric noop detection — prevents redundant writes when source changes don't affect the resolved value:
+
+```yaml
+mappings:
+  - name: erp
+    source: erp
+    target: contact
+    written_state: true      # creates _written_erp table
+    written_noop: true       # compare resolved vs last-written
+    fields: [...]
+```
+
+The ETL writes `(_cluster_id, _written JSONB)` after each sync. The engine reads this to detect when the target already has the correct value.
+
+### Precision loss (normalize)
+
+Handles lossy noop comparison when a target system has lower fidelity:
+
+```yaml
+fields:
+  - source: price
+    target: price
+    normalize: "trunc(%s::numeric, 0)::integer::text"
+```
+
+Applied to both sides of the delta comparison. Also prevents low-precision echoes from winning `last_modified` resolution.
+
+### Array element ordering (order / order_prev / order_next)
+
+For nested array mappings, `order: true` generates a sortable position key from the source array index:
+
+```yaml
+  - name: recipe_steps
+    parent: recipes
+    array: steps
+    target: recipe_step
+    priority: 1
+    fields:
+      - source: instruction
+        target: instruction
+      - target: step_order
+        order: true             # generates lpad ordinal from array position
+      - source: duration
+        target: duration
+```
+
+`order_prev` / `order_next` emit adjacent-element identities for graph-based ordering:
+
+```yaml
+      - target: prev_step
+        order_prev: true        # LAG over identity field
+      - target: next_step
+        order_next: true        # LEAD over identity field
+```
+
+The target field should use `coalesce` strategy so the highest-priority source's ordering wins. See [`examples/crdt-ordering/`](../../examples/crdt-ordering/) and [`examples/crdt-ordering-native/`](../../examples/crdt-ordering-native/).
+
 ## Tests Section
 
 Tests define input data and expected output after the full pipeline (forward → resolution → reverse):

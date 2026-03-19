@@ -142,6 +142,36 @@ Both produce the same result: rows sharing the same `_cluster_id` are linked by 
 
 **Per-mapping tables:** `cluster_members` uses one table per mapping (default name: `_cluster_members_{mapping}`). Source PKs differ in type across mappings, so a shared table would require casting. Per-mapping tables also align with security boundaries.
 
+## Written State and Target-Centric Noop
+
+**Decision:** The `written_state` property declares an ETL-maintained table that records what was last written to the target. The engine reads this table but never writes to it — following the same pattern as `cluster_members`.
+
+**Why:** The default noop check compares resolved values against `_base` (the raw source snapshot). This answers "did the source change?" but not "does the target need to change?" When a lower-priority source changes but the resolved value is unchanged (because a higher-priority source still wins), `_base` mismatch produces a redundant update every cycle. Comparing against `_written` (what the ETL last wrote) catches this: if the target already has the correct value, no write is needed.
+
+**Two-flag design:** `written_state: true` enables the infrastructure (LEFT JOIN in delta) and hard-delete detection (row existence). `written_noop: true` is a separate opt-in for target-centric noop, because it assumes the ETL is the sole writer. If external actors modify the target, `_written` becomes stale and noops would be incorrect.
+
+**Table contract:** After each sync cycle, the ETL writes `(_cluster_id, _written JSONB)` reflecting what it actually sent to the target. Insert → add row. Update → replace JSONB. Delete → remove row. Noop → no change.
+
+## Precision Loss and Normalize
+
+**Decision:** A `normalize` SQL expression on field mappings handles lossy noop comparison. Applied to both sides of the delta comparison, it reduces values to the target system's resolution before checking for changes.
+
+**Why:** When a target system stores at lower precision (integer vs decimal, truncated strings, uppercase-only), the resolved golden-record value never matches what the system actually stores. Without normalization, the engine flags a change on every cycle — an infinite false-update loop. `normalize` declares "compare at this resolution" without changing what the engine resolves or pushes back.
+
+**Echo-aware resolution:** When `normalize` is combined with `last_modified` strategy, the engine also prevents a low-precision echo from winning resolution. A newer value that normalizes identically to an older higher-precision value is suppressed — the higher-precision original wins and the golden record is not degraded.
+
+## Array Element Ordering
+
+**Decision:** Three boolean flags on field mappings — `order`, `order_prev`, `order_next` — generate ordering metadata from source array position. `order: true` emits a sortable position key via `WITH ORDINALITY` + `lpad`. `order_prev` / `order_next` emit adjacent-element references via `LAG` / `LEAD` window functions.
+
+**Why:** When multiple sources contribute elements to the same array target, the resolved array needs deterministic ordering. Array index is natural but transient — sources can reorder elements at any time. The engine needs a stable, sortable key that flows through resolution and survives merging.
+
+**Tier 1 (ordinal):** `order: true` generates `lpad((idx - 1)::text, 10, '0')` — a zero-padded string derived from the source array's `WITH ORDINALITY` index. This maps to `coalesce` strategy on the target field, so the highest-priority source's ordering wins. Simple and sufficient for most array merging.
+
+**Tier 2 (linked-list):** `order_prev` / `order_next` use `LAG` / `LEAD` window functions over the array's identity field to emit the identity of the preceding / following element. This supports graph-based ordering models (CRDTs, Figma-style fractional indexing) where consumers need adjacency information rather than absolute positions.
+
+**Mixed ordering:** Some mappings contribute native sort keys (e.g., CRDT-aware sources with explicit `sort_key` fields) while others use `order: true` for implicit ordinal generation. Both resolve through the same `coalesce` strategy — the higher-priority source's key wins regardless of whether it was generated or native.
+
 ## What's Intentionally Left Out
 
 - **Execution semantics** — No scheduling, triggers, or processing order. That's runtime.

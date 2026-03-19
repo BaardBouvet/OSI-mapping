@@ -228,6 +228,17 @@
         "cluster_field": {
           "type": "string",
           "description": "Column in the source table holding a pre-populated cluster ID from ETL feedback."
+        },
+        "written_state": {
+          "description": "ETL-maintained table tracking what was last written to the target. Enables target-centric noop detection and hard-delete detection. `true` uses defaults; object overrides table/column names.",
+          "oneOf": [
+            { "type": "boolean" },
+            { "$ref": "#/$defs/WrittenStateConfig" }
+          ]
+        },
+        "written_noop": {
+          "type": "boolean",
+          "description": "When true (requires written_state), adds a target-centric noop branch: compares resolved values against the last-written JSONB instead of only against _base. Appropriate when the ETL is the sole writer to the target."
         }
       },
       "anyOf": [
@@ -279,6 +290,28 @@
           "type": "string",
           "default": "_src_id",
           "description": "Source PK column name."
+        }
+      }
+    },
+
+    "WrittenStateConfig": {
+      "type": "object",
+      "description": "Custom configuration for the ETL-maintained written-state table.",
+      "additionalProperties": false,
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name. Default: _written_{mapping_name}."
+        },
+        "cluster_id": {
+          "type": "string",
+          "default": "_cluster_id",
+          "description": "Cluster ID column name."
+        },
+        "written": {
+          "type": "string",
+          "default": "_written",
+          "description": "JSONB column holding the last-written field values."
         }
       }
     },
@@ -341,6 +374,18 @@
           "description": "The target field whose value to return when translating this reference back to source namespace. When omitted, the engine returns the referenced source's primary key value — which is the correct default for standard foreign keys. Set this when the source stores a different representation of the reference (e.g. an ISO code rather than the entity's primary key)."
         },
         "description": { "type": "string" },
+        "order": {
+          "type": "boolean",
+          "description": "When true on an array mapping field, generates a deterministic sortable position key from the source array index (WITH ORDINALITY + lpad). Used for Tier 1 ordinal ordering of nested array elements."
+        },
+        "order_prev": {
+          "type": "boolean",
+          "description": "When true, auto-populates with the identity of the previous sibling element using LAG window function. Used for Tier 2 linked-list CRDT ordering."
+        },
+        "order_next": {
+          "type": "boolean",
+          "description": "When true, auto-populates with the identity of the next sibling element using LEAD window function. Used for Tier 2 linked-list CRDT ordering."
+        },
         "normalize": {
           "type": "string",
           "description": "SQL expression with a %s placeholder, applied to both sides of the delta noop comparison. Handles precision loss (numeric rounding, string truncation, case folding)."

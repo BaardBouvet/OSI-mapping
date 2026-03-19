@@ -203,15 +203,16 @@ The engine reads a state table that the **ETL maintains**, and uses it to
 compute element-level diffs in SQL. The engine doesn't write to the table —
 it only reads. The ETL writes to it after each sync cycle.
 
-This follows the exact `cluster_members` pattern:
+This follows the exact `cluster_members` and `written_state` pattern:
 
-| | `cluster_members` | `synced_elements` |
+| | `cluster_members` | `written_state` |
 |---|---|---|
-| **Purpose** | Insert feedback — prevent duplicate inserts | Element tracking — detect removals |
-| **Who writes** | ETL (after inserting a new entity) | ETL (after syncing elements) |
-| **Who reads** | Engine (LEFT JOIN in forward view) | Engine (anti-join in element delta view) |
+| **Purpose** | Insert feedback — prevent duplicate inserts | Entity tracking — noop + hard-delete + element deletion detection |
+| **Who writes** | ETL (after inserting a new entity) | ETL (after syncing entity — writes the whole object including arrays) |
+| **Who reads** | Engine (LEFT JOIN in forward view) | Engine (LEFT JOIN in delta view; extracts arrays for element delta) |
 | **Engine writes?** | No | No |
-| **Declared on** | Mapping (`cluster_members: true`) | Nested mapping (`synced_elements: true`) |
+| **Declared on** | Mapping (`cluster_members: true`) | Parent mapping (`written_state: true`) |
+| **Table** | `_cluster_members_{mapping}` | `_written_{mapping}` |
 
 The diff logic — elements present now but not before (insert), elements
 present before but not now (delete), elements in both (update/noop) — is
@@ -220,19 +221,37 @@ pipeline, not in ETL application code.
 
 ## Design (Option E)
 
-### New mapping property: `synced_elements`
+### Elements live inside the parent's written JSONB
 
-Declared on nested (child) mappings that use array element identity:
+No separate element-tracking table is needed. The parent mapping's
+`written_state` table (`_written_{parent_mapping}`) already stores the
+whole resolved object as JSONB — including its nested arrays. The engine
+extracts previously-written elements from that JSONB and compares against
+the current resolved elements to detect insertions, deletions, and updates.
+
+This keeps the ETL maximally simple: after writing an entity to the target,
+the ETL stores the entire object (fields + arrays) in one `_written` column.
+One table, one concept, one write operation per entity.
 
 ```yaml
 mappings:
+  - name: blog_cms_recipes
+    source: blog_cms
+    target: recipe
+    written_state: true             # ← stores the whole object including arrays
+    written_noop: true
+    fields:
+      - source: id
+        target: name
+      - source: cuisine
+        target: cuisine
+
   - name: blog_cms_steps
     parent: blog_cms_recipes
     array: steps
     parent_fields:
       parent_recipe: id
     target: recipe_step
-    synced_elements: true           # ← ETL state table
     fields:
       - source: parent_recipe
         target: recipe_name
@@ -245,109 +264,96 @@ mappings:
         target: duration
 ```
 
-Like `cluster_members`, supports both short form and explicit configuration:
+Note: `written_state` is declared on the **parent** mapping (recipes), not
+on the child (steps). The child mapping doesn't need any written-state
+configuration — the engine knows its elements are embedded in the parent's
+JSONB because of the `parent:` / `array:` relationship.
 
-```yaml
-# Minimal — all defaults
-synced_elements: true
-# → table: _synced_elements_blog_cms_steps
-# → columns: _parent_id, _element_id
+### What the ETL writes
 
-# Custom table/column names
-synced_elements:
-  table: blog_step_tracking
-  parent_id: parent_key
-  element_id: step_key
-```
-
-### ETL state table
-
-The ETL maintains a table per mapping with two columns:
+The ETL writes the full resolved object to `_written_blog_cms_recipes`:
 
 ```sql
-CREATE TABLE _synced_elements_blog_cms_steps (
-    _parent_id    text NOT NULL,   -- parent entity identity
-    _element_id   text NOT NULL,   -- element identity (composite → JSONB)
-    PRIMARY KEY (_parent_id, _element_id)
+CREATE TABLE _written_blog_cms_recipes (
+    _cluster_id   text PRIMARY KEY,
+    _written      jsonb NOT NULL,
+    _written_at   timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO _written_blog_cms_recipes (_cluster_id, _written)
+VALUES (
+  'abc123',
+  '{
+    "name": "Chocolate Cake",
+    "cuisine": "French",
+    "steps": [
+      {"instruction": "Preheat to 200°C", "step_order": "0000000000", "duration": "10"},
+      {"instruction": "Mix dry ingredients", "step_order": "0000000001", "duration": "5"},
+      {"instruction": "Bake 30 min", "step_order": "0000000003", "duration": "30"}
+    ]
+  }'
 );
 ```
 
-For composite element identity (multiple `strategy: identity` fields), the
-engine uses the same JSONB canonicalization as composite PKs:
-
-```sql
--- Single identity field:  _element_id = 'Preheat to 200°C'
--- Composite identity:     _element_id = '{"instruction":"Preheat","variant":"A"}'
-```
-
-The `_parent_id` value is the parent entity's identity — typically the parent
-mapping's PK column value. For composite parent identity, same JSONB approach.
-
-### ETL sync cycle
-
-After each sync cycle, the ETL updates the table to reflect what it wrote:
-
-```sql
--- Replace the synced set for parent "Chocolate Cake"
-DELETE FROM _synced_elements_blog_cms_steps
-WHERE _parent_id = 'Chocolate Cake';
-
-INSERT INTO _synced_elements_blog_cms_steps (_parent_id, _element_id)
-VALUES
-  ('Chocolate Cake', 'Preheat to 200°C'),
-  ('Chocolate Cake', 'Mix dry ingredients'),
-  ('Chocolate Cake', 'Bake 30 min');
-```
-
-This is the ETL's only responsibility: record what elements exist in the
-target system right now. No diff logic, no provenance tracking, no policy
-decisions.
+The `steps` array in the JSONB mirrors what the parent delta's `jsonb_agg`
+produced. The ETL just stores what it wrote — no separate element tracking.
 
 ### Engine-generated element actions view
 
-When `synced_elements` is declared, the engine generates an additional view
-that classifies each element as insert, update, delete, or noop — the same
-pattern as the entity-level delta but at the element level.
+The engine generates `_element_delta_{child_mapping}` by extracting the
+previously-written array from the parent's `_written` JSONB and comparing
+it against the current reverse view:
 
 ```sql
 CREATE OR REPLACE VIEW _element_delta_blog_cms_steps AS
 
--- Current elements: check if previously synced
+WITH _prev AS (
+    -- Extract previously written elements from parent's JSONB
+    SELECT
+        w._cluster_id AS _parent_id,
+        elem->>'instruction' AS _element_id,
+        elem
+    FROM _written_blog_cms_recipes AS w,
+         jsonb_array_elements(w._written->'steps') AS elem
+)
+
+-- Current elements: check if previously written
 SELECT
     r."recipe_name"  AS _parent_id,
     r."instruction"  AS _element_id,
     r."step_order",
     r."duration",
     CASE
-      WHEN se._element_id IS NULL THEN 'insert'
+      WHEN p._element_id IS NULL THEN 'insert'
       ELSE 'present'
     END AS _element_action,
     r._base
 FROM _rev_blog_cms_steps AS r
-LEFT JOIN _synced_elements_blog_cms_steps AS se
-  ON se._parent_id  = r."recipe_name"::text
- AND se._element_id = r."instruction"::text
+LEFT JOIN _prev AS p
+  ON p._parent_id  = r."recipe_name"::text
+ AND p._element_id = r."instruction"::text
 
 UNION ALL
 
--- Removed elements: in synced table but not in current reverse view
+-- Removed elements: in written JSONB but not in current reverse view
 SELECT
-    se._parent_id,
-    se._element_id AS "instruction",
+    p._parent_id,
+    p._element_id AS "instruction",
     NULL AS "step_order",
     NULL AS "duration",
     'delete' AS _element_action,
     NULL AS _base
-FROM _synced_elements_blog_cms_steps AS se
+FROM _prev AS p
 LEFT JOIN _rev_blog_cms_steps AS r
-  ON r."recipe_name"::text = se._parent_id
- AND r."instruction"::text = se._element_id
+  ON r."recipe_name"::text = p._parent_id
+ AND r."instruction"::text = p._element_id
 WHERE r."instruction" IS NULL
 ```
 
-The `'present'` rows could be refined to `'noop'` vs `'update'` using
-the same `_base` comparison pattern as entity-level delta, but that's an
-optional refinement.
+The `'present'` rows could be refined to `'noop'` vs `'update'` by
+comparing element field values against the `_prev.elem` JSONB — same
+pattern as entity-level noop detection but using the written array element
+instead of a separate state table row.
 
 ### How it fits in the view pipeline
 
@@ -370,7 +376,7 @@ for ETL processes that operate at the element level.
 ### Impact on parent delta array reconstruction
 
 The parent delta's `jsonb_agg` continues to include all current elements
-(the resolved truth). The synced-elements table does NOT filter the
+(the resolved truth). The parent's `_written` JSONB does NOT filter the
 `jsonb_agg` — it only informs the element-level delta view.
 
 If the mapping author wants the resolved array to exclude removed elements,
@@ -394,41 +400,35 @@ SELECT * FROM _element_delta_blog_cms_steps
 WHERE _element_action = 'delete';
 ```
 
-After processing, the ETL writes the new element set back to the state
-table. This is a simple "write what you see" operation — no diff logic in
-the ETL.
+After processing, the ETL writes the whole object (including its arrays)
+back to the parent's `_written_{mapping}` table. One INSERT/UPDATE per
+entity — no separate element tracking.
 
 ### Noop detection for elements (optional refinement)
 
 For elements that are `'present'` (existed before, still exist), the engine
-can check whether field values changed:
+can check whether field values changed by comparing against the matching
+element from the parent's `_written` JSONB:
 
 ```sql
 CASE
-  WHEN se._element_id IS NULL THEN 'insert'
-  WHEN _base->>'instruction' IS NOT DISTINCT FROM "instruction"::text
-   AND _base->>'duration' IS NOT DISTINCT FROM "duration"::text
+  WHEN p._element_id IS NULL THEN 'insert'
+  WHEN p.elem->>'duration' IS NOT DISTINCT FROM r."duration"::text
   THEN 'noop'
   ELSE 'update'
 END AS _element_action
 ```
 
-This uses the same `_base` comparison pattern as entity-level noop detection.
-The `_base` JSONB is already present in the reverse view.
-
-Note: the noop comparison here detects whether the _resolved_ value changed
-from the last time the forward view ran. Element-level noop detection against
-what's _in the target system_ requires comparing against a richer state table
-that stores field values, not just element identity. This is a future
-refinement — for most ETL use cases, knowing insert/delete is sufficient and
-the parent-level delta handles update detection for existing elements.
+Since the parent's `_written` JSONB contains the full element objects
+(not just identities), this comparison is immediate — no separate state
+table with per-element fields needed.
 
 ## Option comparison
 
 | | A: Tombstone | B: Complement | C: Engine state | D: Pure ETL | E: Engine reads ETL state |
 |---|---|---|---|---|---|
-| Engine changes | None | None | Materialization | None | New view + model property |
-| ETL logic | None | None | None | Diff computation | Store synced set (trivial) |
+| Engine changes | None | None | Materialization | None | New view (no new table) |
+| ETL logic | None | None | None | Diff computation | Store whole object (trivial) |
 | Source changes | Must emit tombstones | Must track removals | None | None | None |
 | Stateless views | ✓ | ✓ | ✗ | ✓ | ✓ (reads external table) |
 | Handles silent drops | ✗ | ✗ | ✓ | ✓ | ✓ |
@@ -457,30 +457,37 @@ already stateful.
 
 ### Engine
 
-1. **Model** — add `synced_elements: Option<SyncedElements>` to `Mapping`,
-   following the `ClusterMembers` pattern (`true` for defaults, object for
-   custom table/column names).
+1. **Model** — no new model property. The existing `written_state` on the
+   parent mapping provides everything needed. The engine detects child
+   mappings (via `parent:` / `array:`) and knows which JSONB key to extract
+   elements from.
 
-2. **Validation** — `synced_elements` only valid on nested mappings with
-   at least one `strategy: identity` field on their target (needed for
-   element identity). Warn if declared without identity fields.
+2. **Validation** — when a parent mapping has `written_state` and child
+   mappings exist, the child's target must have at least one
+   `strategy: identity` field (needed for element identity in the delta
+   view). Warn if this is missing.
 
-3. **Render** — generate `_element_delta_{mapping}` view when
-   `synced_elements` is declared. The view LEFT JOINs the state table
-   against the reverse view and UNION ALLs the anti-join for deletions.
+3. **Render** — generate `_element_delta_{child_mapping}` view when the
+   child's parent has `written_state`. The view uses a CTE to extract
+   elements from the parent's `_written` JSONB, then LEFT JOINs against
+   the child's reverse view (and vice versa for deletions).
 
-4. **Schema** — add `synced_elements` property to `mapping-schema.json`.
+4. **Schema** — `written_state` is already in `mapping-schema.json`. No
+   additional schema changes needed.
 
 ### Documentation
 
 1. **New example**: `examples/element-deletion/` showing the tombstone
-   pattern (Option A) and documenting when to use `synced_elements`.
+   pattern (Option A) and documenting how the parent's `written_state`
+   enables element deletion detection for child array mappings.
 
-2. **Schema reference**: document `synced_elements` property, its defaults,
-   and the generated `_element_delta_{mapping}` view.
+2. **Schema reference**: document how `written_state` on a parent mapping
+   with child array mappings generates `_element_delta_{child_mapping}`
+   views.
 
-3. **ETL guidance**: document the state table contract (what the ETL must
-   write after each cycle).
+3. **ETL guidance**: document that the ETL writes the whole object
+   (including arrays) to `_written_{mapping}` — no separate element
+   tracking needed.
 
 ### Relationship to other plans
 
@@ -496,8 +503,7 @@ already stateful.
   propagation uses engine-native views (no state table). This plan handles
   hard deletes (no tombstone in source) via ETL state. Complementary.
 - **[ETL-STATE-INPUT-PLAN](ETL-STATE-INPUT-PLAN.md)** — generalises the
-  engine-reads-ETL-state pattern. `_written_elements_{mapping}` provides both
-  element deletion detection (row existence) and target-centric noop/conflict
-  detection (JSONB payload). Identity-only tables are a potential future
-  optimization.
+  engine-reads-ETL-state pattern. The parent's `_written` JSONB provides both
+  entity-level noop/hard-delete detection and element-level deletion detection
+  (array presence in the JSONB). One table, one concept.
 

@@ -64,12 +64,14 @@ is not needed for this use case, but comes for free.
 
 ### 2. Element-level deletion (already proposed)
 
-From [ELEMENT-DELETION-PLAN](ELEMENT-DELETION-PLAN.md): `synced_elements`
-tracks which array elements were previously written. The engine anti-joins
-this to detect removed elements.
+From [ELEMENT-DELETION-PLAN](ELEMENT-DELETION-PLAN.md): element deletion
+is detected by extracting previously-written arrays from the parent's
+`_written` JSONB. No separate element table — the parent's written state
+already contains the full object including nested arrays.
 
-Row existence in `_written_elements_{mapping}` is sufficient — the JSONB
-payload is not needed for this use case, but comes for free.
+The engine generates `_element_delta_{child_mapping}` views by extracting
+arrays from `_written->'{array_field}'` and comparing against the current
+reverse view.
 
 ### 3. Precision-loss noop detection (new)
 
@@ -168,19 +170,10 @@ The JSONB payload carries field values → enables noop-against-target,
 conflict detection, and incremental delta. One table covers all five
 use cases.
 
-For element-level tracking within array targets:
-
-```sql
-CREATE TABLE _written_elements_{mapping} (
-    _parent_id    text NOT NULL,
-    _element_id   text NOT NULL,
-    _written      jsonb NOT NULL,
-    _written_at   timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (_parent_id, _element_id)
-);
-```
-
-Same principle: row existence = "was synced"; JSONB = field values.
+For element-level tracking within array targets, no separate table is
+needed. The parent entity's `_written` JSONB already contains the full
+object including nested arrays. The engine extracts array elements from
+the JSONB to compute element-level diffs.
 
 ### Identity-only as future optimization
 
@@ -325,8 +318,8 @@ written_state:
 
 - `written_state` / `_written_{mapping}` — full row state from ETL
 - Hard-delete detection via row existence (subsumes `synced_entities`)
-- Element deletion via `_written_elements_{mapping}` row existence
-  (subsumes `synced_elements`)
+- Element deletion via array extraction from parent's `_written` JSONB
+  (no separate element table needed)
 - `on_hard_delete: suppress | delete | propagate` policy
 - `_overrides_{mapping}` — operator overrides
 - Noop against target (replaces `_base` comparison when declared)
@@ -341,9 +334,9 @@ written_state:
 ### Future: Identity-only optimization
 
 If storage or join performance becomes an issue for mappings that only
-need hard-delete detection, introduce lightweight `synced_entities` /
-`synced_elements` tables (keys only, no JSONB). This is a performance
-optimization, not a feature — the engine behavior is identical.
+need hard-delete detection, introduce a lightweight identity-only table
+(keys only, no JSONB). This is a performance optimization, not a feature
+— the engine behavior is identical.
 
 ## Relationship to other plans
 
@@ -351,7 +344,7 @@ optimization, not a feature — the engine behavior is identical.
   uses `_written_{mapping}` row existence for hard-delete detection.
   `on_hard_delete` policy resolves in the delta CASE expression.
 - **[ELEMENT-DELETION-PLAN](ELEMENT-DELETION-PLAN.md)** — uses
-  `_written_elements_{mapping}` row existence for element removal.
+  array extraction from the parent's `_written` JSONB for element removal.
 - **[PRECISION-LOSS-PLAN](PRECISION-LOSS-PLAN.md)** — `normalize` handles
   the engine-side transformation; `_written` handles the target-side
   comparison. Compose for correct noop detection with lossy targets.
