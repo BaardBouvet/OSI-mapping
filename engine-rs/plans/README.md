@@ -4,6 +4,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 
 | Plan | Status | Summary |
 |------|--------|---------|
+| [ASYMMETRY-ANALYSIS.md](ASYMMETRY-ANALYSIS.md) | Design | Read/write asymmetry: mapping concern vs ETL concern — analysis of where shape differences belong. |
 | [PLAN.md](PLAN.md) | Done | Original implementation plan — Rust engine compiling YAML to a DAG of PostgreSQL views. |
 | [PRIMARY-KEYS-PLAN.md](PRIMARY-KEYS-PLAN.md) | Done | Replace synthetic `_row_id` with real source primary keys via `sources:` section. |
 | [ANALYTICS-VIEW-PLAN.md](ANALYTICS-VIEW-PLAN.md) | Done | Consumer-friendly analytics view exposing resolved golden records. |
