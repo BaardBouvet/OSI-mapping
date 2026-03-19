@@ -70,3 +70,47 @@ Add `ViewNode::Analytics(String)` to the DAG. In DOT output it renders with a `t
 - No row-level security or tenant filtering (out of scope)
 - No materialization hints (that's the consumer's choice)
 - No denormalization of referenced targets (the view just exposes what resolved has)
+
+## Scope: analytics as the only consumer-facing data product
+
+The engine produces several consumer-usable outputs — analytics views,
+delta views, provenance/contributions views
+([ANALYTICS-PROVENANCE-PLAN](ANALYTICS-PROVENANCE-PLAN.md)), and sync
+status views. Of these, only the analytics view is positioned as a "data
+product" for end users. The question arose whether the tool should support
+additional data products beyond analytics: API views, segment views,
+export shapes, aggregate summaries.
+
+**Decision: the mapping tool should not generate serving-layer products.**
+
+The engine should generate the outputs that *require* resolution logic,
+identity graphs, and delta computation — these are the things only the
+engine can produce:
+
+| Output | Purpose | Only engine can produce? |
+|--------|---------|------------------------|
+| `{target}` (analytics) | Golden record for BI | Yes — resolution + identity |
+| `_delta_{mapping}` | Sync changesets | Yes — reverse + noop detection |
+| `_provenance_{target}` | Source attribution | Yes — identity graph |
+| `_contributions_{target}` | Per-source field values | Yes — forward + identity |
+| `_sync_status_{mapping}` | Written state feedback | Yes — written state + resolved |
+
+Everything downstream — API views, filtered segments, export shapes,
+aggregates — is a `SELECT ... FROM {target} WHERE ...` that any SQL
+consumer, dbt model, or application can write. These don't need the
+engine; they need the engine's output.
+
+**Why not add them to the mapping schema:**
+- Adding segment/API/export definitions blurs the boundary between
+  "integration logic" (what data means, how it resolves) and "serving
+  logic" (how data is shaped for specific consumers).
+- The mapping schema's strength is declaring resolution semantics. Serving
+  is the consumer's problem.
+- The [DBT-OUTPUT-PLAN](DBT-OUTPUT-PLAN.md) already provides the right
+  extension mechanism: the engine generates dbt `staging` models, and
+  teams add their own `marts` for consumer-specific products.
+
+**If data products are needed,** the dbt output is the right vehicle:
+engine views become dbt staging models; teams extend with custom marts
+for API views, segments, or exports. The engine handles the hard
+integration logic; dbt handles the last mile.

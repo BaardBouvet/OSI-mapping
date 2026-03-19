@@ -195,7 +195,111 @@ enum ViewNode {
     // ... existing variants ...
     Provenance(String),      // _provenance_{target}
     Contributions(String),   // _contributions_{target}
+    SyncStatus(String),      // _sync_status_{mapping}
 }
+```
+
+## Written state and provenance: separate views
+
+The `_written_{mapping}` table (from
+[ETL-STATE-INPUT-PLAN](ETL-STATE-INPUT-PLAN.md)) contains what the ETL
+actually wrote to each target system: the JSONB payload, the timestamp,
+and optionally per-field derived timestamps. This is valuable context for
+stewardship UIs — but it should **not** be embedded in the provenance or
+contributions views.
+
+### Why separate
+
+1. **Not all mappings have written state.** `written_state: true` is
+   opt-in. Provenance views that depend on it would either be partial
+   (some mappings have written data, some don't) or would force written
+   state to be mandatory for provenance — a coupling that doesn't exist
+   today.
+
+2. **Different data layers.** Provenance and contributions are derived
+   from source data (forward views + identity). Written state is ETL-layer
+   feedback. The asymmetry principle
+   ([ASYMMETRY-ANALYSIS](ASYMMETRY-ANALYSIS.md)) says: source data and
+   semantic resolution belong to the mapping; sync execution state belongs
+   to the ETL. Mixing them in one view blurs that boundary.
+
+3. **Different refresh cadences.** Source data and written state update at
+   different times. A combined view would sometimes show a resolved value
+   that doesn't yet match `_written` — not because of a conflict, but
+   because the sync hasn't run yet. This creates confusing false-positive
+   drift signals.
+
+### Sync status view: `_sync_status_{mapping}`
+
+Instead, generate a third view for mappings that have `written_state: true`:
+
+```sql
+CREATE OR REPLACE VIEW _sync_status_{mapping} AS
+SELECT
+  r._entity_id AS _cluster_id,
+  w._written,
+  w._written_at,
+  -- Conflict: target was externally modified since last write
+  EXISTS (
+    SELECT 1 FROM jsonb_each_text(w._written) kv
+    WHERE kv.value IS DISTINCT FROM
+          (row_to_json(r)::jsonb ->> kv.key)
+  ) AS _conflict,
+  -- Per-field drift detail
+  (
+    SELECT jsonb_object_agg(kv.key, jsonb_build_object(
+      'written', kv.value,
+      'resolved', row_to_json(r)::jsonb ->> kv.key
+    ))
+    FROM jsonb_each_text(w._written) kv
+    WHERE kv.value IS DISTINCT FROM
+          (row_to_json(r)::jsonb ->> kv.key)
+  ) AS _drift
+FROM _resolved_{target} r
+JOIN _written_{mapping} w ON w._cluster_id = r._entity_id;
+```
+
+This tells consumers:
+- What was last written (`_written` JSONB)
+- When it was written (`_written_at`)
+- Whether the target drifted from the resolved value (`_conflict`)
+- Which specific fields drifted and their values (`_drift`)
+
+### How consumers combine them
+
+A stewardship UI joins all three:
+
+```sql
+SELECT
+  a.*,                          -- golden record
+  ct._mapping, ct._src_id,      -- which sources contributed
+  ct.name AS source_name,       -- what each source provided
+  ss._written_at,               -- when was it last synced
+  ss._conflict,                 -- did someone change it externally
+  ss._drift                     -- which fields drifted
+FROM company a
+JOIN _contributions_company ct ON ct._cluster_id = a._cluster_id
+LEFT JOIN _sync_status_salesforce ss ON ss._cluster_id = a._cluster_id;
+```
+
+The engine generates all three views. They remain separate with separate
+dependencies, and `_sync_status` is only generated when
+`written_state: true`.
+
+### Updated DAG
+
+```
+_fwd_{mapping1} ──┐
+_fwd_{mapping2} ──┤
+                  ├──► _id_{target} ──► _resolved_{target} ──► {target} (analytics)
+                  │         │                  │
+                  │         │                  └──► _sync_status_{mapping}
+                  │         │                       (only when written_state: true,
+                  │         │                        also depends on _written_{mapping})
+                  │         │
+                  │         └──► _provenance_{target}
+                  │
+                  └──────────────► _contributions_{target}
 ```
 
 ## Scope of changes
