@@ -64,3 +64,4 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [DERIVED-TIMESTAMPS-PLAN.md](DERIVED-TIMESTAMPS-PLAN.md) | Done | Derive per-field `_ts_{field}` from `_written` JSONB comparison + `_written_at` + `_written_ts`. |
 | [TIME-RANGE-RESOLUTION-PLAN.md](TIME-RANGE-RESOLUTION-PLAN.md) | Design | Support `last_modified` as a time range (min/max) instead of a single point; range resolution strategies. |
 | [SCHEMA-VALIDATION-PLAN.md](SCHEMA-VALIDATION-PLAN.md) | Done | JSON Schema validation as Pass 0 — reports all structural errors before serde deserialization. |
+| [HUMAN-CONFIRMATION-PLAN.md](HUMAN-CONFIRMATION-PLAN.md) | Design | Human-in-the-loop approval for reverse ETL — confirmation gates per system, action, field, and pattern. |
