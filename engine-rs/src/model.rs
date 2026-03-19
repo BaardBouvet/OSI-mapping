@@ -289,7 +289,22 @@ pub struct Mapping {
     /// Off by default — opt-in because it assumes the ETL is the sole
     /// writer to the target.
     #[serde(default)]
-    pub written_noop: bool,
+    pub derive_noop: bool,
+    /// When true and `written_state` is declared, elements that were in the
+    /// previously-written JSONB array but are now absent from the source's
+    /// forward view are excluded from all sources' reconstructed arrays.
+    /// The engine derives tombstones by comparing the written state against
+    /// the current forward view — no explicit tombstone records needed.
+    /// Off by default — opt-in because the written JSONB stores the merged
+    /// output, not per-source contributions, which can cause false
+    /// tombstones when sources contribute different elements.
+    #[serde(default)]
+    pub derive_tombstones: bool,
+    /// Source columns to carry through to delta output without mapping to a
+    /// target field. Included in `_base` and reverse/delta but excluded from
+    /// noop detection and resolution.
+    #[serde(default)]
+    pub passthrough: Vec<String>,
 }
 
 impl Mapping {

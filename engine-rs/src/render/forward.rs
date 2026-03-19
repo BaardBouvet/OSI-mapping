@@ -466,6 +466,14 @@ pub fn render_forward_body(
                 base_parts.push(part);
             }
         }
+        // Include passthrough columns in _base for round-trip preservation.
+        for col in &mapping.passthrough {
+            let resolved = resolve_nested_source(col, &parent_field_exprs, has_path);
+            let part = format!("'{col}', {resolved}");
+            if !base_parts.contains(&part) {
+                base_parts.push(part);
+            }
+        }
         if base_parts.is_empty() {
             cols.push("NULL::jsonb AS _base".to_string());
         } else {

@@ -23,7 +23,7 @@ resolved value match what was previously written? Since `"Alice"` =
 - **`written_state: true`** — declares that the ETL maintains a
   `_written_{mapping}` table with the last-written field values (JSONB).
   Used for delete detection (row existence) and as input for noop.
-- **`written_noop: true`** — opt-in: use the `_written` values for
+- **`derive_noop: true`** — opt-in: use the `_written` values for
   noop detection. Assumes the ETL is the sole writer to the target.
 - **Target-centric noop** — compares resolved fields against what the
   ETL last wrote, not what the source currently provides.

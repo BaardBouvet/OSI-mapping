@@ -68,6 +68,8 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`vocabulary-custom`](vocabulary-custom/README.md) | Custom vocabulary definitions |
 | [`vocabulary-standard`](vocabulary-standard/README.md) | Standard vocabulary usage |
 | [`noop-written-state`](noop-written-state/README.md) | Target-centric noop detection via ETL written state |
+| [`passthrough`](passthrough/README.md) | Carrying unmapped source columns through to delta output via `passthrough` |
+| [`element-deletion`](element-deletion/README.md) | Deletion-wins: one source's element removal wins over other sources via `written_state` |
 
 Each example directory contains a local `README.md` and a `mapping.yaml` with the full definition including test cases.
 

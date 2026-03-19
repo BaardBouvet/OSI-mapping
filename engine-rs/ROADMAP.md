@@ -52,12 +52,16 @@ without changing the schema surface locked in Phase 1.
 
 | Plan | Status | Work |
 |------|--------|------|
-| PRECISION-LOSS-PLAN | Planned | `normalize:` property on field mappings for lossy noop comparison (Phase 1 only: truncation, rounding, case folding). |
+| PRECISION-LOSS-PLAN | ~~Planned~~ **Done** | `normalize:` property on field mappings for lossy noop comparison and echo-aware `last_modified` resolution. |
 | CRDT-ORDERING-PLAN | ~~Planned~~ **Done** | `order: true` + optional prev/next CRDT links for nested array ordering; supersedes POSITIONAL-ARRAY-PLAN. |
-| PASSTHROUGH-PLAN | Planned | `passthrough:` list on mappings to carry unmapped columns to delta output. |
+| PASSTHROUGH-PLAN | ~~Planned~~ **Done** | `passthrough:` list on mappings to carry unmapped columns to delta output. |
+| ELEMENT-DELETION-PLAN | ~~Design~~ **Done** | Cross-source deletion-wins: when any source removes a nested array element (detected via `written_state`), the removal propagates to all deltas — no new views. |
+| HARD-DELETE-PROPAGATION-PLAN | Planned | Stateful hard-delete detection to prevent re-insertion loops when source rows disappear. |
 
 **Exit criteria:** New examples for each feature. Noop suppression correct for
 normalized fields. Ordered arrays round-trip through reverse views.
+Nested array changes detected via written_noop on parent delta.
+Hard-delete propagation prevents re-insertion of intentionally removed records.
 
 ## Phase 3 — Richer types and output
 

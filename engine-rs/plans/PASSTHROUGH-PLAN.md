@@ -1,6 +1,6 @@
 # Passthrough fields
 
-**Status:** Planned
+**Status:** Done
 
 Support carrying source columns through the pipeline to the delta view
 without mapping them to target fields.

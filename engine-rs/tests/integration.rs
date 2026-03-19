@@ -421,7 +421,7 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                 if mapping.source.path.is_some() {
                     continue;
                 }
-                let all_exempt = mapping.written_noop;
+                let all_exempt = mapping.derive_noop;
                 for fm in &mapping.fields {
                     if fm.is_reverse() && fm.source.is_some() {
                         let pair = (
@@ -814,7 +814,7 @@ async fn verify_test_expected(
             if mapping.source.path.is_some() {
                 continue;
             }
-            let all_exempt = mapping.written_noop;
+            let all_exempt = mapping.derive_noop;
             for fm in &mapping.fields {
                 if fm.is_reverse() && fm.source.is_some() {
                     let pair = (
@@ -1594,6 +1594,12 @@ async fn ensure_source_columns(
                     if !needed.contains(&s) {
                         needed.push(s);
                     }
+                }
+            }
+            // Passthrough columns
+            for col in &mapping.passthrough {
+                if !needed.contains(col) {
+                    needed.push(col.clone());
                 }
             }
         }

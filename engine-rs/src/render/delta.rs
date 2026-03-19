@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use std::collections::BTreeMap;
 
 use super::forward::{parse_path_segments, PathSegment};
-use crate::model::{Mapping, Source};
+use crate::model::{Mapping, Source, Strategy, Target};
 use crate::{qi, sql_escape};
 
 /// A tree node for rebuilding nested JSONB from extracted fields.
@@ -175,6 +175,17 @@ struct NestedCteResult {
     column: String,
 }
 
+/// Per-node deletion filter for element-deletion-wins semantics.
+/// When the parent has `written_state`, elements that were previously
+/// written but are now absent from the source's forward view are
+/// filtered out of the nested `jsonb_agg`.
+struct DeletionFilter {
+    /// CTE alias holding the deleted element identities (e.g., `_del_steps`).
+    cte_alias: String,
+    /// Source field names forming the element identity key.
+    identity_fields: Vec<String>,
+}
+
 /// Build the CASE expression that classifies a row from a single mapping's
 /// reverse view as insert / delete / noop / update.
 ///
@@ -303,6 +314,8 @@ pub fn render_delta_view(
     source_name: &str,
     mappings: &[&Mapping],
     source_meta: Option<&Source>,
+    targets: &IndexMap<String, Target>,
+    all_mappings: &[Mapping],
 ) -> Result<String> {
     let view_name = qi(&format!("_delta_{source_name}"));
 
@@ -328,6 +341,8 @@ pub fn render_delta_view(
             &nesting_roots,
             &pk_columns,
             source_meta,
+            targets,
+            all_mappings,
         );
     }
 
@@ -355,12 +370,22 @@ pub fn render_delta_view(
         }
     }
     out_cols.extend(reverse_fields.iter().cloned());
+    // Collect passthrough columns across all mappings (union for UNION ALL compat).
+    let mut passthrough_cols: Vec<String> = Vec::new();
+    for mapping in mappings {
+        for col in &mapping.passthrough {
+            if !passthrough_cols.contains(col) && !reverse_fields.contains(col) {
+                passthrough_cols.push(col.clone());
+            }
+        }
+    }
+    out_cols.extend(passthrough_cols.iter().cloned());
     out_cols.push("_base".to_string());
 
     if mappings.len() == 1 {
         // Single mapping: simple SELECT with CASE from the one reverse view.
         let mapping = mappings[0];
-        let written_col = if mapping.written_noop {
+        let written_col = if mapping.derive_noop {
             mapping.written_state.as_ref().map(|ws| ws.written.as_str())
         } else {
             None
@@ -730,7 +755,7 @@ fn render_delta_with_children(
     let primary_ws = primary_mappings
         .iter()
         .find_map(|m| m.written_state.as_ref());
-    let written_col = if primary_mappings.iter().any(|m| m.written_noop) {
+    let written_col = if primary_mappings.iter().any(|m| m.derive_noop) {
         primary_ws.map(|ws| ws.written.as_str())
     } else {
         None
@@ -821,7 +846,7 @@ fn render_delta_union_all(
     let selects: Vec<String> = mappings
         .iter()
         .map(|m| {
-            let written_col = if m.written_noop {
+            let written_col = if m.derive_noop {
                 m.written_state.as_ref().map(|ws| ws.written.as_str())
             } else {
                 None
@@ -834,6 +859,8 @@ fn render_delta_union_all(
                 .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
                 .filter_map(|fm| fm.source_name())
                 .collect();
+            let m_passthrough: std::collections::HashSet<&str> =
+                m.passthrough.iter().map(|s| s.as_str()).collect();
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
             for col in out_cols {
                 if col == "_cluster_id" && m.written_state.is_some() {
@@ -842,6 +869,7 @@ fn render_delta_union_all(
                     || col == "_base"
                     || pk_columns.contains(col.as_str())
                     || m_fields.contains(col.as_str())
+                    || m_passthrough.contains(col.as_str())
                 {
                     projected.push(qi(col));
                 } else {
@@ -990,7 +1018,13 @@ fn find_node_mut<'a, 'b>(
 /// Recursively generate CTEs for a nesting node (bottom-up: children first).
 ///
 /// Returns all CTE definitions and the alias/column name of the top-level CTE.
-fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
+/// When `deletions` contains a filter for this node's segment, the leaf CTE
+/// LEFT JOINs the deletion CTE and excludes source-deleted elements.
+fn build_nested_ctes(
+    node: &NestingNode,
+    cte_prefix: &str,
+    deletions: &std::collections::HashMap<String, DeletionFilter>,
+) -> NestedCteResult {
     let alias = format!("{cte_prefix}_{}", node.segment);
     let rev_view = qi(&format!("_rev_{}", node.mapping.name));
     let group_col = node.parent_fk_field.as_deref().unwrap_or("_src_id");
@@ -999,7 +1033,7 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
     let mut all_ctes: Vec<String> = Vec::new();
     let mut child_results: Vec<NestedCteResult> = Vec::new();
     for child in &node.children {
-        let child_result = build_nested_ctes(child, &alias);
+        let child_result = build_nested_ctes(child, &alias, deletions);
         all_ctes.extend(child_result.ctes.clone());
         child_results.push(child_result);
     }
@@ -1057,12 +1091,35 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
 
     if child_results.is_empty() {
         // Leaf node: simple aggregation.
+        // When a deletion filter exists for this segment, LEFT JOIN the
+        // deletion CTE and exclude source-deleted elements.
+        let (del_join, del_where) = if let Some(df) = deletions.get(&node.segment) {
+            let join_conds: Vec<String> = df
+                .identity_fields
+                .iter()
+                .map(|f| format!("_del.{qf} = n.{qf}::text", qf = qi(f)))
+                .collect();
+            let join = format!(
+                "\n               LEFT JOIN {del} AS _del ON _del._parent_key = n.{qgroup}::text AND {conds}",
+                del = df.cte_alias,
+                conds = join_conds.join(" AND "),
+            );
+            let null_check: Vec<String> = df
+                .identity_fields
+                .iter()
+                .map(|f| format!("_del.{} IS NULL", qi(f)))
+                .collect();
+            let wh = format!(" AND {}", null_check.join(" AND "));
+            (join, wh)
+        } else {
+            (String::new(), String::new())
+        };
         all_ctes.push(format!(
             "{alias} AS (\n\
                SELECT n.{qgroup} AS _parent_key, \
              COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_leaf}), '[]'::jsonb) AS {qsegment}\n\
-               FROM {rev_view} AS n\n\
-               WHERE n.{qgroup} IS NOT NULL\n\
+               FROM {rev_view} AS n{del_join}\n\
+               WHERE n.{qgroup} IS NOT NULL{del_where}\n\
                GROUP BY n.{qgroup}\n\
              )",
         ));
@@ -1107,6 +1164,7 @@ fn build_nested_ctes(node: &NestingNode, cte_prefix: &str) -> NestedCteResult {
 
 /// Render a delta view that aggregates nested-path child mappings into JSONB
 /// arrays and joins them onto the parent reverse view.
+#[allow(clippy::too_many_arguments)]
 fn render_delta_with_nested(
     source_name: &str,
     view_name: &str,
@@ -1114,6 +1172,8 @@ fn render_delta_with_nested(
     nesting_roots: &[NestingNode],
     pk_columns: &std::collections::HashSet<&str>,
     _source_meta: Option<&Source>,
+    targets: &IndexMap<String, Target>,
+    all_mappings: &[Mapping],
 ) -> Result<String> {
     // For now, use the first parent mapping as the base.
     let parent = parent_mappings[0];
@@ -1131,11 +1191,6 @@ fn render_delta_with_nested(
     // Generate CTEs recursively for each root nesting node.
     let mut all_ctes: Vec<String> = Vec::new();
     let mut root_results: Vec<NestedCteResult> = Vec::new();
-    for node in nesting_roots {
-        let result = build_nested_ctes(node, "_nested");
-        all_ctes.extend(result.ctes.clone());
-        root_results.push(result);
-    }
 
     // Determine the parent PK column(s) for joining.
     let parent_pk_col: String = pk_columns
@@ -1144,6 +1199,262 @@ fn render_delta_with_nested(
         .copied()
         .unwrap_or("_src_id")
         .to_string();
+
+    // ── Element-deletion-wins: build deletion-detection CTEs ───────
+    // When ANY parent mapping (from any source) has written_state and
+    // a child targeting the same child-target + segment, detect elements
+    // that were in the previously-written JSONB but are now absent from
+    // that source's forward view.  These "source-deleted" elements are
+    // excluded from the nested jsonb_agg so the delta reflects the
+    // removal across all sources (deletion-wins semantics).
+    let mut deletion_filters: std::collections::HashMap<String, DeletionFilter> =
+        std::collections::HashMap::new();
+
+    for node in nesting_roots {
+        let child_target_name = node.mapping.target.name();
+        let Some(target) = targets.get(child_target_name) else {
+            continue;
+        };
+
+        // Identity target fields on the child entity.
+        let identity_target_fields: Vec<&str> = target
+            .fields
+            .iter()
+            .filter(|(_, fd)| fd.strategy() == Strategy::Identity)
+            .map(|(name, _)| name.as_str())
+            .collect();
+
+        // Current source's identity: (source_name, target_name) pairs.
+        let current_identity_pairs: Vec<(String, String)> = node
+            .mapping
+            .fields
+            .iter()
+            .filter(|fm| {
+                fm.target
+                    .as_deref()
+                    .map(|t| identity_target_fields.contains(&t))
+                    .unwrap_or(false)
+                    && fm.references.is_none()
+            })
+            .filter_map(|fm| {
+                let src = fm.source_name()?.to_string();
+                let tgt = fm.target.as_ref()?.clone();
+                Some((src, tgt))
+            })
+            .collect();
+
+        if current_identity_pairs.is_empty() {
+            continue;
+        }
+
+        let current_identity_source_names: Vec<String> = current_identity_pairs
+            .iter()
+            .map(|(s, _)| s.clone())
+            .collect();
+        let segment = &node.segment;
+
+        let mut per_source_del_aliases: Vec<String> = Vec::new();
+        let mut source_idx = 0;
+
+        // Scan ALL mappings for parent+child pairs with written_state + derive_tombstones.
+        for foreign_parent in all_mappings.iter() {
+            let Some(ref ws) = foreign_parent.written_state else {
+                continue;
+            };
+            if !foreign_parent.derive_tombstones {
+                continue;
+            }
+            // Skip child mappings (they have a path/parent).
+            if foreign_parent.source.path.is_some() || foreign_parent.parent.is_some() {
+                continue;
+            }
+
+            // Find a child of this parent that targets the same child target
+            // and expands the same array segment.
+            let foreign_child = all_mappings.iter().find(|m| {
+                m.parent.as_deref() == Some(&foreign_parent.name)
+                    && m.target.name() == child_target_name
+                    && m.effective_array()
+                        .map(|a| a.split('.').next_back().unwrap_or(a))
+                        == Some(segment.as_str())
+            });
+            let Some(foreign_child) = foreign_child else {
+                continue;
+            };
+
+            // Map identity fields across the two child mappings:
+            // (written_jsonb_key, fwd_column, output_alias)
+            // written_jsonb_key = foreign child's source name (key in written JSONB)
+            // fwd_column       = target field name (column in forward view)
+            // output_alias     = current source's source name (for the join)
+            let field_mapping: Vec<(String, String, String)> = identity_target_fields
+                .iter()
+                .filter_map(|&tgt_name| {
+                    let foreign_src = foreign_child
+                        .fields
+                        .iter()
+                        .find(|fm| {
+                            fm.target.as_deref() == Some(tgt_name) && fm.references.is_none()
+                        })
+                        .and_then(|fm| fm.source_name())
+                        .map(|s| s.to_string())?;
+                    let current_src = node
+                        .mapping
+                        .fields
+                        .iter()
+                        .find(|fm| {
+                            fm.target.as_deref() == Some(tgt_name) && fm.references.is_none()
+                        })
+                        .and_then(|fm| fm.source_name())
+                        .map(|s| s.to_string())?;
+                    Some((foreign_src, tgt_name.to_string(), current_src))
+                })
+                .collect();
+
+            if field_mapping.is_empty() {
+                continue;
+            }
+
+            // Foreign parent's written-state config.
+            let ws_table = qi(&ws.table_name(&foreign_parent.name));
+            let ws_cluster = qi(&ws.cluster_id);
+            let wcol = qi(&ws.written);
+            let foreign_parent_rev = qi(&format!("_rev_{}", foreign_parent.name));
+
+            // Foreign parent's PK column (source field that maps to parent
+            // target's identity).
+            let parent_target_name = foreign_parent.target.name();
+            let foreign_pk_col = targets
+                .get(parent_target_name)
+                .and_then(|pt| {
+                    pt.fields
+                        .iter()
+                        .find(|(_, fd)| fd.strategy() == Strategy::Identity)
+                        .and_then(|(identity_tgt, _)| {
+                            foreign_parent
+                                .fields
+                                .iter()
+                                .find(|fm| fm.target.as_deref() == Some(identity_tgt.as_str()))
+                                .and_then(|fm| fm.source_name())
+                        })
+                })
+                .unwrap_or("_src_id");
+
+            // Foreign child's forward view and parent FK column.
+            let fwd_child = qi(&format!("_fwd_{}", foreign_child.name));
+            let foreign_parent_fk = foreign_child
+                .source
+                .parent_fields
+                .keys()
+                .next()
+                .map(|s| s.as_str())
+                .unwrap_or("_src_id");
+            let fwd_foreign_parent_fk = foreign_child
+                .fields
+                .iter()
+                .find(|fm| fm.source_name() == Some(foreign_parent_fk))
+                .and_then(|fm| fm.target.as_deref())
+                .unwrap_or(foreign_parent_fk);
+
+            // _del_prev: extract elements from foreign parent's written JSONB.
+            let prev_alias = format!("_del_prev_{segment}_{source_idx}");
+            let prev_id_cols: Vec<String> = field_mapping
+                .iter()
+                .map(|(foreign_src, _, current_src)| {
+                    format!("elem->>'{foreign_src}' AS {}", qi(current_src))
+                })
+                .collect();
+            all_ctes.push(format!(
+                "{prev_alias} AS (\n\
+                   SELECT p.{}::text AS _parent_key, {id_cols}\n\
+                   FROM {foreign_parent_rev} AS p\n\
+                   JOIN {ws_table} AS _ws ON _ws.{ws_cluster} = p.\"_cluster_id\",\n\
+                   LATERAL jsonb_array_elements(_ws.{wcol}->'{segment}') AS elem\n\
+                 )",
+                qi(foreign_pk_col),
+                id_cols = prev_id_cols.join(", "),
+            ));
+
+            // _del_curr: current elements from the foreign child's forward view.
+            let curr_alias = format!("_del_curr_{segment}_{source_idx}");
+            let curr_id_cols: Vec<String> = field_mapping
+                .iter()
+                .map(|(_, tgt, current_src)| format!("f.{}::text AS {}", qi(tgt), qi(current_src)))
+                .collect();
+            all_ctes.push(format!(
+                "{curr_alias} AS (\n\
+                   SELECT f.{}::text AS _parent_key, {id_cols}\n\
+                   FROM {fwd_child} AS f\n\
+                 )",
+                qi(fwd_foreign_parent_fk),
+                id_cols = curr_id_cols.join(", "),
+            ));
+
+            // _del_src: elements in prev but not in curr (this source's deletions).
+            let del_src_alias = format!("_del_src_{segment}_{source_idx}");
+            let join_conds: Vec<String> = current_identity_source_names
+                .iter()
+                .map(|f| format!("c.{qf} = p.{qf}", qf = qi(f)))
+                .collect();
+            let null_checks: Vec<String> = current_identity_source_names
+                .iter()
+                .map(|f| format!("c.{} IS NULL", qi(f)))
+                .collect();
+            let id_select: Vec<String> = current_identity_source_names
+                .iter()
+                .map(|f| format!("p.{}", qi(f)))
+                .collect();
+            all_ctes.push(format!(
+                "{del_src_alias} AS (\n\
+                   SELECT p._parent_key, {id_sel}\n\
+                   FROM {prev_alias} p\n\
+                   LEFT JOIN {curr_alias} c ON c._parent_key = p._parent_key AND {join_on}\n\
+                   WHERE {null_check}\n\
+                 )",
+                id_sel = id_select.join(", "),
+                join_on = join_conds.join(" AND "),
+                null_check = null_checks.join(" AND "),
+            ));
+
+            per_source_del_aliases.push(del_src_alias);
+            source_idx += 1;
+        }
+
+        if per_source_del_aliases.is_empty() {
+            continue;
+        }
+
+        // Combine all per-source deletions via UNION ALL.
+        let del_alias = format!("_del_{segment}");
+        if per_source_del_aliases.len() == 1 {
+            // Single source: alias directly without UNION.
+            let only = &per_source_del_aliases[0];
+            all_ctes.push(format!("{del_alias} AS (\n  SELECT * FROM {only}\n)",));
+        } else {
+            let union_parts: Vec<String> = per_source_del_aliases
+                .iter()
+                .map(|a| format!("SELECT * FROM {a}"))
+                .collect();
+            all_ctes.push(format!(
+                "{del_alias} AS (\n  {unions}\n)",
+                unions = union_parts.join("\n  UNION ALL\n  "),
+            ));
+        }
+
+        deletion_filters.insert(
+            segment.clone(),
+            DeletionFilter {
+                cte_alias: del_alias,
+                identity_fields: current_identity_source_names,
+            },
+        );
+    }
+
+    for node in nesting_roots {
+        let result = build_nested_ctes(node, "_nested", &deletion_filters);
+        all_ctes.extend(result.ctes.clone());
+        root_results.push(result);
+    }
 
     // Build the noop detection CASE.
     let mut noop_parts: Vec<String> = Vec::new();
@@ -1172,13 +1483,60 @@ fn render_delta_with_nested(
         ));
     }
 
+    // Target-centric noop: when parent has written_noop, compare resolved fields
+    // AND nested arrays against the previously-written JSONB. This detects when
+    // nested array elements are added/removed between sync cycles.
+    let mut written_noop_parts: Vec<String> = Vec::new();
+    if parent.derive_noop {
+        if let Some(ref ws) = parent.written_state {
+            let wcol = qi(&ws.written);
+            // Scalar field comparison against written state.
+            for fm in &parent.fields {
+                if fm.is_reverse() {
+                    if let Some(src) = fm.source_name() {
+                        if !pk_columns.contains(src) {
+                            written_noop_parts.push(format!(
+                                "_ws.{wcol}->>'{}' IS NOT DISTINCT FROM p.{}::text",
+                                sql_escape(src),
+                                qi(src)
+                            ));
+                        }
+                    }
+                }
+            }
+            // Nested array comparison against written state.
+            for rr in &root_results {
+                let qcol = qi(&rr.column);
+                written_noop_parts.push(format!(
+                    "COALESCE(_osi_text_norm(_ws.{wcol}->'{col}')::text, '[]') IS NOT DISTINCT FROM COALESCE(_osi_text_norm({alias}.{qcol})::text, '[]')",
+                    col = rr.column,
+                    alias = rr.alias,
+                ));
+            }
+        }
+    }
+
     let mut case_branches = Vec::new();
     if parent.is_child() && !parent.is_nested() {
         case_branches.push("WHEN p._src_id IS NULL THEN NULL".to_string());
     } else {
         case_branches.push("WHEN p._src_id IS NULL THEN 'insert'".to_string());
     }
-    if !noop_parts.is_empty() {
+    if !written_noop_parts.is_empty() {
+        // When written_noop is enabled, combine _base AND _written conditions.
+        // Noop only when _base matches AND (no written state OR written matches).
+        let ws_col = qi(&parent
+            .written_state
+            .as_ref()
+            .map(|ws| ws.written.clone())
+            .unwrap_or_default());
+        let mut combined = noop_parts.clone();
+        combined.push(format!(
+            "(_ws.{ws_col} IS NULL OR ({}))",
+            written_noop_parts.join(" AND ")
+        ));
+        case_branches.push(format!("WHEN {} THEN 'noop'", combined.join(" AND ")));
+    } else if !noop_parts.is_empty() {
         case_branches.push(format!("WHEN {} THEN 'noop'", noop_parts.join(" AND ")));
     }
     case_branches.push("ELSE 'update'".to_string());
@@ -1212,6 +1570,15 @@ fn render_delta_with_nested(
         join_clauses.push(format!(
             "LEFT JOIN {} ON {}._parent_key = p.{qpk}::text",
             rr.alias, rr.alias,
+        ));
+    }
+
+    // LEFT JOIN written_state table when parent has written_state.
+    if let Some(ref ws) = parent.written_state {
+        let ws_table = qi(&ws.table_name(&parent.name));
+        let ws_cluster = qi(&ws.cluster_id);
+        join_clauses.push(format!(
+            "LEFT JOIN {ws_table} AS _ws ON _ws.{ws_cluster} = p.\"_cluster_id\""
         ));
     }
 
@@ -1262,7 +1629,8 @@ mappings:
         );
         let mappings: Vec<&_> = doc.mappings.iter().collect();
         let source_meta = doc.sources.get("s");
-        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             sql.contains("IS NOT DISTINCT FROM"),
             "noop detection should use IS NOT DISTINCT FROM"
@@ -1300,7 +1668,8 @@ mappings:
         );
         let mappings: Vec<&_> = doc.mappings.iter().collect();
         let source_meta = doc.sources.get("s");
-        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             sql.contains("jsonb_agg"),
             "nested array delta should use jsonb_agg CTE"
@@ -1334,7 +1703,8 @@ mappings:
         );
         let mappings: Vec<&_> = doc.mappings.iter().collect();
         let source_meta = doc.sources.get("s");
-        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             sql.contains("UNION ALL"),
             "multi-target delta should produce UNION ALL of reverse views"
@@ -1372,7 +1742,8 @@ mappings:
         );
         let mappings: Vec<&_> = doc.mappings.iter().collect();
         let source_meta = doc.sources.get("s");
-        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         // _osi_text_norm should be applied in noop comparison for nested arrays
         let norm_count = sql.matches("_osi_text_norm").count();
         assert!(
@@ -1395,13 +1766,14 @@ mappings:
     source: s
     target: t
     written_state: true
-    written_noop: true
+    derive_noop: true
     fields: [{ source: name, target: name }]
 "#,
         );
         let mappings: Vec<&_> = doc.mappings.iter().collect();
         let source_meta = doc.sources.get("s");
-        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         // Should LEFT JOIN the _written table.
         assert!(
             sql.contains("LEFT JOIN \"_written_s\""),
@@ -1438,16 +1810,17 @@ mappings:
         );
         let mappings: Vec<&_> = doc.mappings.iter().collect();
         let source_meta = doc.sources.get("s");
-        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         // Should LEFT JOIN the _written table (still needed for delete detection).
         assert!(
             sql.contains("LEFT JOIN \"_written_s\""),
             "delta should LEFT JOIN _written table:\n{sql}"
         );
-        // Should NOT have _ws._written noop comparison — written_noop is off.
+        // Should NOT have _ws._written noop comparison — derive_noop is off.
         assert!(
             !sql.contains("_ws.\"_written\""),
-            "delta should NOT reference _ws._written without written_noop:\n{sql}"
+            "delta should NOT reference _ws._written without derive_noop:\n{sql}"
         );
     }
 
@@ -1466,7 +1839,7 @@ mappings:
     source: s
     target: t1
     written_state: true
-    written_noop: true
+    derive_noop: true
     fields: [{ source: name, target: name }]
   - name: s_t2
     source: s
@@ -1476,7 +1849,8 @@ mappings:
         );
         let mappings: Vec<&_> = doc.mappings.iter().collect();
         let source_meta = doc.sources.get("s");
-        let sql = render_delta_view("s", &mappings, source_meta).unwrap();
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         // Only s_t1 has written_state — its branch should have LEFT JOIN.
         assert!(
             sql.contains("LEFT JOIN \"_written_s_t1\""),

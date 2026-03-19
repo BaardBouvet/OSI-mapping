@@ -1,6 +1,6 @@
 # Element-level deletion for array targets
 
-**Status:** Design
+**Status:** Done (cross-source deletion-wins: source-removed elements filtered from `jsonb_agg` across all deltas — no new views)
 
 Array targets are grow-only today: the resolved view is the union of all
 source contributions. When a source removes an element from its array, nothing

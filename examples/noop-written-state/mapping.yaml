@@ -34,7 +34,7 @@ mappings:
     source: erp
     target: customer
     written_state: true
-    written_noop: true
+    derive_noop: true
     fields:
       - source: contact_email
         target: email

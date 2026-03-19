@@ -33,7 +33,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [POSITIONAL-ARRAY-PLAN.md](POSITIONAL-ARRAY-PLAN.md) | Superseded | Superseded by CRDT-ORDERING-PLAN — used position as identity, fragile for multi-source. |
 | [CRDT-ORDERING-PLAN.md](CRDT-ORDERING-PLAN.md) | Done | CRDT ordering for array elements: `order: true` + optional `order_prev`/`order_next` linked-list merge. |
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
-| [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Design | Element-level deletion for array targets — tombstone fields or ETL-layer snapshot diff. |
+| [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Done | Element-level deletion for array targets — `_element_delta_{child}` views via parent `written_state`. |
 | [HARD-DELETE-PROPAGATION-PLAN.md](HARD-DELETE-PROPAGATION-PLAN.md) | Design | Hard-delete propagation via ETL-layer provenance tracking — prevents re-insertion loops. |
 | [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Done (Phase 1) | ETL-maintained state as engine input — `written_state` table + `written_noop` opt-in for target-centric noop detection. |
 | [EVENTUAL-CONSISTENCY-PLAN.md](EVENTUAL-CONSISTENCY-PLAN.md) | Design | Write-read visibility delays: failure modes and ETL-layer mitigation strategies for eventually consistent sources. |
@@ -43,7 +43,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Maybe | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
 | [PROPTEST-PLAN.md](PROPTEST-PLAN.md) | Done | Property-based testing harness using `proptest` to fuzz the engine with random mapping documents. |
 | [ANALYTICS-PROVENANCE-PLAN.md](ANALYTICS-PROVENANCE-PLAN.md) | Planned | Provenance + contributions views — trace golden records back to source data. |
-| [PASSTHROUGH-PLAN.md](PASSTHROUGH-PLAN.md) | Planned | Carry unmapped source columns through to delta output for ETL context. |
+| [PASSTHROUGH-PLAN.md](PASSTHROUGH-PLAN.md) | Done | Carry unmapped source columns through to delta output for ETL context. |
 | [NULL-WINS-PLAN.md](NULL-WINS-PLAN.md) | Maybe | `null_wins` expression on field mappings — may not implement; sentinel pattern works today. |
 | [OUTPUT-CONTRACT-PLAN.md](OUTPUT-CONTRACT-PLAN.md) | Maybe | Tracks hardcoded consumer-facing output columns (`_cluster_id`, `_action`, `_src_id`); configurable aliases via `output.columns`. |
 | [NATURAL-KEYS-PLAN.md](NATURAL-KEYS-PLAN.md) | Done | Natural keys (email, business codes, composite PKs) work correctly today — no engine changes needed. |

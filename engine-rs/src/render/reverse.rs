@@ -308,6 +308,11 @@ pub fn render_reverse_view(
     // _base: pass through from identity view (built in forward view).
     select_exprs.push("id._base".to_string());
 
+    // Extract passthrough columns from _base JSONB.
+    for col in &mapping.passthrough {
+        select_exprs.push(format!("id._base->>'{col}' AS {}", qi(col)));
+    }
+
     // Include target fields referenced by reverse_filter that aren't already projected.
     if let Some(ref rf) = mapping.reverse_filter {
         if let Some(tgt) = target {

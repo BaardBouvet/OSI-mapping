@@ -295,8 +295,13 @@ pub fn render_sql(
                     sql.push_str(&format!("-- Delta for source: {source_name}\n"));
                 }
                 let source_meta = doc.sources.get(source_name.as_str());
-                let mut view_sql =
-                    delta::render_delta_view(source_name, &source_mappings, source_meta)?;
+                let mut view_sql = delta::render_delta_view(
+                    source_name,
+                    &source_mappings,
+                    source_meta,
+                    &doc.targets,
+                    &doc.mappings,
+                )?;
                 if materialize {
                     view_sql = materialize_view_sql(&view_sql);
                     let vn = node.view_name();
@@ -460,6 +465,13 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         if let Some(ref cf) = mapping.cluster_field {
             if !columns.contains(cf) {
                 columns.push(cf.clone());
+            }
+        }
+
+        // passthrough columns
+        for col in &mapping.passthrough {
+            if !columns.contains(col) {
+                columns.push(col.clone());
             }
         }
     }

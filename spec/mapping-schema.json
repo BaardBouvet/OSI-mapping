@@ -239,6 +239,11 @@
         "written_noop": {
           "type": "boolean",
           "description": "When true (requires written_state), adds a target-centric noop branch: compares resolved values against the last-written JSONB instead of only against _base. Appropriate when the ETL is the sole writer to the target."
+        },
+        "passthrough": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Source columns to carry through to delta output without mapping to a target field. Included in _base and reverse/delta views but excluded from noop detection and resolution."
         }
       },
       "anyOf": [
