@@ -36,6 +36,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Design | Element-level deletion for array targets — tombstone fields or ETL-layer snapshot diff. |
 | [HARD-DELETE-PROPAGATION-PLAN.md](HARD-DELETE-PROPAGATION-PLAN.md) | Design | Hard-delete propagation via ETL-layer provenance tracking — prevents re-insertion loops. |
 | [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Done (Phase 1) | ETL-maintained state as engine input — `written_state` table + `written_noop` opt-in for target-centric noop detection. |
+| [EVENTUAL-CONSISTENCY-PLAN.md](EVENTUAL-CONSISTENCY-PLAN.md) | Design | Write-read visibility delays: failure modes and ETL-layer mitigation strategies for eventually consistent sources. |
 | [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Done | `normalize` property on field mappings for lossy noop comparison and echo-aware `last_modified` resolution. |
 | [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
 | [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Done | Validate expressions as safe SQL snippets; cross-target `lookup:` superseded by COMPUTED-FIELDS-PLAN. |
