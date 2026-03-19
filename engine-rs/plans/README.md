@@ -61,5 +61,5 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [CODE-QUALITY-PLAN.md](CODE-QUALITY-PLAN.md) | Done | Enforce rustfmt, clippy, cargo-deny; one-time codebase cleanup. |
 | [PGTRICKLE-OUTPUT-PLAN.md](PGTRICKLE-OUTPUT-PLAN.md) | Design | External post-processor that rewrites engine views as pg_trickle stream tables; per-view config. |
 | [YAML-VS-DSL-PLAN.md](YAML-VS-DSL-PLAN.md) | Design | Analysis of YAML vs custom DSL for the mapping format; recommends staying with YAML. |
-| [DERIVED-TIMESTAMPS-PLAN.md](DERIVED-TIMESTAMPS-PLAN.md) | Design | Derive `_last_modified` from `_written_at` column for sources without intrinsic timestamps. |
+| [DERIVED-TIMESTAMPS-PLAN.md](DERIVED-TIMESTAMPS-PLAN.md) | Done | Derive per-field `_ts_{field}` from `_written` JSONB comparison + `_written_at` + `_written_ts`. |
 | [TIME-RANGE-RESOLUTION-PLAN.md](TIME-RANGE-RESOLUTION-PLAN.md) | Design | Support `last_modified` as a time range (min/max) instead of a single point; range resolution strategies. |

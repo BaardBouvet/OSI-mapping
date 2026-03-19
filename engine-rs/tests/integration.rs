@@ -1667,10 +1667,12 @@ async fn ensure_written_state_tables(
             client
                 .execute(
                     &format!(
-                        "CREATE TABLE {} ({} TEXT PRIMARY KEY, {} JSONB NOT NULL, _written_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+                        "CREATE TABLE {} ({} TEXT PRIMARY KEY, {} JSONB NOT NULL, {} TIMESTAMPTZ NOT NULL DEFAULT now(), {} JSONB NOT NULL DEFAULT '{{}}'::jsonb)",
                         qi(&table),
                         qi(&ws.cluster_id),
                         qi(&ws.written),
+                        qi(&ws.written_at),
+                        qi(&ws.written_ts),
                     ),
                     &[],
                 )
@@ -1704,27 +1706,63 @@ async fn populate_written_state_tables(
                             .get(&ws.cluster_id)
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
-                        // Resolve seed like "crm:1" to actual entity hash.
-                        let cluster_id =
-                            resolve_cluster_id(client, raw_cluster_id, mapping.target.name()).await;
+                        // When derive_timestamps is active, the written table is
+                        // joined in the forward view on the cluster_field value —
+                        // use the raw seed directly.  Otherwise resolve the seed
+                        // via the identity view (e.g. "crm:1" → entity hash).
+                        let cluster_id = if mapping.derive_timestamps
+                            && mapping.cluster_field.is_some()
+                        {
+                            raw_cluster_id.to_string()
+                        } else {
+                            resolve_cluster_id(client, raw_cluster_id, mapping.target.name()).await
+                        };
                         let written_str = obj
                             .get(&ws.written)
                             .and_then(|v| v.as_str())
                             .unwrap_or("{}");
                         let written_json: serde_json::Value =
                             serde_json::from_str(written_str).unwrap_or(serde_json::json!({}));
-                        client
-                            .execute(
-                                &format!(
-                                    "INSERT INTO {} ({}, {}) VALUES ($1, $2)",
-                                    qi(&table),
-                                    qi(&ws.cluster_id),
-                                    qi(&ws.written),
-                                ),
-                                &[&cluster_id, &written_json],
-                            )
-                            .await
-                            .unwrap();
+
+                        // Optional _written_at timestamp.
+                        let written_at_str = obj.get(&ws.written_at).and_then(|v| v.as_str());
+                        // Optional _written_ts per-field timestamps.
+                        let written_ts_str = obj.get(&ws.written_ts).and_then(|v| v.as_str());
+                        let written_ts_json: serde_json::Value = written_ts_str
+                            .map(|s| serde_json::from_str(s).unwrap_or(serde_json::json!({})))
+                            .unwrap_or(serde_json::json!({}));
+
+                        if let Some(at_str) = written_at_str {
+                            client
+                                .execute(
+                                    &format!(
+                                        "INSERT INTO {} ({}, {}, {}, {}) VALUES ($1, $2, '{}'::timestamptz, $3)",
+                                        qi(&table),
+                                        qi(&ws.cluster_id),
+                                        qi(&ws.written),
+                                        qi(&ws.written_at),
+                                        qi(&ws.written_ts),
+                                        at_str.replace('\'', "''"),
+                                    ),
+                                    &[&cluster_id, &written_json, &written_ts_json],
+                                )
+                                .await
+                                .unwrap();
+                        } else {
+                            client
+                                .execute(
+                                    &format!(
+                                        "INSERT INTO {} ({}, {}, {}) VALUES ($1, $2, $3)",
+                                        qi(&table),
+                                        qi(&ws.cluster_id),
+                                        qi(&ws.written),
+                                        qi(&ws.written_ts),
+                                    ),
+                                    &[&cluster_id, &written_json, &written_ts_json],
+                                )
+                                .await
+                                .unwrap();
+                        }
                     }
                 }
             }

@@ -300,6 +300,13 @@ pub struct Mapping {
     /// tombstones when sources contribute different elements.
     #[serde(default)]
     pub derive_tombstones: bool,
+    /// When true and `written_state` is declared, the forward view derives
+    /// per-field `_ts_{field}` timestamps by comparing current source values
+    /// against `_written` JSONB. Fields that changed get `_written_at`;
+    /// unchanged fields carry forward their timestamp from `_written_ts`.
+    /// On bootstrap (no `_written_ts` entry), timestamps are NULL.
+    #[serde(default)]
+    pub derive_timestamps: bool,
     /// Source columns to carry through to delta output without mapping to a
     /// target field. Included in `_base` and reverse/delta but excluded from
     /// noop detection and resolution.
@@ -470,6 +477,10 @@ pub struct WrittenState {
     pub cluster_id: String,
     /// Written-state JSONB column. Default: `_written`.
     pub written: String,
+    /// Row-level write timestamp column. Default: `_written_at`.
+    pub written_at: String,
+    /// Per-field timestamps JSONB column. Default: `_written_ts`.
+    pub written_ts: String,
 }
 
 /// Raw deserialization target for `written_state: true | { ... }`.
@@ -484,11 +495,23 @@ enum WrittenStateRaw {
         cluster_id: String,
         #[serde(default = "default_written")]
         written: String,
+        #[serde(default = "default_written_at")]
+        written_at: String,
+        #[serde(default = "default_written_ts")]
+        written_ts: String,
     },
 }
 
 fn default_written() -> String {
     "_written".to_string()
+}
+
+fn default_written_at() -> String {
+    "_written_at".to_string()
+}
+
+fn default_written_ts() -> String {
+    "_written_ts".to_string()
 }
 
 impl From<WrittenStateRaw> for WrittenState {
@@ -498,20 +521,28 @@ impl From<WrittenStateRaw> for WrittenState {
                 table: None,
                 cluster_id: "_cluster_id".to_string(),
                 written: "_written".to_string(),
+                written_at: "_written_at".to_string(),
+                written_ts: "_written_ts".to_string(),
             },
             WrittenStateRaw::Bool(false) => WrittenState {
                 table: None,
                 cluster_id: "_cluster_id".to_string(),
                 written: "_written".to_string(),
+                written_at: "_written_at".to_string(),
+                written_ts: "_written_ts".to_string(),
             },
             WrittenStateRaw::Full {
                 table,
                 cluster_id,
                 written,
+                written_at,
+                written_ts,
             } => WrittenState {
                 table,
                 cluster_id,
                 written,
+                written_at,
+                written_ts,
             },
         }
     }

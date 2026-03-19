@@ -1,0 +1,93 @@
+version: "1.0"
+description: >
+  Derive per-field timestamps from written state.
+  The csv_import source has no last_modified column but declares
+  derive_timestamps: true.  The engine compares current field values
+  against _written JSONB, detects which fields changed, and stamps
+  changed fields with _written_at.  Unchanged fields carry forward
+  their timestamp from _written_ts.
+
+sources:
+  crm:
+    primary_key: id
+  csv_import:
+    primary_key: id
+
+targets:
+  customer:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: last_modified
+      phone:
+        strategy: last_modified
+
+mappings:
+  - name: crm
+    source: crm
+    target: customer
+    cluster_field: cluster_id
+    last_modified: updated_at
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+        last_modified: updated_at
+      - source: phone
+        target: phone
+        last_modified: updated_at
+
+  - name: csv_import
+    source: csv_import
+    target: customer
+    cluster_field: cluster_id
+    written_state: true
+    derive_timestamps: true
+    fields:
+      - source: contact_email
+        target: email
+      - source: contact_name
+        target: name
+      - source: contact_phone
+        target: phone
+
+tests:
+  - description: >
+      CSV import's name changed since last write — its derived timestamp
+      (2024-01-20) beats CRM's older timestamp (2024-01-15).  Phone did
+      not change — carried-forward timestamp (2024-01-10) loses to CRM's
+      (2024-01-15).  Result: name from csv_import, phone from crm.
+    input:
+      crm:
+        - { id: "1", cluster_id: "cust-1", email: "alice@example.com", name: "Alice CRM", phone: "111", updated_at: "2024-01-15" }
+      csv_import:
+        - { id: "100", cluster_id: "cust-1", contact_email: "alice@example.com", contact_name: "Alice CSV", contact_phone: "222" }
+      _written_csv_import:
+        - _cluster_id: "cust-1"
+          _written: '{"contact_email": "alice@example.com", "contact_name": "Old Name", "contact_phone": "222"}'
+          _written_at: "2024-01-20T00:00:00Z"
+          _written_ts: '{"contact_email": "2024-01-08T00:00:00Z", "contact_name": "2024-01-05T00:00:00Z", "contact_phone": "2024-01-10T00:00:00Z"}'
+    expected:
+      crm:
+        updates:
+          - { id: "1", email: "alice@example.com", name: "Alice CSV", phone: "111" }
+      csv_import:
+        updates:
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice CSV", contact_phone: "111" }
+
+  - description: >
+      Bootstrap — no written state exists yet.  Derived timestamps are
+      NULL so resolution falls back to CRM's explicit timestamps.
+      CRM wins both fields.
+    input:
+      crm:
+        - { id: "1", cluster_id: "cust-1", email: "alice@example.com", name: "Alice CRM", phone: "111", updated_at: "2024-01-15" }
+      csv_import:
+        - { id: "100", cluster_id: "cust-1", contact_email: "alice@example.com", contact_name: "Alice CSV", contact_phone: "222" }
+    expected:
+      crm: {}
+      csv_import:
+        updates:
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice CRM", contact_phone: "111" }

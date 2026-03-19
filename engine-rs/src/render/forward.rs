@@ -248,23 +248,18 @@ pub fn render_forward_body(
     cols.push(format!("'{}'::text AS _mapping", mapping.name));
 
     // Cluster identity — always emitted for UNION ALL compatibility.
-    if let Some(ref cf) = mapping.cluster_field {
-        // cluster_field: use the source column directly, fallback to md5 singleton.
+    let cluster_id_expr = if let Some(ref cf) = mapping.cluster_field {
         let qcf = qi(cf);
         let fallback = format!("md5('{}' || ':' || {})", mapping.name, src_id_expr);
-        cols.push(format!("COALESCE({qcf}, {fallback}) AS _cluster_id"));
+        format!("COALESCE({qcf}, {fallback})")
     } else if let Some(ref cm) = mapping.cluster_members {
-        // cluster_members: LEFT JOIN happens in FROM clause (handled below).
-        // _cluster_id comes from the join, fallback to md5 singleton.
         let qcm_cluster = qi(&cm.cluster_id);
         let fallback = format!("md5('{}' || ':' || {})", mapping.name, src_id_expr);
-        cols.push(format!(
-            "COALESCE(_cm.{qcm_cluster}, {fallback}) AS _cluster_id"
-        ));
+        format!("COALESCE(_cm.{qcm_cluster}, {fallback})")
     } else {
-        // No cluster config: emit NULL placeholder for UNION ALL compatibility.
-        cols.push("NULL::text AS _cluster_id".to_string());
-    }
+        "NULL::text".to_string()
+    };
+    cols.push(format!("{cluster_id_expr} AS _cluster_id"));
 
     // Mapping-level priority (always present, NULL when unset)
     cols.push(match mapping.priority {
@@ -356,17 +351,65 @@ pub fn render_forward_body(
                 });
 
                 // Per-field timestamp (always present, NULL when unset)
-                cols.push(match &fm.last_modified {
-                    Some(ts) => {
-                        if let Some(field) = ts.field_name() {
-                            format!("{} AS {}", qi(field), qi(&format!("_ts_{fname}")))
-                        } else if let Some(expr) = ts.expression() {
-                            format!("({expr}) AS {}", qi(&format!("_ts_{fname}")))
-                        } else {
-                            format!("NULL::text AS {}", qi(&format!("_ts_{fname}")))
-                        }
+                // When derive_timestamps is active and no explicit last_modified,
+                // generate CASE that compares against written JSONB.
+                let derive_ts = mapping.derive_timestamps
+                    && mapping.written_state.is_some()
+                    && fm.last_modified.is_none();
+                let source_col_for_ts = if derive_ts {
+                    fm.source.as_deref().or(fm.source_path.as_deref())
+                } else {
+                    None
+                };
+
+                cols.push(if let Some(ts) = &fm.last_modified {
+                    if let Some(field) = ts.field_name() {
+                        format!("{} AS {}", qi(field), qi(&format!("_ts_{fname}")))
+                    } else if let Some(expr) = ts.expression() {
+                        format!("({expr}) AS {}", qi(&format!("_ts_{fname}")))
+                    } else {
+                        format!("NULL::text AS {}", qi(&format!("_ts_{fname}")))
                     }
-                    None => format!("NULL::text AS {}", qi(&format!("_ts_{fname}"))),
+                } else if let Some(src_col) = source_col_for_ts {
+                    let ws = mapping.written_state.as_ref().unwrap();
+                    let wcol = qi(&ws.written);
+                    let wat = qi(&ws.written_at);
+                    let wts = qi(&ws.written_ts);
+                    let src_esc = sql_escape(src_col);
+                    // Build the mapping-level timestamp expression (if any).
+                    // Used as the primary timestamp for changed fields, with
+                    // _written_at as fallback.
+                    let mapping_ts = mapping.last_modified.as_ref().and_then(|ts| {
+                        if let Some(f) = ts.field_name() {
+                            Some(qi(f))
+                        } else {
+                            ts.expression().map(|e| format!("({e})"))
+                        }
+                    });
+                    let changed_expr = match &mapping_ts {
+                        Some(ts) => format!("COALESCE({ts}, _ws.{wat}::text)"),
+                        None => format!("_ws.{wat}::text"),
+                    };
+                    let bootstrap_expr = match &mapping_ts {
+                        Some(ts) => ts.clone(),
+                        None => "NULL::text".to_string(),
+                    };
+                    // Unchanged fields carry forward their per-field timestamp
+                    // from _written_ts.  Changed fields use the source's own
+                    // timestamp (if available), falling back to _written_at.
+                    // Bootstrap (no _written_ts entry) → source timestamp or NULL.
+                    format!(
+                        "CASE \
+                         WHEN {expr}::text IS NOT DISTINCT FROM _ws.{wcol}->>'{src_esc}' \
+                         THEN _ws.{wts}->>'{src_esc}' \
+                         WHEN _ws.{wts}->>'{src_esc}' IS NOT NULL \
+                         THEN {changed_expr} \
+                         ELSE {bootstrap_expr} \
+                         END AS {}",
+                        qi(&format!("_ts_{fname}"))
+                    )
+                } else {
+                    format!("NULL::text AS {}", qi(&format!("_ts_{fname}")))
                 });
 
                 // Echo-aware normalize columns (Phase 2 precision-loss).
@@ -496,6 +539,17 @@ pub fn render_forward_body(
         sql.push_str(&format!(
             "\nLEFT JOIN {qcm_table} AS _cm ON _cm.{qcm_src_key} = {src_id_expr}"
         ));
+    }
+
+    // LEFT JOIN written state table for derive_timestamps.
+    if mapping.derive_timestamps {
+        if let Some(ref ws) = mapping.written_state {
+            let ws_table = qi(&ws.table_name(&mapping.name));
+            let ws_cluster = qi(&ws.cluster_id);
+            sql.push_str(&format!(
+                "\nLEFT JOIN {ws_table} AS _ws ON _ws.{ws_cluster} = {cluster_id_expr}"
+            ));
+        }
     }
 
     // Nested arrays via LATERAL jsonb_array_elements

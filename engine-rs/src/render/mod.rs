@@ -375,11 +375,14 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
                      CREATE TABLE IF NOT EXISTS {} (\n  \
                                              {} TEXT PRIMARY KEY,\n  \
                                              {} JSONB NOT NULL,\n  \
-                                             _written_at TIMESTAMPTZ NOT NULL DEFAULT now()\n\
+                                             {} TIMESTAMPTZ NOT NULL DEFAULT now(),\n  \
+                                             {} JSONB NOT NULL DEFAULT '{{}}'::jsonb\n\
                      );\n",
                     qi(table_name),
                     qi(&ws.cluster_id),
-                    qi(&ws.written)
+                    qi(&ws.written),
+                    qi(&ws.written_at),
+                    qi(&ws.written_ts),
                 );
             }
         }
