@@ -10,6 +10,7 @@
 # Reference
 
 - [Schema reference](reference/schema-reference.md)
+- [Examples catalog](reference/examples-catalog.md)
 
 # Design
 
