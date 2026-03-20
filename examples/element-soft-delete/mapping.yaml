@@ -1,15 +1,12 @@
 version: "1.0"
 description: >
-  Element-level soft-delete for value lists.  Two CRM systems track
-  contact tags as JSONB object arrays.  Each tag carries an optional
-  removed_at timestamp that signals soft-deletion.  The child mappings
-  declare a tombstone on removed_at so the engine automatically filters
-  out soft-deleted elements from the reconstructed array — there is no
-  need to model removed_at in the target.
-
-  This is the recommended pattern for soft-deleting individual elements
-  in value lists: promote scalar values to objects carrying lifecycle
-  metadata and use tombstone to suppress deleted elements.
+  Cross-source element-level soft-delete for value lists.  Two CRM
+  systems track contact tags as JSONB object arrays.  Each tag carries
+  an optional removed_at timestamp.  The child mappings declare
+  tombstone on removed_at, and the engine feeds tombstoned elements
+  into the same DeletionFilter pipeline as derive_tombstones —
+  excluding them from ALL sources' reconstructed arrays with
+  deletion-wins semantics.  No removed_at in the target schema.
 
 sources:
   crm_a:
@@ -100,11 +97,10 @@ mappings:
 tests:
   - description: >
       CRM A soft-deletes the "churned" tag by setting removed_at.
-      CRM B still has the tag without the marker.  The tombstone on
-      the child mapping filters the soft-deleted element from CRM A's
-      own reconstructed array.  CRM A's delta shows the tags without
-      "churned".  CRM B sees no change — consistent with entity-level
-      tombstone semantics (per-source suppression, not global deletion).
+      CRM B still has the tag without the marker.  The cross-source
+      tombstone CTE detects the tombstoned element via the identity
+      view and excludes "churned" from BOTH sources' reconstructed
+      arrays — same deletion-wins semantics as derive_tombstones.
     input:
       crm_a:
         - id: "A1"
@@ -124,6 +120,13 @@ tests:
       crm_a:
         updates:
           - id: "A1"
+            email: "alice@example.com"
+            name: "Alice"
+            tags:
+              - { tag: "vip" }
+      crm_b:
+        updates:
+          - id: "B1"
             email: "alice@example.com"
             name: "Alice"
             tags:

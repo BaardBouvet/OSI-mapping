@@ -1460,19 +1460,6 @@ fn build_nested_ctes(
          n.{q_order_field}"
     );
 
-    // Element-level soft-delete: when the child mapping has a tombstone,
-    // exclude soft-deleted elements from the reconstructed array.
-    // The tombstone field is available on the reverse view via passthrough.
-    let tombstone_where = if let Some(ref ts) = node.mapping.tombstone {
-        if !node.mapping.resurrect {
-            format!(" AND NOT (n.{})", ts.detection_expr())
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
-
     if child_results.is_empty() {
         // Leaf node: simple aggregation.
         // When a deletion filter exists for this segment, LEFT JOIN the
@@ -1504,7 +1491,7 @@ fn build_nested_ctes(
                SELECT n.{qgroup} AS _parent_key, \
              COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_leaf}), '[]'::jsonb) AS {qsegment}\n\
                FROM {rev_view} AS n{del_join}\n\
-               WHERE n.{qgroup} IS NOT NULL{del_where}{tombstone_where}\n\
+               WHERE n.{qgroup} IS NOT NULL{del_where}\n\
                GROUP BY n.{qgroup}\n\
              )",
         ));
@@ -1533,7 +1520,7 @@ fn build_nested_ctes(
              COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_nested}), '[]'::jsonb) AS {qsegment}\n\
              FROM {rev_view} AS n\n\
              {joins}\n\
-             WHERE n.{qgroup} IS NOT NULL{tombstone_where}\n\
+             WHERE n.{qgroup} IS NOT NULL\n\
              GROUP BY n.{qgroup}\n\
              )",
             joins = joins.join("\n"),
@@ -1803,6 +1790,101 @@ fn render_delta_with_nested(
             ));
 
             per_source_del_aliases.push(del_src_alias);
+            source_idx += 1;
+        }
+
+        // ── Explicit element-level tombstones ──────────────────────
+        // When ANY child mapping targeting the same (child_target, segment)
+        // declares a tombstone with resurrect: false, scan its reverse view
+        // for tombstoned elements and add them to the deletion set.
+        // This reuses the same DeletionFilter mechanism as derive_tombstones,
+        // making explicit tombstones propagate cross-source.
+        for foreign_child in all_mappings.iter() {
+            // Must be a child mapping targeting the same target + segment.
+            if foreign_child.parent.is_none() && foreign_child.source.path.is_none() {
+                continue;
+            }
+            if foreign_child.target.name() != child_target_name {
+                continue;
+            }
+            if foreign_child
+                .effective_array()
+                .map(|a| a.split('.').next_back().unwrap_or(a))
+                != Some(segment.as_str())
+            {
+                continue;
+            }
+            // Must have an explicit tombstone with resurrect: false.
+            let Some(ref ts) = foreign_child.tombstone else {
+                continue;
+            };
+            if foreign_child.resurrect {
+                continue;
+            }
+            // Skip if using custom detect: expression (can't reliably
+            // evaluate cross-source via _base).
+            if ts.detect.is_some() {
+                continue;
+            }
+
+            // Map identity fields: foreign child's source names → current
+            // source's source names (via shared target field names).
+            let field_mapping: Vec<(String, String)> = identity_target_fields
+                .iter()
+                .filter_map(|&tgt_name| {
+                    let foreign_src = foreign_child
+                        .fields
+                        .iter()
+                        .find(|fm| {
+                            fm.target.as_deref() == Some(tgt_name) && fm.references.is_none()
+                        })
+                        .and_then(|fm| fm.source_name())
+                        .map(|s| s.to_string())?;
+                    let current_src = node
+                        .mapping
+                        .fields
+                        .iter()
+                        .find(|fm| {
+                            fm.target.as_deref() == Some(tgt_name) && fm.references.is_none()
+                        })
+                        .and_then(|fm| fm.source_name())
+                        .map(|s| s.to_string())?;
+                    Some((foreign_src, current_src))
+                })
+                .collect();
+
+            if field_mapping.is_empty() {
+                continue;
+            }
+
+            let rev_child = qi(&format!("_rev_{}", foreign_child.name));
+            let foreign_group_col = foreign_child
+                .source
+                .parent_fields
+                .keys()
+                .next()
+                .map(|s| s.as_str())
+                .unwrap_or("_src_id");
+
+            let del_ts_alias = format!("_del_ts_{segment}_{source_idx}");
+            let id_cols: Vec<String> = field_mapping
+                .iter()
+                .map(|(foreign_src, current_src)| {
+                    format!("n.{}::text AS {}", qi(foreign_src), qi(current_src))
+                })
+                .collect();
+            all_ctes.push(format!(
+                "{del_ts_alias} AS (\n\
+                   SELECT n.{}::text AS _parent_key, {id_cols}\n\
+                   FROM {rev_child} AS n\n\
+                   WHERE n.{}\n\
+                 )",
+                qi(foreign_group_col),
+                ts.detection_expr(),
+                id_cols = id_cols.join(", "),
+            ));
+
+            per_source_del_aliases.push(del_ts_alias);
             source_idx += 1;
         }
 

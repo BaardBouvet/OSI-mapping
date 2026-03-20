@@ -71,3 +71,4 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [HUMAN-CONFIRMATION-PLAN.md](HUMAN-CONFIRMATION-PLAN.md) | Design | Human-in-the-loop approval for reverse ETL — confirmation gates per system, action, field, and pattern. |
 | [COMBINED-ETL-REVERSE-ETL-ANALYSIS.md](COMBINED-ETL-REVERSE-ETL-ANALYSIS.md) | Design | Which stateful features belong in engine vs combined ETL runtime; recommends `derive_tombstones` and hard-delete propagation as experimental. |
 | [SCALAR-ARRAY-DELETION-PLAN.md](SCALAR-ARRAY-DELETION-PLAN.md) | Proposed | Detect element-level deletions in pure scalar arrays without source schema changes; extends `derive_tombstones` with soft/hard/signal modes. |
+| [ELEMENT-SOFT-DELETE-PLAN.md](ELEMENT-SOFT-DELETE-PLAN.md) | Done | Cross-source element-level soft-delete via tombstone on child mappings — reuses `DeletionFilter` pipeline to exclude tombstoned elements from all sources' arrays. |
