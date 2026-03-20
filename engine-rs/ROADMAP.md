@@ -57,11 +57,13 @@ without changing the schema surface locked in Phase 1.
 | PASSTHROUGH-PLAN | ~~Planned~~ **Done** | `passthrough:` list on mappings to carry unmapped columns to delta output. |
 | ELEMENT-DELETION-PLAN | ~~Design~~ **Done** | Cross-source deletion-wins: when any source removes a nested array element (detected via `written_state`), the removal propagates to all deltas — no new views. |
 | HARD-DELETE-PROPAGATION-PLAN | Planned | Stateful hard-delete detection to prevent re-insertion loops when source rows disappear. |
+| SOFT-DELETE-REFACTOR-PLAN | Proposed | Rename `tombstone:` → `soft_delete:` with strategy-based API. Fixes resolution bug where soft-deleted rows win field priority. Schema-breaking rename — must land before 0.1. |
 
 **Exit criteria:** New examples for each feature. Noop suppression correct for
 normalized fields. Ordered arrays round-trip through reverse views.
 Nested array changes detected via written_noop on parent delta.
 Hard-delete propagation prevents re-insertion of intentionally removed records.
+Soft-delete refactor lands: `tombstone:` removed, `soft_delete:` with `timestamp`/`flag`/`active_flag` strategies, soft-deleted rows excluded from field resolution.
 
 ## Phase 3 — Richer types and output
 
@@ -70,10 +72,8 @@ Larger features that expand the type system and analytics layer.
 | Plan | Status | Work |
 |------|--------|------|
 | ANALYTICS-PROVENANCE-PLAN | Planned | `_provenance_` and `_contributions_` views for source-tracing and stewardship. |
-| COMPUTED-FIELDS-PLAN | Design | Cross-target aggregation (`from:` + `match:`) via post-resolution `_enriched_` layer. Schema change — must land before 0.1. |
 
 **Exit criteria:** `_provenance_` and `_contributions_` views render correctly and are covered by an example.
-Cross-target aggregated fields render in enriched layer, flow through reverse views, and are covered by the missing-bottom example.
 
 ## Phase 4 — Quality, docs, and 0.1 release
 

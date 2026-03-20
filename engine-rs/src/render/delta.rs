@@ -1460,6 +1460,19 @@ fn build_nested_ctes(
          n.{q_order_field}"
     );
 
+    // Element-level soft-delete: when the child mapping has a tombstone,
+    // exclude soft-deleted elements from the reconstructed array.
+    // The tombstone field is available on the reverse view via passthrough.
+    let tombstone_where = if let Some(ref ts) = node.mapping.tombstone {
+        if !node.mapping.resurrect {
+            format!(" AND NOT (n.{})", ts.detection_expr())
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     if child_results.is_empty() {
         // Leaf node: simple aggregation.
         // When a deletion filter exists for this segment, LEFT JOIN the
@@ -1485,12 +1498,13 @@ fn build_nested_ctes(
         } else {
             (String::new(), String::new())
         };
+
         all_ctes.push(format!(
             "{alias} AS (\n\
                SELECT n.{qgroup} AS _parent_key, \
              COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_leaf}), '[]'::jsonb) AS {qsegment}\n\
                FROM {rev_view} AS n{del_join}\n\
-               WHERE n.{qgroup} IS NOT NULL{del_where}\n\
+               WHERE n.{qgroup} IS NOT NULL{del_where}{tombstone_where}\n\
                GROUP BY n.{qgroup}\n\
              )",
         ));
@@ -1519,7 +1533,7 @@ fn build_nested_ctes(
              COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_nested}), '[]'::jsonb) AS {qsegment}\n\
              FROM {rev_view} AS n\n\
              {joins}\n\
-             WHERE n.{qgroup} IS NOT NULL\n\
+             WHERE n.{qgroup} IS NOT NULL{tombstone_where}\n\
              GROUP BY n.{qgroup}\n\
              )",
             joins = joins.join("\n"),

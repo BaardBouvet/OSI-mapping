@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer};
 
-use crate::qi;
+use crate::{qi, sql_escape};
 
 /// Top-level mapping document.
 #[derive(Debug, Deserialize)]
@@ -496,13 +496,23 @@ pub struct Tombstone {
 impl Tombstone {
     /// SQL boolean expression: true when the entity is soft-deleted.
     pub fn detection_expr(&self) -> String {
+        self.detection_expr_with_base(None)
+    }
+
+    /// Like [`detection_expr`] but resolves the tombstone field through an
+    /// optional JSONB base expression (e.g. `"item.value"` for child mappings
+    /// that extract from JSONB arrays).
+    pub fn detection_expr_with_base(&self, base: Option<&str>) -> String {
         if let Some(ref expr) = self.detect {
             return expr.clone();
         }
-        let field = qi(&self.field);
+        let field_ref = match base {
+            Some(b) => format!("({b}->>'{}')", sql_escape(&self.field)),
+            None => qi(&self.field),
+        };
         match &self.undelete_value {
-            Some(TombstoneDefault::Null) | None => format!("{field} IS NOT NULL"),
-            Some(other) => format!("{field} IS DISTINCT FROM {}", other.to_sql()),
+            Some(TombstoneDefault::Null) | None => format!("{field_ref} IS NOT NULL"),
+            Some(other) => format!("{field_ref} IS DISTINCT FROM {}", other.to_sql()),
         }
     }
 

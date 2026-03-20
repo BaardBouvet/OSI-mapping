@@ -1,6 +1,6 @@
 # Element-level soft-delete for value lists
 
-Soft-delete individual elements in a value list by promoting scalars to objects with lifecycle metadata.
+Soft-delete individual elements in a value list using tombstone detection on child mappings.
 
 ## Scenario
 
@@ -8,21 +8,19 @@ Two CRM systems track contact tags. Instead of storing tags as bare scalars
 (`["vip", "churned"]`), each tag is an object carrying its value and an
 optional `removed_at` timestamp (`[{tag: "vip"}, {tag: "churned", removed_at: "2026-01-15"}]`).
 
-When one CRM soft-deletes a tag by setting `removed_at`, the timestamp
-propagates to the other CRM through normal field resolution. Unlike
-[`derive_tombstones`](../derive-tombstones/) (which silently excludes deleted
-elements), this pattern **preserves** deleted elements in the array with
-explicit metadata — consumers decide how to handle them.
+When one CRM soft-deletes a tag by setting `removed_at`, the child mapping's
+`tombstone` declaration causes the engine to exclude that element from the
+source's reconstructed array — without needing `removed_at` as a target field.
 
 The two sources have different primary keys (`"A1"` vs `"B1"`) but share
 an email address used for identity resolution.
 
 ## Key features
 
-- **Object array elements with `removed_at`** — each tag is `{tag, removed_at}` instead
-  of a bare scalar, enabling per-element soft-delete without losing the element
-- **`strategy: coalesce` on `removed_at`** — first non-null value wins regardless of
-  source, making removal sticky once any source marks it
+- **Tombstone on child mapping** — `tombstone: { field: removed_at, undelete_value: null }`
+  tells the engine to treat array elements with non-null `removed_at` as soft-deleted
+- **No `removed_at` in the target** — the tombstone field is carried via passthrough
+  and used only for filtering, keeping the target schema clean
 - **`link_group: tag_id`** — composite identity (`contact_ref` + `tag`) links the
   same tag across sources
 - **`parent_fields: {parent_email: email}`** — child elements reference the parent
@@ -34,40 +32,44 @@ an email address used for identity resolution.
    via nested child mappings (`parent:` + `array: tags`).
 2. Identity resolution links tag entries by `(contact_ref, tag)` using
    `link_group`.
-3. The `removed_at` field resolves via `coalesce` — any non-null value wins.
-   When CRM A sets `removed_at: "2026-01-15"` on a tag, the resolved value
-   becomes non-null even though CRM B's contribution is null.
-4. CRM B's delta reconstructs the `tags` array from the resolved child
-   entities, now including CRM A's `removed_at` timestamp on the soft-deleted
-   tag.
-5. The ETL writes the updated array (with removal metadata) back to CRM B.
+3. The `tombstone` on each child mapping detects soft-deleted elements:
+   elements where `removed_at IS NOT NULL` are excluded from that source's
+   reconstructed array in the nested CTE.
+4. CRM A sets `removed_at` on "churned" → CRM A's delta tags become
+   `[{tag: "vip"}]` (churned excluded). CRM B has no `removed_at` on
+   "churned" → CRM B's delta tags remain `[{tag: "vip"}, {tag: "churned"}]`
+   (no change).
+
+## Tombstone semantics
+
+The tombstone on child mappings follows the same per-source semantics as
+entity-level tombstones:
+
+- **Same source**: elements marked as tombstoned are excluded from that
+  source's reconstructed array
+- **Other sources**: unaffected — if they have the same element without
+  the tombstone marker, it remains in their array
+
+This is consistent with entity-level `tombstone` behaviour: the soft-delete
+suppresses the tombstoning source's contribution without propagating a global
+deletion.
 
 ## When to use
 
 Use this pattern when:
 
-- Value lists need **per-element lifecycle tracking** (soft-delete, archival)
-- Consumers should **see** which elements are removed rather than having them
-  silently disappear
-- Multiple sources contribute to the same list and removals must **propagate**
+- A source uses a **per-element soft-delete marker** (e.g. `removed_at`,
+  `deleted_at`) on array elements
+- The soft-deleted element should be **excluded from the source's own delta**
+- You want to keep the target schema **free of lifecycle metadata**
 
 Use [`derive_tombstones`](../derive-tombstones/) instead when element removal
-should be invisible — deleted elements are excluded from all reconstructed
-arrays with no trace.
-
-### Removal semantics
-
-The choice of resolution strategy on `removed_at` controls reversibility:
-
-| Strategy | Semantics |
-|---|---|
-| `coalesce` | Any non-null `removed_at` wins. Removal is **sticky** — once set by any source, it stays. |
-| `last_modified` | Most recent writer wins. Removal is **reversible** — a source can clear `removed_at` later. |
+should be detected automatically from the written state (elements that
+disappear across syncs).
 
 ### Modelling recommendation
 
 When a source currently stores values as bare scalars (`["vip", "churned"]`),
 promote them to objects (`[{tag: "vip"}, {tag: "churned"}]`) to enable
 lifecycle metadata. This is a one-time schema change that unlocks per-element
-soft-delete, archival timestamps, and other field-level metadata without
-requiring engine changes.
+soft-delete without requiring engine changes.

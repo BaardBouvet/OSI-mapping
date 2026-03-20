@@ -2,13 +2,14 @@ version: "1.0"
 description: >
   Element-level soft-delete for value lists.  Two CRM systems track
   contact tags as JSONB object arrays.  Each tag carries an optional
-  removed_at timestamp that signals soft-deletion.  When one CRM marks
-  a tag as removed, coalesce resolution picks the non-null timestamp
-  and the other CRM's delta propagates the removal.
+  removed_at timestamp that signals soft-deletion.  The child mappings
+  declare a tombstone on removed_at so the engine automatically filters
+  out soft-deleted elements from the reconstructed array — there is no
+  need to model removed_at in the target.
 
   This is the recommended pattern for soft-deleting individual elements
   in value lists: promote scalar values to objects carrying lifecycle
-  metadata.
+  metadata and use tombstone to suppress deleted elements.
 
 sources:
   crm_a:
@@ -34,8 +35,6 @@ targets:
         link_group: tag_id
       tag_order:
         strategy: coalesce
-      removed_at:
-        strategy: coalesce
 
 mappings:
   - name: crm_a_contacts
@@ -56,6 +55,9 @@ mappings:
       parent_email: email
     target: tag_entry
     priority: 1
+    tombstone:
+      field: removed_at
+      undelete_value: null
     fields:
       - source: parent_email
         target: contact_ref
@@ -64,8 +66,6 @@ mappings:
         target: tag
       - target: tag_order
         order: true
-      - source: removed_at
-        target: removed_at
 
   - name: crm_b_contacts
     source: crm_b
@@ -85,6 +85,9 @@ mappings:
       parent_email: email
     target: tag_entry
     priority: 2
+    tombstone:
+      field: removed_at
+      undelete_value: null
     fields:
       - source: parent_email
         target: contact_ref
@@ -93,15 +96,15 @@ mappings:
         target: tag
       - target: tag_order
         order: true
-      - source: removed_at
-        target: removed_at
 
 tests:
   - description: >
       CRM A soft-deletes the "churned" tag by setting removed_at.
-      CRM B still has the tag without the marker.  Coalesce picks the
-      non-null value from CRM A.  CRM B's delta receives an update
-      propagating the removal timestamp to the reconstructed tags array.
+      CRM B still has the tag without the marker.  The tombstone on
+      the child mapping filters the soft-deleted element from CRM A's
+      own reconstructed array.  CRM A's delta shows the tags without
+      "churned".  CRM B sees no change — consistent with entity-level
+      tombstone semantics (per-source suppression, not global deletion).
     input:
       crm_a:
         - id: "A1"
@@ -118,11 +121,10 @@ tests:
             - { tag: "vip" }
             - { tag: "churned" }
     expected:
-      crm_b:
+      crm_a:
         updates:
-          - id: "B1"
+          - id: "A1"
             email: "alice@example.com"
             name: "Alice"
             tags:
-              - { tag: "vip", removed_at: null }
-              - { tag: "churned", removed_at: "2026-01-15" }
+              - { tag: "vip" }

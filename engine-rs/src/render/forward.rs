@@ -284,7 +284,13 @@ pub fn render_forward_body(
     // Soft-delete detection: when the mapping declares a tombstone, non-identity
     // fields are NULLed in the forward view so soft-deleted rows cannot win
     // field resolution.  Identity fields keep their values for entity linking.
-    let tombstone_detect = mapping.tombstone.as_ref().map(|t| t.detection_expr());
+    let tombstone_detect = mapping.tombstone.as_ref().map(|t| {
+        if has_path {
+            t.detection_expr_with_base(Some("item.value"))
+        } else {
+            t.detection_expr()
+        }
+    });
 
     // If target is known, emit ALL target fields in target-definition order
     // (NULL for fields this mapping doesn't contribute to).
