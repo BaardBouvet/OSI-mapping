@@ -61,7 +61,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`route-combined`](route-combined/README.md) | Combined routing logic |
 | [`route-embedded`](route-embedded/README.md) | Routing within embedded objects |
 | [`route-multiple`](route-multiple/README.md) | Multiple routing rules |
-| [`soft-delete`](soft-delete/README.md) | Soft-delete detection via `tombstone_field` |
+| [`soft-delete`](soft-delete/README.md) | Soft-delete detection via `tombstone` |
 | [`types`](types/README.md) | Type conversion and coercion |
 | [`value-conversions`](value-conversions/README.md) | Value mapping / vocabulary conversion |
 | [`value-defaults`](value-defaults/README.md) | Default values and default expressions |

@@ -314,7 +314,7 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
         // resurrect is a pure policy knob — no prerequisites.
         // Detection comes from cluster_members or derive_tombstones+written_state.
         // Without a detection source, the knob is inert (no error, just unused).
-        // tombstone_field is validated as a column name below — no prerequisites.
+        // tombstone.field is validated as a column name below — no prerequisites.
     }
 }
 
@@ -832,7 +832,7 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
                 result,
             );
         }
-        // tombstone_field is a column name — no SQL expression to validate.
+        // tombstone.field is a column name — no SQL expression to validate.
         // Column existence is checked in the column-reference pass.
 
         if let Some(ref lm) = m.last_modified {
@@ -1181,14 +1181,14 @@ fn pass_column_refs(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        // tombstone_field: must be a known source column
-        if let Some(ref tf) = m.tombstone_field {
-            if !source_cols.is_empty() && !source_cols.contains(tf.as_str()) {
+        // tombstone.field: must be a known source column
+        if let Some(ref ts) = m.tombstone {
+            if !source_cols.is_empty() && !source_cols.contains(ts.field.as_str()) {
                 result.warning(
                     "Column",
                     format!(
-                        "mapping '{}' tombstone_field: unknown source column '{}'",
-                        m.name, tf
+                        "mapping '{}' tombstone.field: unknown source column '{}'",
+                        m.name, ts.field
                     ),
                 );
             }

@@ -325,9 +325,10 @@ fn action_case(
         branches.push(format!("WHEN {src_id} IS NULL THEN NULL"));
     } else {
         // Soft-delete: source row exists but tombstone field signals deletion.
-        if let Some(det) = mapping.tombstone_detection_expr() {
+        if let Some(ref ts) = mapping.tombstone {
+            let det = ts.detection_expr();
             if mapping.resurrect {
-                // Undelete: emit 'update' so the ETL writes the default value back
+                // Undelete: emit 'update' so the ETL writes the undelete values back
                 branches.push(format!(
                     "WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"
                 ));
@@ -516,17 +517,16 @@ pub fn render_delta_view(
                 out_exprs[pos] = format!("{rev_view}.{qi_cluster}");
             }
         }
-        // When resurrect: true + tombstone_field, override the tombstone field
-        // projection with a CASE that outputs the default value.
+        // When resurrect: true + tombstone, override columns with undelete values.
         if mapping.resurrect {
-            if let Some(ref tf) = mapping.tombstone_field {
-                let ts_field = qi(tf);
-                let det = mapping.tombstone_detection_expr().unwrap();
-                let alive_sql = mapping.tombstone_default.to_sql();
-                if let Some(pos) = out_exprs.iter().position(|e| e == &ts_field) {
-                    out_exprs[pos] = format!(
-                        "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
-                    );
+            if let Some(ref ts) = mapping.tombstone {
+                let det = ts.detection_expr();
+                for (col, expr) in ts.undelete_overrides() {
+                    let qcol = qi(&col);
+                    if let Some(pos) = out_exprs.iter().position(|e| e == &qcol) {
+                        out_exprs[pos] =
+                            format!("CASE WHEN ({det}) THEN {expr} ELSE {qcol} END AS {qcol}");
+                    }
                 }
             }
         }
@@ -683,10 +683,11 @@ fn merged_action_case(
     let mut branches = Vec::new();
 
     // Soft-delete: source row exists but tombstone field signals deletion.
-    // Uses the primary mapping's tombstone_field (shared source).
+    // Uses the primary mapping's tombstone config (shared source).
     if let Some(det) = primary_mappings
         .first()
-        .and_then(|m| m.tombstone_detection_expr())
+        .and_then(|m| m.tombstone.as_ref())
+        .map(|ts| ts.detection_expr())
     {
         let resurrect = primary_mappings.first().is_some_and(|m| m.resurrect);
         if resurrect {
@@ -995,18 +996,17 @@ fn render_delta_with_children(
             out_exprs[pos] = format!("_merged.{qi_cluster}");
         }
     }
-    // When resurrect: true + tombstone_field, override the tombstone field
-    // projection with a CASE that outputs the default value.
+    // When resurrect: true + tombstone, override columns with undelete values.
     if let Some(m) = primary_mappings.first() {
         if m.resurrect {
-            if let Some(ref tf) = m.tombstone_field {
-                let ts_field = qi(tf);
-                let det = m.tombstone_detection_expr().unwrap();
-                let alive_sql = m.tombstone_default.to_sql();
-                if let Some(pos) = out_exprs.iter().position(|e| e == &ts_field) {
-                    out_exprs[pos] = format!(
-                        "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
-                    );
+            if let Some(ref ts) = m.tombstone {
+                let det = ts.detection_expr();
+                for (col, expr) in ts.undelete_overrides() {
+                    let qcol = qi(&col);
+                    if let Some(pos) = out_exprs.iter().position(|e| e == &qcol) {
+                        out_exprs[pos] =
+                            format!("CASE WHEN ({det}) THEN {expr} ELSE {qcol} END AS {qcol}");
+                    }
                 }
             }
         }
@@ -1114,29 +1114,33 @@ fn render_delta_union_all(
             let m_passthrough: std::collections::HashSet<&str> =
                 m.effective_passthrough().into_iter().collect();
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
-            // When resurrect: true + tombstone_field, compute the override expression
-            // for the tombstone field.
-            let ts_override: Option<(String, String)> = if m.resurrect {
-                m.tombstone_field.as_ref().map(|tf| {
-                    let ts_field = qi(tf);
-                    let det = m.tombstone_detection_expr().unwrap();
-                    let alive_sql = m.tombstone_default.to_sql();
-                    let expr = format!(
-                        "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
-                    );
-                    (ts_field, expr)
-                })
+            // When resurrect: true + tombstone, compute override expressions.
+            let ts_overrides: IndexMap<String, String> = if m.resurrect {
+                m.tombstone
+                    .as_ref()
+                    .map(|ts| {
+                        let det = ts.detection_expr();
+                        ts.undelete_overrides()
+                            .into_iter()
+                            .map(|(col, expr)| {
+                                let qcol = qi(&col);
+                                let override_expr = format!(
+                                    "CASE WHEN ({det}) THEN {expr} ELSE {qcol} END AS {qcol}"
+                                );
+                                (qcol, override_expr)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
             } else {
-                None
+                IndexMap::new()
             };
             for col in out_cols {
                 let qcol = qi(col);
-                // Check if this column is the tombstone field override.
-                if let Some((ref ts_f, ref ts_expr)) = ts_override {
-                    if &qcol == ts_f {
-                        projected.push(ts_expr.clone());
-                        continue;
-                    }
+                // Check if this column has a tombstone undelete override.
+                if let Some(ts_expr) = ts_overrides.get(&qcol) {
+                    projected.push(ts_expr.clone());
+                    continue;
                 }
                 if col == "_cluster_id"
                     && (m.written_state.is_some() || m.cluster_members.is_some())
@@ -2515,7 +2519,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_field: deleted_at
+    tombstone: { field: deleted_at }
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2531,7 +2535,7 @@ mappings:
 
     #[test]
     fn tombstone_resurrect_true_undeletes() {
-        // tombstone_field + resurrect: true → emit 'update' (undelete)
+        // tombstone + resurrect: true → emit 'update' (undelete)
         let doc = parse(
             r#"
 version: "1.0"
@@ -2543,7 +2547,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_field: deleted_at
+    tombstone: { field: deleted_at }
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2566,7 +2570,7 @@ mappings:
 
     #[test]
     fn tombstone_no_vanished_union_all() {
-        // tombstone_field alone does not produce vanished-entity UNION ALL
+        // tombstone alone does not produce vanished-entity UNION ALL
         let doc = parse(
             r#"
 version: "1.0"
@@ -2578,7 +2582,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_field: deleted_at
+    tombstone: { field: deleted_at }
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2606,7 +2610,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_field: deleted_at
+    tombstone: { field: deleted_at }
     cluster_members: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2634,7 +2638,7 @@ mappings:
 
     #[test]
     fn tombstone_bool_default() {
-        // tombstone_field + tombstone_default: false
+        // tombstone with default: false
         let doc = parse(
             r#"
 version: "1.0"
@@ -2646,8 +2650,9 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_field: is_deleted
-    tombstone_default: false
+    tombstone:
+      field: is_deleted
+      default: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2658,13 +2663,13 @@ mappings:
         // Detection: is_deleted IS DISTINCT FROM FALSE
         assert!(
             sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN NULL"#),
-            "tombstone with tombstone_default: false should use IS DISTINCT FROM:\n{sql}"
+            "tombstone with default: false should use IS DISTINCT FROM:\n{sql}"
         );
     }
 
     #[test]
     fn tombstone_bool_default_undelete_projection() {
-        // tombstone_field + tombstone_default: false + resurrect: true → undelete with default value
+        // tombstone default: false + resurrect: true → undelete with default value
         let doc = parse(
             r#"
 version: "1.0"
@@ -2676,8 +2681,9 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_field: is_deleted
-    tombstone_default: false
+    tombstone:
+      field: is_deleted
+      default: false
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2712,7 +2718,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_field: deleted_at
+    tombstone: { field: deleted_at }
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2721,6 +2727,141 @@ mappings:
         assert!(
             eff.contains(&"deleted_at"),
             "effective_passthrough should include tombstone field: {eff:?}"
+        );
+    }
+
+    #[test]
+    fn tombstone_custom_detect() {
+        // Override detection with custom SQL expression
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone:
+      field: status
+      detect: "status IN ('deleted', 'archived')"
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            sql.contains("status IN ('deleted', 'archived')) THEN NULL"),
+            "custom detect should be used verbatim:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_custom_undelete_single() {
+        // Override undelete with a single SQL expression
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone:
+      field: status
+      detect: "status IN ('deleted', 'archived')"
+      undelete: "'active'"
+    resurrect: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // Should use custom undelete expression
+        assert!(
+            sql.contains(r#"THEN 'active' ELSE "status" END AS "status""#),
+            "custom undelete expression should be projected:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_multi_column_undelete() {
+        // Multi-column undelete: map form overrides multiple columns
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone:
+      field: deleted_at
+      undelete:
+        deleted_at: "NULL"
+        status: "'active'"
+    resurrect: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // Both columns should have CASE override
+        assert!(
+            sql.contains(r#"CASE WHEN ("deleted_at" IS NOT NULL) THEN NULL ELSE "deleted_at" END AS "deleted_at""#),
+            "deleted_at should be projected with undelete override:\n{sql}"
+        );
+        assert!(
+            sql.contains(r#"CASE WHEN ("deleted_at" IS NOT NULL) THEN 'active' ELSE "status" END AS "status""#),
+            "status should be projected with undelete override:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_multi_column_auto_passthrough() {
+        // Extra columns in undelete map should auto-include as passthrough
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone:
+      field: deleted_at
+      undelete:
+        deleted_at: "NULL"
+        status: "'active'"
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let m = &doc.mappings[0];
+        let eff = m.effective_passthrough();
+        assert!(
+            eff.contains(&"deleted_at"),
+            "effective_passthrough should include tombstone field: {eff:?}"
+        );
+        assert!(
+            eff.contains(&"status"),
+            "effective_passthrough should include undelete map keys: {eff:?}"
         );
     }
 }

@@ -256,14 +256,10 @@
         "resurrect": {
           "type": "boolean",
           "default": false,
-          "description": "Whether to resurrect entities that disappeared from this source. When false (default) and a detection mechanism is available (cluster_members or derive_tombstones+written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (tombstone_field)."
+          "description": "Whether to resurrect entities that disappeared from this source. When false (default) and a detection mechanism is available (cluster_members or derive_tombstones+written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (tombstone)."
         },
-        "tombstone_field": {
-          "type": "string",
-          "description": "Source column that signals deletion (soft-delete detection). When the column differs from its tombstone_default value, the entity is treated as soft-deleted. With resurrect: false (default), the row is suppressed. With resurrect: true, the delta emits 'update' with the default value to undelete."
-        },
-        "tombstone_default": {
-          "description": "The default (non-deleted) value for tombstone_field. Defaults to null (i.e. field IS NOT NULL means deleted). Set to false for boolean flags, or a string for enum values."
+        "tombstone": {
+          "$ref": "#/$defs/Tombstone"
         }
       },
       "anyOf": [
@@ -427,6 +423,33 @@
 
 
 
+
+    "Tombstone": {
+      "type": "object",
+      "description": "Soft-delete detection configuration. Declares a source column that signals deletion and how to detect/reverse it.",
+      "required": ["field"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string",
+          "description": "Source column carrying the deletion signal. Auto-included as passthrough."
+        },
+        "default": {
+          "description": "The default (non-deleted) value. Used to derive detect and undelete when not specified. Defaults to null (i.e. field IS NOT NULL means deleted). Set to false for boolean flags, or a string for enum values."
+        },
+        "detect": {
+          "$ref": "#/$defs/Expression",
+          "description": "SQL boolean expression that evaluates to true when the entity is soft-deleted. When omitted, derived from field + default."
+        },
+        "undelete": {
+          "description": "SQL expression(s) to project when undeleting (resurrect: true). A string applies to the tombstone field only; a map overrides arbitrary columns (map keys auto-included as passthrough). When omitted, derived from default.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "object", "additionalProperties": { "type": "string" } }
+          ]
+        }
+      }
+    },
 
     "Expression": {
       "type": "string",

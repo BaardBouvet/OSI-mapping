@@ -369,8 +369,7 @@ Maps fields from one source dataset to one target entity.
 | `derive_tombstones` | boolean | no | Element-level deletion propagation via written state |
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
 | `resurrect` | boolean | no | Whether to resurrect entities that disappeared from this source (default `false`) |
-| `tombstone_field` | string | no | Soft-delete detection — source column that signals deletion |
-| `tombstone_default` | null / boolean / string | no | Default (non-deleted) value for `tombstone_field` (default `null`) |
+| `tombstone` | object | no | Soft-delete detection configuration |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
 
 ```yaml
@@ -665,30 +664,40 @@ Without a detection mechanism, the setting is inert (no error, just unused).
 
 **Examples:** [hard-delete](../examples/hard-delete/)
 
-### `tombstone_field`
+### `tombstone`
 
-Soft-delete detection.  Declares a source column that signals deletion.  When the column differs from its `tombstone_default` value, the entity is treated as soft-deleted.
+Soft-delete detection.  Declares a source column that signals deletion and how to detect / reverse it.
 
-| Property | Type | Default | Description |
-|---|---|---|---|
-| `tombstone_field` | string | — | Source column carrying the deletion signal |
-| `tombstone_default` | null / boolean / string | `null` | Default (non-deleted) value |
+| Property | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `field` | string | **yes** | — | Source column carrying the deletion signal |
+| `default` | null / boolean / string | no | `null` | Default (non-deleted) value — derives `detect` and `undelete` when omitted |
+| `detect` | string (SQL) | no | derived | SQL expression — true when entity is soft-deleted |
+| `undelete` | string or map | no | derived | SQL expression(s) to project when undeleting |
+
+When `detect` is omitted, it is derived from `field` + `default`:
+
+| `default` | Derived `detect` |
+|---|---|
+| `null` (default) | `"field" IS NOT NULL` |
+| `false` | `"field" IS DISTINCT FROM FALSE` |
+| `'active'` | `"field" IS DISTINCT FROM 'active'` |
 
 Behavior depends on `resurrect`:
 
 | `resurrect` | Effect |
 |---|---|
 | `false` (default) | Suppress — row excluded from delta |
-| `true` | Undelete — delta emits `'update'` with the default value so the ETL clears the soft-delete marker |
+| `true` | Undelete — delta emits `'update'` with undelete values |
 
-The tombstone field is auto-included as a passthrough column (no need to list it in `passthrough`).
+The tombstone `field` (and any `undelete` map keys) are auto-included as passthrough columns.
 
 ```yaml
-  # deleted_at IS NOT NULL → soft-deleted (tombstone_default defaults to null)
+  # deleted_at IS NOT NULL → soft-deleted (default: null)
   - name: crm
     source: crm
     target: customer
-    tombstone_field: deleted_at
+    tombstone: { field: deleted_at }
     fields: [...]
 ```
 
@@ -698,8 +707,22 @@ The tombstone field is auto-included as a passthrough column (no need to list it
   - name: crm
     source: crm
     target: customer
-    tombstone_field: is_deleted
-    tombstone_default: false
+    tombstone: { field: is_deleted, default: false }
+    resurrect: true
+    fields: [...]
+```
+
+```yaml
+  # Custom detection + multi-column undelete
+  - name: crm
+    source: crm
+    target: customer
+    tombstone:
+      field: status
+      detect: "status IN ('deleted', 'archived')"
+      undelete:
+        status: "'active'"
+        deleted_at: "NULL"
     resurrect: true
     fields: [...]
 ```

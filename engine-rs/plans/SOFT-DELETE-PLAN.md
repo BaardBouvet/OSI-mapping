@@ -7,8 +7,8 @@ source but are semantically deleted (soft delete).  The engine knows the
 tombstone field and its default value, enabling both suppression and automatic
 undelete.
 
-- `resurrect: false` (default) + `tombstone_field` → suppress (NULL action)
-- `resurrect: true` + `tombstone_field` → undelete ('update' action + default value)
+- `resurrect: false` (default) + `tombstone` → suppress (NULL action)
+- `resurrect: true` + `tombstone` → undelete ('update' action + undelete values)
 
 Complements [HARD-DELETE-PROPAGATION-PLAN](HARD-DELETE-PROPAGATION-PLAN.md)
 (entity disappears because the row is gone) and
@@ -53,17 +53,17 @@ This works but requires:
 
 ### What first-class support adds
 
-Two mapping properties — `tombstone_field` and optional `tombstone_default` — declare
-the deletion signal.  The engine derives the detection expression and knows
-how to reverse the soft delete:
+A `tombstone` mapping property declares the deletion signal as a structured
+object with `field`, optional `default`, and escape hatches for custom
+`detect` and `undelete` expressions:
 
 ```yaml
-# Nullable timestamp (most common) — tombstone_default defaults to null
+# Nullable timestamp (most common) — default derives to null
 mappings:
   - name: crm
     source: crm
     target: customer
-    tombstone_field: deleted_at
+    tombstone: { field: deleted_at }
     fields:
       - source: email
         target: email
@@ -73,8 +73,23 @@ mappings:
   - name: crm
     source: crm
     target: customer
-    tombstone_field: is_deleted
-    tombstone_default: false
+    tombstone: { field: is_deleted, default: false }
+    fields:
+      - source: email
+        target: email
+
+# Custom detection + multi-column undelete
+mappings:
+  - name: crm
+    source: crm
+    target: customer
+    tombstone:
+      field: status
+      detect: "status IN ('deleted', 'archived')"
+      undelete:
+        status: "'active'"
+        deleted_at: "NULL"
+    resurrect: true
     fields:
       - source: email
         target: email
@@ -86,33 +101,36 @@ This integrates with `resurrect`:
 
 ## Design
 
-### New mapping properties: `tombstone_field` + `tombstone_default`
+### Mapping property: `tombstone`
 
-`tombstone_field` is the source column name.  `tombstone_default` (optional) is the value
-that means "not deleted" — defaults to null.  The engine derives the detection
-expression:
+A structured object with `field` (required), `default`, `detect`, and
+`undelete`.  When `detect` and `undelete` are omitted, they are derived
+from `field` + `default`:
 
-| `tombstone_field` | `tombstone_default` | Detection expression |
-|---|---|---|
-| `deleted_at` | (default: null) | `"deleted_at" IS NOT NULL` |
-| `is_deleted` | `false` | `"is_deleted" IS DISTINCT FROM FALSE` |
-| `status` | `active` | `"status" IS DISTINCT FROM 'active'` |
+| `field` | `default` | Derived `detect` | Derived `undelete` |
+|---|---|---|---|
+| `deleted_at` | (null) | `"deleted_at" IS NOT NULL` | `NULL` |
+| `is_deleted` | `false` | `"is_deleted" IS DISTINCT FROM FALSE` | `FALSE` |
+| `status` | `'active'` | `"status" IS DISTINCT FROM 'active'` | `'active'` |
 
-The tombstone field is auto-included in the effective passthrough — no need
-for manual `passthrough: [deleted_at]`.
+When `detect` or `undelete` is provided, it takes precedence (raw SQL).
+The `undelete` property can be a string (single column) or a map of
+column → SQL expression for multi-column undelete.
+
+The tombstone `field` (and any `undelete` map keys) are auto-included in
+the effective passthrough — no need for manual `passthrough: [deleted_at]`.
 
 ### Interaction with `resurrect`
 
 | `resurrect` | Tombstone detected | Action | Projection |
 |---|---|---|---|
 | `false` (default) | yes | NULL (suppress) | — |
-| `true` | yes | `'update'` (undelete) | tombstone field → default value |
+| `true` | yes | `'update'` (undelete) | undelete override per column |
 | either | no | normal logic | normal |
 
 When `resurrect: true` and tombstone is detected, the delta:
 1. Emits `'update'` instead of NULL — the ETL will write back
-2. Projects the default value for the tombstone field — the ETL writes the
-   default value back to the source, clearing the soft delete
+2. Projects the undelete values for each column in the undelete map
 
 ```sql
 -- Action CASE (resurrect: true)
@@ -137,59 +155,76 @@ handles soft deletes directly.
 
 `tombstone` does NOT replace `reverse_filter`.  They serve different purposes:
 
-| Feature | Purpose | Scope |
-|---|---|---|
-| `tombstone_field` | "This source says this entity is deleted" | Per-mapping detection |
-| `reverse_filter` | "This mapping only accepts rows matching this condition" | Per-mapping routing |
+| Feature | Purpose | Scope |\n|---|---|---|\n| `tombstone` | \"This source says this entity is deleted\" | Per-mapping detection |\n| `reverse_filter` | \"This mapping only accepts rows matching this condition\" | Per-mapping routing |",
+"oldString": "| Feature | Purpose | Scope |\n|---|---|---|\n| `tombstone_field` | \"This source says this entity is deleted\" | Per-mapping detection |\n| `reverse_filter` | \"This mapping only accepts rows matching this condition\" | Per-mapping routing |
 
 A mapping can have both:
 ```yaml
   - name: erp
     source: erp
     target: customer
-    tombstone_field: is_deleted
-    tombstone_default: true
+    tombstone: { field: is_deleted, default: true }
     reverse_filter: "tier IS NOT NULL"
     fields: [...]
 ```
 
 ### Difference from `propagated-delete` pattern
 
-| Aspect | `propagated-delete` (current) | `tombstone_field` |
+| Aspect | `propagated-delete` (current) | `tombstone` |
 |---|---|---|
 | Detection | User wires `expression` + `bool_or` target field | Declared on mapping |
 | Delta action | `'update'` (sets `is_deleted: true`) | suppress or undelete |
 | Scope | Cross-system propagation via resolution | Per-source detection |
-| Complexity | 3-4 properties across mapping + target | 1-2 properties on mapping |
+| Complexity | 3-4 properties across mapping + target | 1 property on mapping |
 | Target schema | Requires `is_deleted` field on target | No target field needed |
 
-They can coexist.  `tombstone_field` is the per-source detection signal.
+They can coexist.  `tombstone` is the per-source detection signal.
 `propagated-delete` is cross-source propagation via resolution.  A system
-might use `tombstone_field` to detect soft deletes from one source, while using
+might use `tombstone` to detect soft deletes from one source, while using
 `bool_or` to propagate a unified deletion signal to all sources.
 
 ## Implementation
 
 ### 1. Model
 
-Two flat properties on `Mapping`:
+One structured property on `Mapping`:
 
 ```rust
-pub tombstone_field: Option<String>,  // source column name
-pub tombstone_default: TombstoneDefault,                // default: Null
+pub tombstone: Option<Tombstone>,
+```
+
+`Tombstone` struct:
+
+```rust
+pub struct Tombstone {
+    pub field: String,
+    pub default: TombstoneDefault,
+    pub detect: Option<String>,
+    pub undelete: Option<UndeleteProjection>,
+}
 ```
 
 `TombstoneDefault` enum with custom serde Deserialize:
 
 ```rust
-#[derive(Debug, Clone, Default, PartialEq)]
 pub enum TombstoneDefault { #[default] Null, Bool(bool), String(String) }
 ```
 
+`UndeleteProjection` enum:
+
+```rust
+pub enum UndeleteProjection {
+    Single(String),              // string → applies to tombstone field
+    Multi(IndexMap<String, String>), // map → column → SQL expr
+}
+```
+
 Key methods:
-- `Mapping::tombstone_detection_expr()` — derives SQL from field + tombstone_default
+- `Tombstone::detection_expr()` — returns `detect` or derives from field + default
+- `Tombstone::undelete_overrides()` — returns column → SQL pairs
+- `Tombstone::passthrough_columns()` — field + undelete map keys
 - `TombstoneDefault::to_sql()` — renders SQL literal (NULL, FALSE, 'value')
-- `Mapping::effective_passthrough()` — `passthrough` + tombstone field
+- `Mapping::effective_passthrough()` — `passthrough` + tombstone columns
 
 `suppress_resurrect()` is NOT updated — tombstone is independent.
 
@@ -199,7 +234,8 @@ In `action_case()` and `merged_action_case()`, tombstone branches on
 `resurrect`:
 
 ```rust
-if let Some(det) = mapping.tombstone_detection_expr() {
+if let Some(ref ts) = mapping.tombstone {
+    let det = ts.detection_expr();
     if mapping.resurrect {
         branches.push(format!("WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"));
     } else {
@@ -208,16 +244,13 @@ if let Some(det) = mapping.tombstone_detection_expr() {
 }
 ```
 
-When `resurrect: true`, the delta also overrides the tombstone field
-projection with the default value:
+When `resurrect: true`, the delta overrides columns using `undelete_overrides()`:
 
 ```rust
-let ts_override = format!(
-    "CASE WHEN ({det}) THEN {default_val} ELSE {field} END AS {field}",
-    det = mapping.tombstone_detection_expr().unwrap(),
-    default_val = mapping.tombstone_default.to_sql(),
-    field = qi(tf),
-);
+for (col, expr) in ts.undelete_overrides() {
+    let qcol = qi(&col);
+    // CASE WHEN (det) THEN expr ELSE qcol END AS qcol
+}
 ```
 
 Three rendering paths updated: single-mapping, merged-child, UNION ALL.
@@ -225,28 +258,31 @@ Three rendering paths updated: single-mapping, merged-child, UNION ALL.
 ### 3. Schema
 
 ```json
-"tombstone_field": {
-  "type": "string",
-  "description": "Source column that signals deletion"
-},
-"tombstone_default": {
-  "description": "Default (non-deleted) value (null, boolean, string)"
+"Tombstone": {
+  "type": "object",
+  "required": ["field"],
+  "properties": {
+    "field": { "type": "string" },
+    "default": {},
+    "detect": { "$ref": "#/$defs/Expression" },
+    "undelete": { "oneOf": [{ "type": "string" }, { "type": "object" }] }
+  }
 }
 ```
 
 ### 4. Validation
 
-- Tombstone field must exist as a source column (checked via `source_cols`)
-- No `check_expr` needed — not a SQL expression
+- Tombstone `field` must exist as a source column (checked via `source_cols`)
+- `detect` and `undelete` are raw SQL expressions — validated same as `filter`/`expression`
 
 ### 5. Example
 
-`examples/soft-delete/` — `tombstone_field: deleted_at` with no explicit passthrough.
+`examples/soft-delete/` — `tombstone: { field: deleted_at }` with no explicit passthrough.
 
 ```yaml
 version: "1.0"
 description: >
-  Soft-delete detection via tombstone field.
+  Soft-delete detection via tombstone configuration.
   CRM has a deleted_at column — when set, the customer is treated as
   disappeared from CRM.
 
@@ -268,7 +304,7 @@ mappings:
   - name: crm_customers
     source: crm
     target: customer
-    tombstone_field: deleted_at
+    tombstone: { field: deleted_at }
     fields:
       - source: email
         target: email
@@ -303,35 +339,37 @@ tests:
 
 ## Design decisions
 
-### Why field-based and not a SQL expression?
+### Why a structured object instead of flat properties?
+
+`tombstone` as a structured object groups related config together and enables
+escape hatches (`detect`, `undelete`) that wouldn't fit as flat properties.
+The `undelete` map form naturally extends to multi-column undelete without
+any additional surface.
+
+### Why field-based and not just a SQL expression?
 
 A SQL expression (`"deleted_at IS NOT NULL"`) only answers "is this row
 deleted?".  It can't answer "what value should the field have to undelete?"
+or "which columns need passthrough?"
 
-A field + default value gives the engine both:
+A `field` + `default` gives the engine:
 - **Detection:** derive `field IS NOT NULL` or `field IS DISTINCT FROM value`
 - **Reversal:** project the default value when undeleting
+- **Passthrough:** auto-include the field in forward/reverse views
 
-This enables automatic undelete when `resurrect: true` — the engine knows
-exactly what to write back to clear the soft-delete marker.
-
-### Why flat properties instead of a nested object?
-
-`tombstone_field` + `tombstone_default` as top-level mapping properties is consistent
-with how other mapping properties work (e.g. `written_state`, `cluster_members`,
-`derive_tombstones`).  No special shorthand/object-form serde gymnastics
-needed.
+The `detect` and `undelete` escape hatches allow full SQL override when
+the derived expressions aren't sufficient.
 
 ### Why not extend `filter` instead?
 
 `filter` controls what rows enter the forward view — filtered rows don't
-contribute identity or fields at all.  `tombstone_field` is different: the
+contribute identity or fields at all.  `tombstone` is different: the
 row still exists and its identity should still link entities, but the entity
 is treated as disappeared from this source's perspective in the delta.
 
 If tombstoned rows were filtered out of the forward view, the identity
 graph would lose edges, potentially unlinking entities that should remain
-linked.  `tombstone_field` keeps the row in the forward view (preserving
+linked.  `tombstone` keeps the row in the forward view (preserving
 identity) while the delta treats it as disappeared.
 
 ### Should tombstoned rows contribute to resolution?
