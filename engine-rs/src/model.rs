@@ -1,6 +1,8 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer};
 
+use crate::qi;
+
 /// Top-level mapping document.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -329,14 +331,23 @@ pub struct Mapping {
     /// that were previously synced but are now absent are excluded from the
     /// delta instead of being re-inserted.  Set to `true` to allow
     /// re-insertion (opt out of hard-delete detection).
+    ///
+    /// For soft deletes (`tombstone`), `reinsert: true` enables undelete:
+    /// the delta emits `'update'` with the alive value, telling the ETL
+    /// to clear the soft-delete marker.
     #[serde(default)]
     pub reinsert: bool,
-    /// SQL boolean expression — when true, the entity is treated as
-    /// disappeared from this source (soft delete).  The row still exists
-    /// in the source but is semantically deleted.  Independent of
-    /// `reinsert` — always suppresses the row from the delta.
+    /// Soft-delete detection.  Declares a source column that signals
+    /// deletion.  When the column differs from its `alive` value,
+    /// the entity is treated as soft-deleted.
+    ///
+    /// - `reinsert: false` (default): suppress the row (NULL action)
+    /// - `reinsert: true`: emit `'update'` with the alive value (undelete)
+    ///
+    /// String shorthand: `tombstone: deleted_at` (alive = null).
+    /// Object form: `tombstone: { field: is_deleted, alive: false }`.
     #[serde(default)]
-    pub tombstone: Option<String>,
+    pub tombstone: Option<Tombstone>,
 }
 
 impl Mapping {
@@ -396,6 +407,20 @@ impl Mapping {
             || (self.derive_tombstones && self.written_state.is_some());
         has_detection && !self.reinsert
     }
+
+    /// Effective passthrough columns — explicit passthrough plus the
+    /// tombstone field (auto-included so it flows through forward → reverse
+    /// → delta views without the user listing it manually).
+    pub fn effective_passthrough(&self) -> Vec<&str> {
+        let mut cols: Vec<&str> = self.passthrough.iter().map(|s| s.as_str()).collect();
+        if let Some(ref ts) = self.tombstone {
+            let f = ts.field();
+            if !cols.contains(&f) {
+                cols.push(f);
+            }
+        }
+        cols
+    }
 }
 
 /// A link reference — connects a field in a linking table to a source mapping.
@@ -436,6 +461,127 @@ impl LinkField {
             }
             LinkField::Map(map) => map.iter().map(|(l, p)| (l.clone(), p.clone())).collect(),
         }
+    }
+}
+
+// ── Tombstone (soft-delete detection) ─────────────────────────────────
+
+/// Soft-delete configuration — a source column that signals deletion.
+///
+/// String shorthand: `tombstone: deleted_at` (alive = null).
+/// Object form: `tombstone: { field: is_deleted, alive: false }`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(from = "TombstoneRaw")]
+pub struct Tombstone {
+    /// Source column that carries the deletion signal.
+    pub field: String,
+    /// The value that means "alive" (not deleted).
+    /// When the column differs from this value, the entity is soft-deleted.
+    pub alive: AliveValue,
+}
+
+/// Raw deserialization target for `tombstone: field_name | { field, alive }`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TombstoneRaw {
+    /// `tombstone: deleted_at` — field name, alive defaults to null
+    Field(String),
+    /// `tombstone: { field: ..., alive: ... }`
+    Config {
+        field: String,
+        #[serde(default)]
+        alive: AliveValue,
+    },
+}
+
+impl From<TombstoneRaw> for Tombstone {
+    fn from(raw: TombstoneRaw) -> Self {
+        match raw {
+            TombstoneRaw::Field(field) => Tombstone {
+                field,
+                alive: AliveValue::Null,
+            },
+            TombstoneRaw::Config { field, alive } => Tombstone { field, alive },
+        }
+    }
+}
+
+impl Tombstone {
+    /// The source column name.
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    /// SQL expression that evaluates to true when the entity is soft-deleted.
+    pub fn detection_expr(&self) -> String {
+        let field = qi(&self.field);
+        match &self.alive {
+            AliveValue::Null => format!("{field} IS NOT NULL"),
+            other => format!("{field} IS DISTINCT FROM {}", other.to_sql()),
+        }
+    }
+}
+
+/// The "alive" value for a tombstone field — the value that means "not deleted."
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum AliveValue {
+    /// SQL NULL — the most common case (`deleted_at IS NOT NULL`).
+    #[default]
+    Null,
+    /// SQL boolean literal (`is_deleted = false`).
+    Bool(bool),
+    /// SQL string literal (`status = 'active'`).
+    String(String),
+}
+
+impl AliveValue {
+    /// Render as a SQL literal.
+    pub fn to_sql(&self) -> String {
+        match self {
+            AliveValue::Null => "NULL".to_string(),
+            AliveValue::Bool(true) => "TRUE".to_string(),
+            AliveValue::Bool(false) => "FALSE".to_string(),
+            AliveValue::String(s) => format!("'{}'", s.replace('\'', "''")),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AliveValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct AliveVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for AliveVisitor {
+            type Value = AliveValue;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("null, a boolean, or a string")
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<AliveValue, E> {
+                Ok(AliveValue::Null)
+            }
+
+            fn visit_none<E: serde::de::Error>(self) -> Result<AliveValue, E> {
+                Ok(AliveValue::Null)
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<AliveValue, E> {
+                Ok(AliveValue::Bool(v))
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<AliveValue, E> {
+                Ok(AliveValue::String(v.to_string()))
+            }
+
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<AliveValue, E> {
+                Ok(AliveValue::String(v))
+            }
+        }
+
+        deserializer.deserialize_any(AliveVisitor)
     }
 }
 

@@ -3,13 +3,17 @@
 **Status:** Implemented
 
 First-class support for source-provided tombstones — rows that remain in the
-source but are semantically deleted (soft delete).  When a source provides a
-deletion signal, the engine treats the entity as disappeared from that
-source.  Independent of `reinsert` — always suppresses the row from the delta.
+source but are semantically deleted (soft delete).  The engine knows the
+tombstone field and its "alive" value, enabling both suppression and automatic
+undelete.
+
+- `reinsert: false` (default) + tombstone → suppress (NULL action)
+- `reinsert: true` + tombstone → undelete ('update' action + alive value)
 
 Complements [HARD-DELETE-PROPAGATION-PLAN](HARD-DELETE-PROPAGATION-PLAN.md)
 (entity disappears because the row is gone) and
 [PROPAGATED-DELETE-PLAN](PROPAGATED-DELETE-PLAN.md) (existing `bool_or` +
+`reverse_filter` pattern).
 `reverse_filter` pattern).
 
 ## Motivation
@@ -50,69 +54,75 @@ This works but requires:
 
 ### What first-class support adds
 
-A `tombstone` property on the mapping declares "when this expression is true,
-treat the entity as disappeared from this source":
+A `tombstone` property on the mapping declares the field and its alive
+value.  The engine derives the detection expression and knows how to
+reverse the soft delete:
 
 ```yaml
-# First-class soft delete (proposed)
+# Shorthand — field with NULL alive value (most common)
 mappings:
   - name: crm
     source: crm
     target: customer
-    tombstone: "deleted_at IS NOT NULL"
+    tombstone: deleted_at
+    fields:
+      - source: email
+        target: email
+
+# Object form — field with explicit alive value
+mappings:
+  - name: crm
+    source: crm
+    target: customer
+    tombstone: { field: is_deleted, alive: false }
     fields:
       - source: email
         target: email
 ```
 
-This integrates with the delta CASE independently of `reinsert`:
-- The delta CASE sees the row as "disappeared" — same as a hard delete
-- Always emits NULL (suppress) — the row is excluded from the delta
+This integrates with `reinsert`:
+- `reinsert: false` (default) → suppress (NULL action, row excluded)
+- `reinsert: true` → undelete ('update' action, alive value projected)
 
 ## Design
 
 ### New mapping property: `tombstone`
 
-A SQL boolean expression evaluated in the reverse view context.  When true,
-the entity is treated as disappeared from this source.
+A field name (shorthand) or `{ field, alive }` object.  The engine derives
+the detection expression from the field and alive value:
 
-```yaml
-tombstone: "deleted_at IS NOT NULL"
-```
+| Shorthand | Object form | Detection expression |
+|---|---|---|
+| `tombstone: deleted_at` | `{ field: deleted_at }` | `"deleted_at" IS NOT NULL` |
+| — | `{ field: is_deleted, alive: false }` | `"is_deleted" IS DISTINCT FROM FALSE` |
+| — | `{ field: status, alive: active }` | `"status" IS DISTINCT FROM 'active'` |
 
-| Type | Required | Default | Description |
+The tombstone field is auto-included in the effective passthrough — no need
+for manual `passthrough: [deleted_at]`.
+
+### Interaction with `reinsert`
+
+| `reinsert` | Tombstone detected | Action | Projection |
 |---|---|---|---|
-| string | no | — | SQL boolean expression; when true, entity is treated as disappeared |
+| `false` (default) | yes | NULL (suppress) | — |
+| `true` | yes | `'update'` (undelete) | tombstone field → alive value |
+| either | no | normal logic | normal |
 
-When `tombstone` is set, the delta CASE evaluates it before the normal
-insert/update/delete/noop logic:
+When `reinsert: true` and tombstone is detected, the delta:
+1. Emits `'update'` instead of NULL — the ETL will write back
+2. Projects the alive value for the tombstone field — the ETL writes the
+   alive value back to the source, clearing the soft delete
 
 ```sql
+-- Action CASE (reinsert: true)
 CASE
-  -- Soft-delete: source row exists but is tombstoned
-  WHEN _src_id IS NOT NULL AND (deleted_at IS NOT NULL) THEN NULL
-  -- Hard-delete: source row gone but was previously synced (reinsert: false)
-  WHEN _src_id IS NULL AND _cm_hd."_src_id" IS NOT NULL THEN NULL
-  -- Normal insert/update/noop...
-  WHEN _src_id IS NULL THEN 'insert'
-  WHEN ... THEN 'noop'
-  ELSE 'update'
-END
-```
+  WHEN _src_id IS NOT NULL AND ("deleted_at" IS NOT NULL) THEN 'update'
+  ...
+END AS _action
 
-The suppress branch always emits `NULL` (row excluded from delta).
-
-### Independence from `reinsert`
-
-`tombstone` is independent of the `reinsert` mechanism.  It does NOT
-contribute to `suppress_reinsert()`.  The tombstone CASE branch is always
-active when the expression is set — no detection mechanism needed:
-
-```rust
-// In action_case():
-if let Some(ref expr) = mapping.tombstone {
-    branches.push(format!("WHEN {src_id} IS NOT NULL AND ({expr}) THEN NULL"));
-}
+-- Tombstone field projection (reinsert: true)
+CASE WHEN ("deleted_at" IS NOT NULL) THEN NULL
+     ELSE "deleted_at" END AS "deleted_at"
 ```
 
 ### Vanished-entity UNION ALL
@@ -160,60 +170,94 @@ might use `tombstone` to detect soft deletes from one source, while using
 
 ### 1. Model
 
-Add `tombstone: Option<String>` to `Mapping`:
+`Tombstone` struct with field-based config and serde shorthand:
 
 ```rust
-/// SQL boolean expression — when true, the entity is treated as
-/// disappeared from this source (soft delete).  Feeds into
-/// `reinsert` mechanism.  Independent — always suppresses when set.
-#[serde(default)]
-pub tombstone: Option<String>,
+/// Shorthand: `tombstone: deleted_at` (alive defaults to Null)
+/// Object:    `tombstone: { field: is_deleted, alive: false }`
+#[derive(Debug, Deserialize)]
+#[serde(from = "TombstoneRaw")]
+pub struct Tombstone { field: String, alive: AliveValue }
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum TombstoneRaw {
+    Field(String),
+    Config { field: String, #[serde(default)] alive: AliveValue },
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum AliveValue { #[default] Null, Bool(bool), String(String) }
 ```
+
+Key methods:
+- `Tombstone::detection_expr()` — derives SQL from field + alive
+- `Tombstone::field()` — the source column name
+- `AliveValue::to_sql()` — renders SQL literal (NULL, FALSE, 'value')
+- `Mapping::effective_passthrough()` — `passthrough` + tombstone field
 
 `suppress_reinsert()` is NOT updated — tombstone is independent.
 
 ### 2. Delta render
 
-In `action_case()` and `merged_action_case()`, add a branch before the
-hard-delete detection:
+In `action_case()` and `merged_action_case()`, tombstone branches on
+`reinsert`:
 
 ```rust
-// Soft-delete: source row exists but tombstone expression is true
-// Independent of reinsert — always suppresses
-if let Some(ref expr) = mapping.tombstone {
-    branches.push(format!("WHEN {src_id} IS NOT NULL AND ({expr}) THEN NULL"));
+if let Some(ref ts) = mapping.tombstone {
+    let det = ts.detection_expr();
+    if mapping.reinsert {
+        branches.push(format!("WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"));
+    } else {
+        branches.push(format!("WHEN {src_id} IS NOT NULL AND ({det}) THEN NULL"));
+    }
 }
 ```
 
-This branch fires BEFORE the `_src_id IS NULL` checks, so a soft-deleted
-row with a source row present is caught early.
+When `reinsert: true`, the delta also overrides the tombstone field
+projection with the alive value:
+
+```rust
+// ts_override replaces the tombstone field column
+let ts_override = format!(
+    "CASE WHEN ({det}) THEN {alive} ELSE {field} END AS {field}",
+    det = ts.detection_expr(),
+    alive = ts.alive().to_sql(),
+    field = qi(ts.field()),
+);
+```
+
+Three rendering paths updated: single-mapping, merged-child, UNION ALL.
 
 ### 3. Schema
 
-Add to `mapping-schema.json`:
-
 ```json
 "tombstone": {
-  "type": "string",
-  "description": "SQL boolean expression — when true, the entity is treated as disappeared from this source (soft delete). Always suppresses the row from the delta, independent of the reinsert setting."
+  "oneOf": [
+    { "type": "string", "description": "Field name (alive defaults to null)" },
+    { "type": "object", "properties": {
+        "field": { "type": "string" },
+        "alive": { "description": "Value when not deleted (null, boolean, string)" }
+      }, "required": ["field"] }
+  ]
 }
 ```
 
 ### 4. Validation
 
-- `tombstone` has no prerequisites — always active when set.
-- No need for `reinsert: false` — tombstone suppression is independent.
+- Tombstone field must exist as a source column (checked via `source_cols`)
+- No `check_expr` needed — not a SQL expression anymore
 
 ### 5. Example
 
-New example: `soft-delete/`
+`examples/soft-delete/` — `tombstone: deleted_at` with no explicit passthrough.
 
 ```yaml
 version: "1.0"
 description: >
-  Soft-delete detection via tombstone expression.
+  Soft-delete detection via tombstone field.
   CRM has a deleted_at column — when set, the customer is treated as
-  disappeared from CRM.  The engine applies reinsert policy.
+  disappeared from CRM.
 
 sources:
   crm:
@@ -233,7 +277,7 @@ mappings:
   - name: crm_customers
     source: crm
     target: customer
-    tombstone: "deleted_at IS NOT NULL"
+    tombstone: deleted_at
     fields:
       - source: email
         target: email
@@ -268,23 +312,23 @@ tests:
 
 ## Design decisions
 
-### Why `tombstone` and not `soft_delete`?
+### Why field-based and not a SQL expression?
 
-Consistency with `derive_tombstones` — both deal with tombstones (markers
-indicating something is dead).  `derive_tombstones` derives synthetic
-tombstones from written state; `tombstone` declares that the source provides
-its own tombstone signal.
+A SQL expression (`"deleted_at IS NOT NULL"`) only answers "is this row
+deleted?".  It can't answer "what value should the field have to undelete?"
 
-### Why a SQL expression and not a column name?
+A field + alive value gives the engine both:
+- **Detection:** derive `field IS NOT NULL` or `field IS DISTINCT FROM value`
+- **Reversal:** project the alive value when undeleting
 
-Sources express soft deletes differently:
-- `deleted_at IS NOT NULL` (timestamp column)
-- `is_deleted = true` (boolean flag)
-- `status = 'archived'` (enum value)
-- `active = false` (inverted boolean)
+This enables automatic undelete when `reinsert: true` — the engine knows
+exactly what to write back to clear the soft-delete marker.
 
-A SQL expression handles all cases without needing multiple configuration
-knobs.
+### Why two forms (string shorthand + object)?
+
+The overwhelmingly common case is a nullable timestamp column (alive = NULL):
+`tombstone: deleted_at`.  The object form handles less common cases:
+`tombstone: { field: is_deleted, alive: false }`.
 
 ### Why not extend `filter` instead?
 
@@ -320,8 +364,7 @@ delta says "don't sync back to this source."
 - **Cross-source propagation:** `tombstone` detects per-source soft deletes.
   For cross-system propagation ("CRM deletes → delete from all systems"),
   the existing `propagated-delete` pattern (`bool_or` + `reverse_filter`)
-  still works.  A future `on_disappear: propagate` value could automate
-  this.
+  still works.
 - **Element-level soft deletes:** Array elements with a tombstone flag.
   Out of scope for now — `derive_tombstones` handles element-level deletion
   via written state comparison.

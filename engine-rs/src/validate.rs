@@ -832,14 +832,8 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
                 result,
             );
         }
-        if let Some(ref expr) = m.tombstone {
-            check_expr(
-                expr,
-                ExprContext::ReverseFilter,
-                &format!("mapping '{}' tombstone", m.name),
-                result,
-            );
-        }
+        // tombstone is a field-based config — no SQL expression to validate.
+        // Column existence is checked in the column-reference pass.
 
         if let Some(ref lm) = m.last_modified {
             if let Some(expr) = lm.expression() {
@@ -1187,14 +1181,18 @@ fn pass_column_refs(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        // tombstone: — source columns available (evaluated in reverse view context)
-        if let Some(ref expr) = m.tombstone {
-            check_column_refs(
-                expr,
-                &source_cols,
-                &format!("mapping '{}' tombstone", m.name),
-                result,
-            );
+        // tombstone: field must be a known source column
+        if let Some(ref ts) = m.tombstone {
+            let field = ts.field();
+            if !source_cols.is_empty() && !source_cols.contains(field) {
+                result.warning(
+                    "Column",
+                    format!(
+                        "mapping '{}' tombstone: unknown source column '{}'",
+                        m.name, field
+                    ),
+                );
+            }
         }
 
         for fm in &m.fields {

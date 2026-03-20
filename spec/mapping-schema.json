@@ -256,11 +256,22 @@
         "reinsert": {
           "type": "boolean",
           "default": false,
-          "description": "Whether to re-insert entities that disappeared from this source. When false (default) and a detection mechanism is available (cluster_members or derive_tombstones+written_state), disappeared entities are excluded from the delta instead of being re-inserted. Set to true to allow re-insertion (opt out of hard-delete detection)."
+          "description": "Whether to re-insert entities that disappeared from this source. When false (default) and a detection mechanism is available (cluster_members or derive_tombstones+written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (tombstone)."
         },
         "tombstone": {
-          "type": "string",
-          "description": "SQL boolean expression — when true, the entity is treated as disappeared from this source (soft delete). The row still exists in the source but is semantically deleted. Always suppresses the row from the delta, independent of the reinsert setting."
+          "oneOf": [
+            { "type": "string", "description": "Source column name (alive value defaults to null)" },
+            {
+              "type": "object",
+              "required": ["field"],
+              "additionalProperties": false,
+              "properties": {
+                "field": { "type": "string", "description": "Source column that carries the deletion signal" },
+                "alive": { "description": "Value that means 'not deleted'. Null (default), boolean, or string." }
+              }
+            }
+          ],
+          "description": "Soft-delete detection. Declares a source column that signals deletion. When the column differs from its alive value, the entity is treated as soft-deleted. With reinsert: false (default), the row is suppressed. With reinsert: true, the delta emits 'update' with the alive value to undelete."
         }
       },
       "anyOf": [

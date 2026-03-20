@@ -369,7 +369,7 @@ Maps fields from one source dataset to one target entity.
 | `derive_tombstones` | boolean | no | Element-level deletion propagation via written state |
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
 | `reinsert` | boolean | no | Whether to re-insert entities that disappeared from this source (default `false`) |
-| `tombstone` | string | no | SQL boolean expression — when true, entity is treated as soft-deleted |
+| `tombstone` | string / object | no | Soft-delete detection — source column that signals deletion |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
 
 ```yaml
@@ -666,13 +666,41 @@ Without a detection mechanism, the setting is inert (no error, just unused).
 
 ### `tombstone`
 
-SQL boolean expression — when true, the entity is treated as disappeared from this source (soft delete). The row still exists in the source but is semantically deleted. Always suppresses the row from the delta, independent of the `reinsert` setting.
+Soft-delete detection.  Declares a source column that signals deletion.  When the column differs from its `alive` value, the entity is treated as soft-deleted.
+
+| Form | Syntax | Alive value |
+|---|---|---|
+| String (shorthand) | `tombstone: deleted_at` | `null` (default) |
+| Object | `tombstone: { field: is_deleted, alive: false }` | explicit |
+
+Behavior depends on `reinsert`:
+
+| `reinsert` | Effect |
+|---|---|
+| `false` (default) | Suppress — row excluded from delta |
+| `true` | Undelete — delta emits `'update'` with the alive value so the ETL clears the soft-delete marker |
+
+The tombstone field is auto-included as a passthrough column (no need to list it in `passthrough`).
 
 ```yaml
+  # Shorthand: deleted_at IS NOT NULL → soft-deleted
   - name: crm
     source: crm
     target: customer
-    tombstone: "deleted_at IS NOT NULL"
+    tombstone: deleted_at
+    fields: [...]
+```
+
+```yaml
+  # Object form: is_deleted != false → soft-deleted
+  # reinsert: true → undelete (emit is_deleted = false)
+  - name: crm
+    source: crm
+    target: customer
+    tombstone:
+      field: is_deleted
+      alive: false
+    reinsert: true
     fields: [...]
 ```
 

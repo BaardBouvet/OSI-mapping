@@ -510,7 +510,7 @@ pub fn render_forward_body(
             }
         }
         // Include passthrough columns in _base for round-trip preservation.
-        for col in &mapping.passthrough {
+        for col in mapping.effective_passthrough() {
             let resolved = resolve_nested_source(col, &parent_field_exprs, has_path);
             let part = format!("'{col}', {resolved}");
             if !base_parts.contains(&part) {

@@ -309,7 +309,7 @@ pub fn render_reverse_view(
     select_exprs.push("id._base".to_string());
 
     // Extract passthrough columns from _base JSONB.
-    for col in &mapping.passthrough {
+    for col in mapping.effective_passthrough() {
         select_exprs.push(format!("id._base->>'{col}' AS {}", qi(col)));
     }
 
