@@ -335,18 +335,18 @@ hint that this is a re-insertion scenario.
 Adds complexity to the delta CASE expression. Does not handle Case 4 (all
 sources delete — entity vanishes from views entirely).
 
-### Option D: Engine reads ETL state table (recommended)
+### Option D: Reuse `written_state` table (recommended)
 
 Same pattern as [ELEMENT-DELETION-PLAN](ELEMENT-DELETION-PLAN.md) Option E:
 the engine reads a state table maintained by the ETL to compute the diff in
 SQL. The engine doesn't write to the table — the ETL does, after each cycle.
 
-This follows the `cluster_members` precedent. Where `cluster_members` tells
-the engine "this entity was previously inserted into this source" (for cluster
-identity), a `synced_entities` table tells the engine "this entity was
-previously synced to this source" (for hard-delete detection).
-
-#### New mapping property: `synced_entities`
+The key insight: no new `synced_entities` table is needed. The existing
+`_written_{mapping}` table from `written_state: true` already provides the
+set of previously-synced entity IDs via its `_cluster_id` primary key. Row
+existence in `_written` = "this entity was previously synced." This is the
+same table used for noop detection (JSONB payload) and element-level deletion
+(`derive_tombstones`). One table, three features.
 
 ```yaml
 mappings:
@@ -354,7 +354,8 @@ mappings:
     source: system_b
     target: customer
     cluster_members: true       # existing: insert feedback for cluster identity
-    synced_entities: true       # new: entity lifecycle tracking
+    written_state: true         # existing: enables noop, tombstones, AND hard-delete detection
+    tombstone_policy: suppress  # policy when source row disappears (default)
     fields:
       - source: email
         target: email
@@ -362,55 +363,20 @@ mappings:
         target: name
 ```
 
-Like `cluster_members`, supports both short form and explicit configuration:
-
-```yaml
-# Minimal — all defaults
-synced_entities: true
-# → table: _synced_entities_system_b
-# → column: _cluster_id
-
-# Custom table/column names
-synced_entities:
-  table: system_b_sync_state
-  cluster_id: entity_id
-```
-
-#### ETL state table
-
-```sql
-CREATE TABLE _synced_entities_system_b (
-    _cluster_id   text NOT NULL PRIMARY KEY
-);
-```
-
-One row per entity that the ETL has synced to this source. The ETL writes to
-it after each cycle:
-
-- After a successful insert → add `_cluster_id`
-- After confirming a delete → remove `_cluster_id`
-- After an update or noop → no change (already present)
-
-This is even simpler than the provenance state machine in Option B — the ETL
-just records "which entities exist in this target right now." No provenance
-enum, no origin tracking. The ETL writes what it sees.
-
 #### Engine-generated delta enhancement
 
-When `synced_entities` is declared, the engine modifies the delta view's
-CASE expression. The reverse view already LEFT JOINs `_resolved` against
-`_id_{target}`, producing `_src_id IS NULL` for entities without a member
-from this mapping. By also LEFT JOINing the `synced_entities` table, the
+When `tombstone_policy` is set and `written_state` is declared, the
+engine adds a CASE branch before the insert branch. The `_written` table
+is already LEFT JOINed as `_ws` when `written_state` is present. The
 engine can distinguish three states:
 
 ```sql
 -- Inside the delta CASE expression:
 CASE
   WHEN _src_id IS NULL
-   AND _se._cluster_id IS NOT NULL
-  THEN 'hard_deleted'                  -- was synced, source row is gone
+   AND _ws."_cluster_id" IS NOT NULL
+  THEN NULL                            -- suppress (or 'delete' per policy)
   WHEN _src_id IS NULL
-   AND _se._cluster_id IS NULL
    AND {delete_conditions}
   THEN NULL                            -- existing: filter non-qualifying inserts
   WHEN _src_id IS NULL
@@ -423,21 +389,16 @@ CASE
 END AS _action
 ```
 
-The LEFT JOIN in the delta view (or reverse view):
-
-```sql
-LEFT JOIN _synced_entities_system_b AS _se
-  ON _se._cluster_id = rev._cluster_id
-```
+No additional LEFT JOIN needed — `_ws` is already present.
 
 #### What each action means for the ETL
 
 | `_action` | ETL response |
 |-----------|-------------|
-| `'insert'` | Insert into target, add to `synced_entities` |
-| `'update'` | Update in target |
+| `'insert'` | Insert into target, write to `_written` |
+| `'update'` | Update in target, update `_written` |
 | `'noop'` | Skip |
-| `'delete'` | Delete from target, remove from `synced_entities` |
+| `'delete'` | Delete from target, remove from `_written` |
 | `NULL` | Row excluded — ETL never sees it |
 
 The ETL is purely mechanical. It never interprets why an action was chosen.
@@ -449,67 +410,94 @@ The `on_hard_delete` policy is resolved inside the engine's CASE expression
 When an entity disappears from all forward views, the resolved view has no
 row. The reverse and delta views produce nothing.
 
-The engine can handle this too. When `synced_entities` is declared, the
-delta view can include orphaned synced entities:
+The engine can handle this too. When `on_hard_delete` is declared, the
+delta view can include orphaned written entities:
 
 ```sql
--- Entities tracked in synced_entities but absent from the resolved view
+-- Entities tracked in _written but absent from the resolved view
 SELECT
-    _se._cluster_id,
+    _ws."_cluster_id",
     NULL AS _src_id,
-    'vanished' AS _action
-FROM _synced_entities_system_b AS _se
+    'delete' AS _action
+FROM _written_system_b AS _ws
 LEFT JOIN _resolved_customer AS r
-  ON r._entity_id_resolved = _se._cluster_id
+  ON r._entity_id_resolved = _ws."_cluster_id"
 WHERE r._entity_id_resolved IS NULL
 ```
 
-This is UNION ALL'd into the delta view, producing a `'vanished'` action for
-entities that no longer exist anywhere. The ETL can then delete them from the
-target and remove them from the `synced_entities` table.
+This is UNION ALL'd into the delta view, producing a `'delete'` action for
+entities that no longer exist anywhere. The ETL then deletes from the
+target and removes from `_written`.
 
-#### Comparison: Option B (pure ETL) vs Option D (engine reads state)
+#### Comparison: Option B (pure ETL) vs Option D (reuse written_state)
 
-| | B: Pure ETL provenance | D: Engine reads ETL state |
+| | B: Pure ETL provenance | D: Reuse written_state |
 |---|---|---|
 | Diff logic | ETL code (bespoke) | SQL views (testable) |
-| ETL responsibility | Provenance state machine + diff | Write synced set (trivial) |
-| Engine changes | None | Delta CASE + LEFT JOIN |
-| Case 4 (all-gone) | ETL must scan for orphans | Engine emits `'vanished'` |
+| ETL responsibility | Provenance state machine + diff | Write to `_written` (already doing this) |
+| Engine changes | None | Delta CASE branch |
+| New tables | ETL provenance table | None (reuses `_written`) |
+| Case 4 (all-gone) | ETL must scan for orphans | Engine emits `'delete'` |
 | Testable in engine | No | Yes (SQL views) |
-| Complexity | ETL: high, Engine: none | ETL: low, Engine: moderate |
+| Complexity | ETL: high, Engine: none | ETL: none (already writes `_written`), Engine: moderate |
 
 ### Option comparison (all)
 
-| | A: Soft-delete | B: ETL provenance | C: Engine hints | D: Engine reads ETL state |
+| | A: Soft-delete | B: ETL provenance | C: Engine hints | D: Reuse written_state |
 |---|---|---|---|---|
-| Engine changes | None | None | Delta CASE | Delta CASE + LEFT JOIN |
-| ETL complexity | None | Provenance + diff | Interpret hint | Store synced set (trivial) |
+| Engine changes | None | None | Delta CASE | Delta CASE branch |
+| ETL complexity | None | Provenance + diff | Interpret hint | None (already writes `_written`) |
 | Source changes | Must soft-delete | None | None | None |
+| New tables | None | ETL provenance | None | None (reuses `_written`) |
 | Handles hard delete | No | Yes | Partial | Yes |
-| Case 4 (all-gone) | Only if soft-deleted | ETL orphan scan | No | Engine emits `'vanished'` |
-| Per-system policy | reverse_filter | ETL policy | Limited | ETL policy + engine actions |
+| Case 4 (all-gone) | Only if soft-deleted | ETL orphan scan | No | Engine emits `'delete'` |
+| Per-system policy | reverse_filter | ETL policy | Limited | `tombstone_policy` in mapping |
 | Diff is SQL | N/A | No | Partial | Yes |
 | Testable in engine | Yes | No | Yes | Yes |
 
 ## Recommendation
 
-**Option D (engine reads ETL state table)** as the primary solution. The
-engine generates the diff in SQL; the ETL only records which entities it has
-synced. This follows the `cluster_members` precedent: the engine reads
-external state that it doesn't own.
+**Unify under `written_state`** — no new `synced_entities` concept needed.
+
+The `_written_{mapping}` table from `written_state: true` already provides
+the set of previously-synced entity IDs via its `_cluster_id` primary key.
+The engine can detect "entity in `_written` but absent from resolved view"
+the same way `derive_tombstones` detects "element in `_written` JSONB but
+absent from forward view." Both features read from `written_state` but
+are independent — `derive_tombstones` handles element-level array
+tombstones, `tombstone_policy` handles entity-level hard deletes.
 
 **Option A (soft-delete)** remains complementary for sources that support it.
 
 The key principle: the diff computation is a pure function of (current
-resolved entities × previously synced entities). It's generic, deterministic,
-and belongs in SQL views. The temporal state (what was synced before) belongs
-in the ETL, which already maintains state for insert feedback.
+resolved entities × previously synced entities). Row existence in
+`_written_{mapping}` is sufficient — the JSONB payload is not needed for
+hard-delete detection, but comes for free. The ETL already writes to
+`_written` for noop detection and element deletion — hard-delete detection
+is an automatic bonus.
+
+### Entity and element detection are orthogonal
+
+`derive_tombstones` detects element-level deletions: elements present in
+the written JSONB array but absent from the current forward view are
+excluded from all sources' reconstructed arrays.
+
+`tombstone_policy` detects entity-level deletions: entities present in
+`_written` (row existence) but absent from the source are either
+suppressed or emitted as deletes.
+
+Both read from `_written` but serve different levels of the data model.
+You can use either independently:
+- `tombstone_policy` alone: entity-level hard-delete handling without
+  element-level array tombstones
+- `derive_tombstones` alone: element-level array tombstones without
+  entity-level hard-delete policy
+- Both together: full coverage at both levels
 
 ### Policy belongs in the mapping, not the ETL
 
 The ETL is a mechanical process: read delta, execute actions, write state.
-It should not contain policy logic. If a `hard_deleted` action means "don't
+It should not contain policy logic. If a hard-deleted entity means "don't
 re-insert", that decision must be made by the engine based on a declaration
 in the mapping YAML — not by ETL code interpreting hints.
 
@@ -528,24 +516,27 @@ The ETL never interprets *why* an action was chosen. It never decides
 between re-inserting and suppressing. That logic is baked into the engine's
 CASE expression, driven by the mapping author's configuration.
 
-### Mapping-level property: `on_hard_delete`
+### Mapping-level property: `tombstone_policy`
 
-A new property on mappings that declares what the engine should emit when
-a previously-synced entity disappears from this source:
+Entity-level hard-delete policy. Declares what the engine should emit
+when a previously-synced entity disappears from this source. Requires
+`written_state` (the `_written` table provides the "previously synced"
+set). Independent of `derive_tombstones` (which handles element-level
+tombstones).
 
 ```yaml
 mappings:
   - name: system_a
     source: system_a
     target: customer
-    synced_entities: true
-    on_hard_delete: suppress          # ← policy declaration
+    written_state: true
+    tombstone_policy: suppress        # ← policy declaration (default)
     fields: [...]
 ```
 
 Values:
 
-| `on_hard_delete` | Delta output for this mapping | Effect |
+| `tombstone_policy` | Delta output for this mapping | Effect |
 |-------------------|-------------------------------|--------|
 | `suppress` (default) | `NULL` (row excluded from delta) | No action. Entity stays as-is in target. No re-insert, no delete. |
 | `delete` | `'delete'` | ETL deletes from this target system. |
@@ -557,12 +548,12 @@ Values:
 
 ```sql
 WHEN _src_id IS NULL
- AND _se._cluster_id IS NOT NULL     -- was synced, now gone
-THEN NULL                             -- exclude from delta entirely
+ AND _ws."_cluster_id" IS NOT NULL    -- was synced (row exists in _written), now gone
+THEN NULL                              -- exclude from delta entirely
 ```
 
 The row is excluded. The ETL never sees it. No action taken. The entity
-remains in `synced_entities` as a suppression marker — preventing future
+remains in `_written_{mapping}` as a suppression marker — preventing future
 `'insert'` actions for this entity.
 
 This means: a hard delete in the source is silently absorbed. The target
@@ -574,17 +565,17 @@ sources contribute to it. If all sources disappear, the `vanished` action
 
 ```sql
 WHEN _src_id IS NULL
- AND _se._cluster_id IS NOT NULL
-THEN 'delete'                         -- delete from this target system
+ AND _ws."_cluster_id" IS NOT NULL
+THEN 'delete'                          -- delete from this target system
 ```
 
-The ETL deletes from the target and removes from `synced_entities`.
+The ETL deletes from the target and removes the row from `_written_{mapping}`.
 
 **`propagate`** — cross-system deletion. This is more complex: when source
-A disappears and mapping A has `on_hard_delete: propagate`, the engine must
+A disappears and mapping A has `tombstone_policy: propagate`, the engine must
 emit `'delete'` not just for A's delta but for every other mapping's delta
-for this entity. This requires the engine to check the `synced_entities`
-tables of all other mappings for the same target.
+for this entity. This requires the engine to check the `_written` tables
+of all other mappings for the same target.
 
 This is the hardest to implement but handles the "origin system deletes,
 all copies should go" case. For compliance (GDPR), the soft-delete pattern
@@ -595,32 +586,33 @@ remains the recommended approach because it's auditable and per-system.
 `suppress` is the right default because:
 
 - **No data destruction** — target systems are unaffected
-- **No loop** — the `synced_entities` entry prevents re-insertion
+- **No loop** — the `_written` entry prevents re-insertion
 - **Mechanical ETL** — the ETL doesn't see the row, so it does nothing
 - **Recoverable** — if the source row reappears, the forward view picks
-  it up again. The entity re-links via identity fields. The synced_entities
+  it up again. The entity re-links via identity fields. The `_written`
   entry is already present, so the delta emits `'noop'` or `'update'`
   instead of `'insert'` — no duplicate.
 
-The one-way-door concern: the synced_entities entry acts as a permanent
+The one-way-door concern: the `_written` entry acts as a permanent
 suppression. If the entity is truly gone from all sources and should be
 cleaned up, the `vanished` mechanism handles it (see below).
 
 #### Vanished entities
 
-When `synced_entities` is declared, the delta view UNION ALLs orphaned
-entities — present in synced_entities but absent from the resolved view:
+When `tombstone_policy` is set with `written_state`, the delta view
+UNION ALLs orphaned entities — present in `_written` but absent from the
+resolved view:
 
 ```sql
-SELECT _se._cluster_id, NULL AS _src_id, 'delete' AS _action
-FROM _synced_entities_system_b AS _se
+SELECT _ws."_cluster_id", NULL AS _src_id, 'delete' AS _action
+FROM _written_system_b AS _ws
 LEFT JOIN _resolved_customer AS r
-  ON r._entity_id_resolved = _se._cluster_id
+  ON r._entity_id_resolved = _ws."_cluster_id"
 WHERE r._entity_id_resolved IS NULL
 ```
 
 This produces a `'delete'` for entities that vanished from all sources.
-The ETL deletes from the target and removes from `synced_entities`. Clean,
+The ETL deletes from the target and removes from `_written`. Clean,
 deterministic, no policy decision needed — the entity is simply gone.
 
 ### Unlink as a policy option
@@ -631,24 +623,20 @@ it requires the ETL to write to `cluster_members` — which is a different
 table with different semantics. It also creates ghost data (stale,
 unmanaged records).
 
-Rather than a first-class `on_hard_delete` value, unlink is better
+Rather than a first-class `tombstone_policy` value, unlink is better
 expressed as an automation that an operator triggers: remove the
 cluster_members entry manually (or via admin UI) when they want a
 specific entity to become independent. It's an operational action, not
 a steady-state policy.
 
-### Full delta CASE with `synced_entities` and `on_hard_delete`
+### Full delta CASE with `written_state` and `tombstone_policy`
 
-For `on_hard_delete: suppress` (default):
+For `tombstone_policy: suppress` (default):
 
 ```sql
 CASE
   WHEN _src_id IS NULL
-   AND _se._cluster_id IS NOT NULL
-   AND _ov._override = 'insert'
-  THEN 'insert'                        -- operator override
-  WHEN _src_id IS NULL
-   AND _se._cluster_id IS NOT NULL
+   AND _ws."_cluster_id" IS NOT NULL
   THEN NULL                            -- suppress (exclude from delta)
   WHEN _src_id IS NULL
    AND {delete_conditions}
@@ -663,11 +651,11 @@ CASE
 END AS _action
 ```
 
-For `on_hard_delete: delete`:
+For `tombstone_policy: delete`:
 
 ```sql
   WHEN _src_id IS NULL
-   AND _se._cluster_id IS NOT NULL
+   AND _ws."_cluster_id" IS NOT NULL
   THEN 'delete'                        -- was synced, now gone → delete
 ```
 
@@ -683,11 +671,11 @@ different ways.
 
 #### Entity level: the re-insertion loop
 
-When the ETL handles `hard_deleted` for entity E in mapping A:
+When the ETL handles a suppressed entity E in mapping A:
 
-- If it removes E from `synced_entities` → next cycle sees `_src_id IS NULL`
-  + no synced entry → `'insert'` → loop resumes
-- If it keeps E in `synced_entities` → engine says `'hard_deleted'` forever
+- If it removes E from `_written` → next cycle sees `_src_id IS NULL`
+  + no `_written` entry → `'insert'` → loop resumes
+- If it keeps E in `_written` → engine suppresses forever
   → E can never come back through normal pipeline
 
 The ETL must choose between a loop and a deadlock.
@@ -816,7 +804,7 @@ override *after* confirming the insert succeeded, not before. The ETL
 should:
 
 1. Perform the insert
-2. On success: update `synced_entities` + delete override (in one transaction)
+2. On success: update `_written` + delete override (in one transaction)
 3. On failure: leave the override in place for retry on next cycle
 
 **Who writes to the overrides table:**
@@ -825,72 +813,115 @@ should:
 - An automation script (e.g., "re-insert all entities deleted before date X")
 - Direct SQL for operators comfortable with it
 
-This is a third engine-readable table per mapping (alongside
-`cluster_members`/`cluster_field` and `synced_entities`/`synced_elements`).
-Same read-only pattern: engine reads, operator/ETL writes.
+This is a second engine-readable table per mapping (alongside
+`_written_{mapping}`). Same read-only pattern: engine reads, operator/ETL
+writes.
 
 ### The admin UI question
 
 The override table is the mechanical primitive. In practice, operators need
 a UI to:
 
-- **See** which entities/elements are in `hard_deleted` / suppressed /
-  tombstoned state
+- **See** which entities/elements are suppressed / tombstoned state
 - **Understand** why (which source deleted, when, what the resolved state
   looks like)
 - **Act** by writing to the overrides table
 
 Building this UI is outside the engine's scope, but the engine should
-provide the tables and views that such a UI queries. The `synced_entities`,
-`synced_elements`, and `_overrides_{mapping}` tables, combined with the
-`_delta` and `_element_delta` views, give a UI everything it needs.
+provide the tables and views that such a UI queries. The `_written`,
+and `_overrides_{mapping}` tables, combined with the `_delta` and
+`_element_delta` views, give a UI everything it needs.
 
 ## What needs to happen
 
 ### Engine
 
-1. **Model** — add `synced_entities: Option<SyncedEntities>` to `Mapping`,
-   following the `ClusterMembers` pattern (`true` for defaults, object for
-   custom table/column names). Add `on_hard_delete: Option<OnHardDelete>`
-   enum (`suppress` | `delete` | `propagate`, default `suppress`).
+1. **Model** — add `tombstone_policy: Option<TombstonePolicy>` enum
+   (`suppress` | `delete`, default `suppress`). Independent of
+   `derive_tombstones` — only requires `written_state`. `propagate` is
+   deferred — it requires cross-mapping coordination that adds significant
+   complexity. No new `synced_entities` type — `written_state` provides
+   the state table.
 
-2. **Delta render** — when `synced_entities` is declared, LEFT JOIN the state
-   table and (optionally) the overrides table in the delta view. Generate
-   the CASE expression based on `on_hard_delete` value. UNION ALL orphaned
-   synced entities as `'delete'`.
+2. **Delta render** — when `tombstone_policy` is set (implies
+   `written_state`), add a CASE branch before the insert branch:
+   `WHEN _src_id IS NULL AND _ws._cluster_id IS NOT NULL THEN {action}`.
+   The `_written` table is already LEFT JOINed when `written_state` is
+   present. UNION ALL orphaned `_written` entities (present in `_written`
+   but absent from resolved view) as `'delete'`.
 
-3. **Validation** — `synced_entities` only valid on mappings with
-   bidirectional fields (same check as delta generation). `on_hard_delete`
-   requires `synced_entities` (without the state table, the engine can't
-   detect hard deletes). `on_hard_delete: propagate` requires all mappings
-   for the same target to declare `synced_entities`.
+3. **Validation** — `tombstone_policy` requires `written_state` (without
+   the `_written` table, the engine can't detect hard deletes).
 
-4. **Schema** — add `synced_entities` and `on_hard_delete` properties to
-   `mapping-schema.json`.
+4. **Schema** — add `tombstone_policy` property to `mapping-schema.json`.
 
 ### Documentation
 
-1. **ETL guidance** — document the state table contract (what the ETL writes)
-   and how to interpret `hard_deleted` / `vanished` actions.
+1. **ETL guidance** — document that `_written` serves double duty: noop
+   detection (JSONB payload) and hard-delete detection (row existence).
+   The ETL writes after each sync; removes after confirmed deletion.
 2. **Update propagated-delete example** — explain the relationship between
-   soft-delete (engine-native) and hard-delete (engine + ETL state).
+   soft-delete (engine-native) and hard-delete (engine + written state).
+
+### Open question: element-level deletion policy
+
+The `derive_tombstones` feature currently has implicit deletion-wins
+semantics — if any source removes an element, the removal propagates to
+all sources' reconstructed arrays. There is no per-mapping policy control.
+
+We should explore whether element-level deletions need the same policy
+options as entity-level hard deletes:
+
+| Policy | Entity level (`tombstone_policy`) | Element level (proposed `on_element_delete`) |
+|--------|-------------------------------|---------------------------------------------|
+| `suppress` | Don't re-insert the entity | Don't re-add the element (current behavior when one source removes) |
+| `delete` | Emit `'delete'` for this mapping | Remove element from this mapping's delta array |
+| `propagate` | Emit `'delete'` on all mappings | Remove element from ALL mappings' delta arrays (current `derive_tombstones` behavior) |
+
+Currently `derive_tombstones` always behaves as `propagate` — an element
+removed by one source is excluded from all sources' arrays. This is the
+right default for synchronized data, but may be wrong when sources
+contribute different elements (the "asymmetric contributions" footgun
+documented in the derive-tombstones example).
+
+A per-mapping `on_element_delete` policy could let the mapping author
+choose:
+
+```yaml
+mappings:
+  - name: blog_cms_recipes
+    written_state: true
+    derive_tombstones: true
+    tombstone_policy: suppress       # entity-level: suppress re-insertion
+    on_element_delete: propagate     # element-level: current default
+```
+
+This is a separate concern from entity-level hard deletes and should be
+designed independently. The main risk is over-engineering — if all current
+use cases work with deletion-wins, adding policy options premature. But
+the structural parallel with `on_hard_delete` suggests the abstraction is
+natural.
+
+**Decision:** Defer `on_element_delete` until a concrete use case demands
+non-propagate behavior. Document the parallel so it's easy to add later.
 
 ## Relationship to other plans
 
 - **[PROPAGATED-DELETE-PLAN](PROPAGATED-DELETE-PLAN.md)** — handles soft deletes
-  via engine views. This plan handles hard deletes via engine + ETL state.
+  via engine views. This plan handles hard deletes via written state.
   Complementary.
 - **[ORIGIN-PLAN](ORIGIN-PLAN.md)** — provides `_cluster_id` and insert
   feedback mechanisms (`cluster_members`, `cluster_field`). This plan follows
-  the same pattern: engine reads an ETL-maintained table.
+  the same read-ETL-state pattern via `_written`.
 - **[ELEMENT-DELETION-PLAN](ELEMENT-DELETION-PLAN.md)** — same pattern at the
-  array-element level. Uses `synced_elements` (engine reads ETL state) for
-  element-level deletion detection.
+  array-element level. Uses the *same* `_written` table — element deletion
+  extracts arrays from the JSONB payload, entity-level hard-delete detection
+  uses row existence. One table, two levels of detection.
 - **[SOURCE-REMOVAL-OPTIONS](SOURCE-REMOVAL-OPTIONS.md)** — handles removing
   an entire mapping from the configuration. This plan handles individual
   entities disappearing from a source while the mapping remains active.
 - **[ETL-STATE-INPUT-PLAN](ETL-STATE-INPUT-PLAN.md)** — generalises the
-  engine-reads-ETL-state pattern. `_written_{mapping}` provides both
-  hard-delete detection (row existence) and target-centric noop/conflict
-  detection (JSONB payload). Identity-only tables are a potential future
-  optimization.
+  engine-reads-ETL-state pattern. `_written_{mapping}` provides hard-delete
+  detection (row existence), target-centric noop detection (JSONB payload),
+  and element-level deletion detection (array presence in JSONB). One table,
+  three features.

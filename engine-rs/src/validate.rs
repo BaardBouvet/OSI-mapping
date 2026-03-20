@@ -310,6 +310,10 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
                 ),
             );
         }
+
+        // tombstone_policy is a pure policy knob — no prerequisites.
+        // Detection comes from cluster_members or derive_tombstones+written_state.
+        // Without a detection source, the policy is inert (no error, just unused).
     }
 }
 
@@ -1740,6 +1744,100 @@ mappings:
         assert!(
             msgs.iter().any(|m| m.contains("bogus_field")),
             "error should mention 'bogus_field', got: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn tombstone_policy_without_derive_tombstones_is_valid() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: coalesce }
+mappings:
+  - name: s
+    source: s
+    target: t
+    written_state: true
+    tombstone_policy: suppress
+    fields:
+      - { source: name, target: name }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        let policy_errors: Vec<_> = result
+            .errors()
+            .filter(|d| d.message.contains("tombstone_policy"))
+            .collect();
+        assert!(
+            policy_errors.is_empty(),
+            "tombstone_policy + written_state (no derive_tombstones) should be valid, got: {policy_errors:?}"
+        );
+    }
+
+    #[test]
+    fn tombstone_policy_alone_is_valid() {
+        // tombstone_policy is a pure policy knob — no prerequisites
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: coalesce }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone_policy: suppress
+    fields:
+      - { source: name, target: name }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        let policy_errors: Vec<_> = result
+            .errors()
+            .filter(|d| d.message.contains("tombstone_policy"))
+            .collect();
+        assert!(
+            policy_errors.is_empty(),
+            "tombstone_policy alone should be valid (pure policy), got: {policy_errors:?}"
+        );
+    }
+
+    #[test]
+    fn tombstone_policy_with_derive_tombstones_is_valid() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: coalesce }
+mappings:
+  - name: s
+    source: s
+    target: t
+    written_state: true
+    derive_tombstones: true
+    tombstone_policy: suppress
+    fields:
+      - { source: name, target: name }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        let policy_errors: Vec<_> = result
+            .errors()
+            .filter(|d| d.message.contains("tombstone_policy"))
+            .collect();
+        assert!(
+            policy_errors.is_empty(),
+            "tombstone_policy + derive_tombstones + written_state should be valid, got: {policy_errors:?}"
         );
     }
 }

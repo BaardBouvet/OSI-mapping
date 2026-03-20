@@ -1616,7 +1616,9 @@ async fn ensure_source_columns(
 }
 
 /// Ensure cluster_members tables exist for mappings that declare them.
-/// If the test input already created the table (with data), skip it.
+/// If the test input already created the table (with data rows), skip it.
+/// If the input has the table with an empty array, the generic loader
+/// creates it with only `_row_id` — re-create with the proper schema.
 /// Otherwise create an empty table so the forward view's LEFT JOIN succeeds.
 async fn ensure_cluster_members_tables(
     client: &tokio_postgres::Client,
@@ -1626,9 +1628,13 @@ async fn ensure_cluster_members_tables(
     for mapping in &doc.mappings {
         if let Some(ref cm) = mapping.cluster_members {
             let table = cm.table_name(&mapping.name);
-            if !input.contains_key(&table) {
+            let needs_create = match input.get(&table) {
+                None => true,                          // not in input at all
+                Some(rows) if rows.is_empty() => true, // empty array — generic loader has wrong schema
+                _ => false,                            // has data — generic loader inferred columns
+            };
+            if needs_create {
                 let qi = osi_engine::qi;
-                // Not in test input — drop any stale table and create empty
                 client
                     .execute(&format!("DROP TABLE IF EXISTS {} CASCADE", qi(&table)), &[])
                     .await

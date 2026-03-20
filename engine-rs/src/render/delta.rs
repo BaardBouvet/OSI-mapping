@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use std::collections::BTreeMap;
 
 use super::forward::{parse_path_segments, PathSegment};
-use crate::model::{Mapping, Source, Strategy, Target};
+use crate::model::{Mapping, Source, Strategy, Target, TombstonePolicy};
 use crate::{qi, sql_escape};
 
 /// A tree node for rebuilding nested JSONB from extracted fields.
@@ -186,16 +186,101 @@ struct DeletionFilter {
     identity_fields: Vec<String>,
 }
 
+/// Hard-delete detection info for a mapping.
+///
+/// Entity-level tombstones require a persistence table that outlives the
+/// source row.  Two paths exist:
+/// - `cluster_members` — LEFT JOIN on `_cluster_id`, check `_src_id IS NOT NULL`
+/// - `derive_tombstones` + `written_state` — `_ws._cluster_id IS NOT NULL`
+///
+/// When `cluster_members` is available, it is preferred because it's the
+/// semantically correct signal ("was this entity synced to this source?").
+struct TombstoneDetection {
+    /// SQL expression for the CASE branch (e.g. `_cm_hd."_src_id" IS NOT NULL`).
+    detection_expr: String,
+    /// SQL fragment to LEFT JOIN the detection table onto the delta FROM clause.
+    /// Uses the `{rev_view}` placeholder for the reverse view reference.
+    join_fragment: String,
+    /// Table/alias + cluster column for the vanished-entity UNION ALL source.
+    vanished_source: Option<VanishedSource>,
+    /// When true, the joined table introduces a second `_src_id` column,
+    /// so all `_src_id` references in the CASE must be qualified.
+    needs_src_id_qualifier: bool,
+}
+
+struct VanishedSource {
+    table: String,
+    cluster_col: String,
+}
+
+/// Compute hard-delete detection for a mapping, if applicable.
+fn tombstone_detection(mapping: &Mapping) -> Option<TombstoneDetection> {
+    mapping.effective_tombstone_policy()?;
+
+    if let Some(ref cm) = mapping.cluster_members {
+        let cm_table = qi(&cm.table_name(&mapping.name));
+        let cm_cluster = qi(&cm.cluster_id);
+        let cm_src_key = qi(&cm.source_key);
+        Some(TombstoneDetection {
+            detection_expr: format!("_cm_hd.{cm_src_key} IS NOT NULL"),
+            join_fragment: format!(
+                "\nLEFT JOIN {cm_table} AS _cm_hd ON _cm_hd.{cm_cluster} = {{rev_view}}.{}",
+                qi("_cluster_id")
+            ),
+            vanished_source: Some(VanishedSource {
+                table: cm_table,
+                cluster_col: cm_cluster,
+            }),
+            needs_src_id_qualifier: true,
+        })
+    } else if mapping.derive_tombstones {
+        if let Some(ref ws) = mapping.written_state {
+            let ws_table = qi(&ws.table_name(&mapping.name));
+            let ws_cluster = qi(&ws.cluster_id);
+            Some(TombstoneDetection {
+                detection_expr: format!("_ws.{ws_cluster} IS NOT NULL"),
+                // When written_state is present, _ws is already joined for noop.
+                // We still emit the join here; callers dedup if _ws is already present.
+                join_fragment: String::new(),
+                vanished_source: Some(VanishedSource {
+                    table: ws_table,
+                    cluster_col: ws_cluster,
+                }),
+                needs_src_id_qualifier: false,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 /// Build the CASE expression that classifies a row from a single mapping's
 /// reverse view as insert / delete / noop / update.
 ///
 /// When `written_col` is `Some`, a second noop branch compares resolved fields
 /// against the `_ws.{written_col}` JSONB column (target-centric noop).
+///
+/// When `tombstone_policy` is `Some`, a branch before the insert detects
+/// entities that were previously synced but have `_src_id IS NULL` (source
+/// row gone).  `detection_expr` is the SQL condition proving prior sync
+/// (e.g. `_cm_hd."_src_id" IS NOT NULL` or `_ws."_cluster_id" IS NOT NULL`).
+///
+/// When `src_id_qualifier` is `Some`, all `_src_id` references are qualified
+/// to avoid ambiguity with a LEFT JOINed table that also has `_src_id`.
 fn action_case(
     mapping: &Mapping,
     pk_columns: &std::collections::HashSet<&str>,
     written_col: Option<&str>,
+    tombstone_policy: Option<TombstonePolicy>,
+    detection_expr: Option<&str>,
+    src_id_qualifier: Option<&str>,
 ) -> String {
+    let src_id = match src_id_qualifier {
+        Some(q) => format!("{q}._src_id"),
+        None => "_src_id".to_string(),
+    };
     // Delete conditions from reverse_required + reverse_filter.
     let mut delete_conditions: Vec<String> = Vec::new();
     for fm in &mapping.fields {
@@ -237,17 +322,26 @@ fn action_case(
     if mapping.is_child() && !mapping.is_nested() {
         // Child mappings extract data from a shared source table.
         // They should not produce insert rows (can't insert partial records).
-        branches.push("WHEN _src_id IS NULL THEN NULL".to_string());
+        branches.push(format!("WHEN {src_id} IS NULL THEN NULL"));
     } else {
+        // Hard-delete detection: entity was previously synced but source
+        // row is now gone (_src_id IS NULL).
+        if let (Some(policy), Some(det)) = (tombstone_policy, detection_expr) {
+            let action = match policy {
+                TombstonePolicy::Suppress => "NULL",
+                TombstonePolicy::Delete => "'delete'",
+            };
+            branches.push(format!("WHEN {src_id} IS NULL AND {det} THEN {action}"));
+        }
         // Filter inserts: if delete conditions exist, an entity with _src_id IS NULL
         // that also matches the delete conditions should be excluded (not inserted).
         if !delete_conditions.is_empty() {
             branches.push(format!(
-                "WHEN _src_id IS NULL AND ({}) THEN NULL",
+                "WHEN {src_id} IS NULL AND ({}) THEN NULL",
                 delete_conditions.join(" OR ")
             ));
         }
-        branches.push("WHEN _src_id IS NULL THEN 'insert'".to_string());
+        branches.push(format!("WHEN {src_id} IS NULL THEN 'insert'"));
     }
     if !delete_conditions.is_empty() {
         branches.push(format!(
@@ -390,12 +484,24 @@ pub fn render_delta_view(
         } else {
             None
         };
-        let action_expr = action_case(mapping, &pk_columns, written_col);
+        let td = tombstone_detection(mapping);
+        let rev_view = qi(&format!("_rev_{}", mapping.name));
+        let src_qualifier = td
+            .as_ref()
+            .filter(|t| t.needs_src_id_qualifier)
+            .map(|_| rev_view.as_str());
+        let action_expr = action_case(
+            mapping,
+            &pk_columns,
+            written_col,
+            mapping.effective_tombstone_policy(),
+            td.as_ref().map(|t| t.detection_expr.as_str()),
+            src_qualifier,
+        );
         let mut cols: Vec<String> = vec![format!("{action_expr} AS _action")];
         let mut out_exprs = delta_output_exprs(&out_cols, mappings);
-        let rev_view = qi(&format!("_rev_{}", mapping.name));
-        // Qualify _cluster_id to avoid ambiguity with LEFT JOINed _written.
-        if mapping.written_state.is_some() {
+        // Qualify _cluster_id to avoid ambiguity with LEFT JOINed tables.
+        if mapping.written_state.is_some() || mapping.cluster_members.is_some() {
             let qi_cluster = qi("_cluster_id");
             if let Some(pos) = out_exprs.iter().position(|e| e == &qi_cluster) {
                 out_exprs[pos] = format!("{rev_view}.{qi_cluster}");
@@ -412,13 +518,47 @@ pub fn render_delta_view(
                 qi("_cluster_id")
             ));
         }
+        // Add cluster_members LEFT JOIN for hard-delete detection if needed.
+        if let Some(ref td) = td {
+            if !td.join_fragment.is_empty() {
+                from.push_str(&td.join_fragment.replace("{rev_view}", &rev_view));
+            }
+        }
+
+        // Vanished entities: present in persistence table but absent from
+        // resolved view.  UNION ALL'd into the delta to emit 'delete' for
+        // entities that are gone from all sources.
+        let vanished_union = td.as_ref().and_then(|td| {
+            let vs = td.vanished_source.as_ref()?;
+            let resolved_view = qi(&format!("_resolved_{}", mapping.target.name()));
+            let mut null_cols: Vec<String> = vec!["'delete' AS _action".to_string()];
+            for col in &out_cols {
+                if col == "_cluster_id" {
+                    null_cols.push(format!("_vs.{} AS {}", vs.cluster_col, qi(col)));
+                } else if col == "_base" {
+                    null_cols.push(format!("NULL::jsonb AS {}", qi(col)));
+                } else {
+                    null_cols.push(format!("NULL::text AS {}", qi(col)));
+                }
+            }
+            Some(format!(
+                "\nUNION ALL\nSELECT\n  {columns}\n\
+                 FROM {} AS _vs\n\
+                 LEFT JOIN {resolved_view} AS _r ON _r.\"_entity_id\" = _vs.{}\n\
+                 WHERE _r.\"_entity_id\" IS NULL",
+                vs.table,
+                vs.cluster_col,
+                columns = null_cols.join(",\n  "),
+            ))
+        });
 
         let sql = format!(
             "-- Delta: {source_name} (change detection)\n\
              CREATE OR REPLACE VIEW {view_name} AS\n\
              SELECT\n  {columns}\n\
-             FROM {from};\n",
+             FROM {from}{vanished};\n",
             columns = cols.join(",\n  "),
+            vanished = vanished_union.as_deref().unwrap_or(""),
         );
         return Ok(sql);
     }
@@ -466,13 +606,22 @@ pub fn render_delta_view(
 ///
 /// Insert/delete logic comes from primary mappings only.
 /// Noop checks ALL reverse fields against the merged `_base`.
+#[allow(clippy::too_many_arguments)]
 fn merged_action_case(
     primary_mappings: &[&&Mapping],
     pk_columns: &std::collections::HashSet<&str>,
     all_reverse_fields: &[String],
     written_col: Option<&str>,
     normalize_map: &std::collections::HashMap<&str, &str>,
+    tombstone_policy: Option<TombstonePolicy>,
+    detection_expr: Option<&str>,
+    src_id_qualifier: Option<&str>,
 ) -> String {
+    let src_id = match src_id_qualifier {
+        Some(q) => format!("{q}._src_id"),
+        None => "_src_id".to_string(),
+    };
+
     // Delete conditions from primary mappings only.
     let mut delete_conditions: Vec<String> = Vec::new();
     for m in primary_mappings {
@@ -511,13 +660,23 @@ fn merged_action_case(
 
     let mut branches = Vec::new();
 
+    // Hard-delete detection: entity was previously synced but source
+    // row is now gone (_src_id IS NULL).
+    if let (Some(policy), Some(det)) = (tombstone_policy, detection_expr) {
+        let action = match policy {
+            TombstonePolicy::Suppress => "NULL",
+            TombstonePolicy::Delete => "'delete'",
+        };
+        branches.push(format!("WHEN {src_id} IS NULL AND {det} THEN {action}"));
+    }
+
     if !delete_conditions.is_empty() {
         branches.push(format!(
-            "WHEN _src_id IS NULL AND ({}) THEN NULL",
+            "WHEN {src_id} IS NULL AND ({}) THEN NULL",
             delete_conditions.join(" OR ")
         ));
     }
-    branches.push("WHEN _src_id IS NULL THEN 'insert'".to_string());
+    branches.push(format!("WHEN {src_id} IS NULL THEN 'insert'"));
 
     if !delete_conditions.is_empty() {
         branches.push(format!(
@@ -770,12 +929,24 @@ fn render_delta_with_children(
             Some((src, norm))
         })
         .collect();
+    let primary_tombstone_policy = primary_mappings
+        .iter()
+        .find_map(|m| m.effective_tombstone_policy());
+    // Use detection from the first primary mapping that has it.
+    let primary_td = primary_mappings.iter().find_map(|m| tombstone_detection(m));
+    let merged_src_qualifier = primary_td
+        .as_ref()
+        .filter(|t| t.needs_src_id_qualifier)
+        .map(|_| "_merged");
     let action_expr = merged_action_case(
         primary_mappings,
         pk_columns,
         reverse_fields,
         written_col,
         &normalize_map,
+        primary_tombstone_policy,
+        primary_td.as_ref().map(|t| t.detection_expr.as_str()),
+        merged_src_qualifier,
     );
     let mut outer_cols: Vec<String> = vec![format!("{action_expr} AS _action")];
     let mut out_exprs = delta_output_exprs(
@@ -787,8 +958,8 @@ fn render_delta_with_children(
             .map(|m| **m)
             .collect::<Vec<_>>(),
     );
-    // Qualify _cluster_id when _written is joined.
-    if primary_ws.is_some() {
+    // Qualify _cluster_id when an extra table is joined.
+    if primary_ws.is_some() || primary_td.is_some() {
         let qi_cluster = qi("_cluster_id");
         if let Some(pos) = out_exprs.iter().position(|e| e == &qi_cluster) {
             out_exprs[pos] = format!("_merged.{qi_cluster}");
@@ -797,16 +968,8 @@ fn render_delta_with_children(
     outer_cols.extend(out_exprs);
 
     // Include target fields for reverse_filter pass-through from primary.
-    // These are already projected in the primary reverse view; we just need
-    // them in the outer SELECT for the filter references in action_case.
     if let Some(m) = primary_mappings.first() {
         if let Some(ref rf) = m.reverse_filter {
-            // Check if filter references fields not already in out_cols.
-            // reverse_filter fields are target fields added to reverse view.
-            // They appear in _p.* but may not be in out_cols.
-            // The action_case references them directly so they must be in _merged.
-            // Since _merged uses _p.*, they're available.  No extra work needed
-            // because _merged gets them from the _p CTE (SELECT * FROM _rev_...).
             let _ = rf; // suppress unused warning
         }
     }
@@ -820,15 +983,47 @@ fn render_delta_with_children(
             qi("_cluster_id")
         ));
     }
+    // Add cluster_members LEFT JOIN for hard-delete detection if needed.
+    if let Some(ref td) = primary_td {
+        if !td.join_fragment.is_empty() {
+            from.push_str(&td.join_fragment.replace("{rev_view}", "_merged"));
+        }
+    }
+
+    // Vanished entities: present in persistence table but absent from resolved.
+    let vanished_union = primary_td.as_ref().and_then(|td| {
+        let vs = td.vanished_source.as_ref()?;
+        let resolved_view = qi(&format!("_resolved_{}", primary_mappings[0].target.name()));
+        let mut null_cols: Vec<String> = vec!["'delete' AS _action".to_string()];
+        for col in out_cols {
+            if col == "_cluster_id" {
+                null_cols.push(format!("_vs.{} AS {}", vs.cluster_col, qi(col)));
+            } else if col == "_base" {
+                null_cols.push(format!("NULL::jsonb AS {}", qi(col)));
+            } else {
+                null_cols.push(format!("NULL::text AS {}", qi(col)));
+            }
+        }
+        Some(format!(
+            "\nUNION ALL\nSELECT\n  {columns}\n\
+             FROM {} AS _vs\n\
+             LEFT JOIN {resolved_view} AS _r ON _r.\"_entity_id\" = _vs.{}\n\
+             WHERE _r.\"_entity_id\" IS NULL",
+            vs.table,
+            vs.cluster_col,
+            columns = null_cols.join(",\n  "),
+        ))
+    });
 
     let sql = format!(
         "-- Delta: {source_name} (change detection)\n\
          CREATE OR REPLACE VIEW {view_name} AS\n\
          WITH\n  {ctes}\n\
          SELECT\n  {columns}\n\
-         FROM {from};\n",
+         FROM {from}{vanished};\n",
         ctes = ctes.join(",\n  "),
         columns = outer_cols.join(",\n  "),
+        vanished = vanished_union.as_deref().unwrap_or(""),
     );
 
     Ok(sql)
@@ -851,8 +1046,20 @@ fn render_delta_union_all(
             } else {
                 None
             };
-            let case_expr = action_case(m, pk_columns, written_col);
+            let td = tombstone_detection(m);
             let rev_view = qi(&format!("_rev_{}", m.name));
+            let src_qualifier = td
+                .as_ref()
+                .filter(|t| t.needs_src_id_qualifier)
+                .map(|_| rev_view.as_str());
+            let case_expr = action_case(
+                m,
+                pk_columns,
+                written_col,
+                m.effective_tombstone_policy(),
+                td.as_ref().map(|t| t.detection_expr.as_str()),
+                src_qualifier,
+            );
             let m_fields: std::collections::HashSet<&str> = m
                 .fields
                 .iter()
@@ -863,7 +1070,9 @@ fn render_delta_union_all(
                 m.passthrough.iter().map(|s| s.as_str()).collect();
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
             for col in out_cols {
-                if col == "_cluster_id" && m.written_state.is_some() {
+                if col == "_cluster_id"
+                    && (m.written_state.is_some() || m.cluster_members.is_some())
+                {
                     projected.push(format!("{rev_view}.{}", qi(col)));
                 } else if col == "_cluster_id"
                     || col == "_base"
@@ -885,15 +1094,52 @@ fn render_delta_union_all(
                     qi("_cluster_id")
                 ));
             }
+            if let Some(ref td) = td {
+                if !td.join_fragment.is_empty() {
+                    from.push_str(&td.join_fragment.replace("{rev_view}", &rev_view));
+                }
+            }
             format!("SELECT {} FROM {}", projected.join(", "), from)
         })
         .collect();
+
+    // Vanished entities: for each mapping with detection, add a UNION ALL
+    // branch that picks up entities in the persistence table but absent from _resolved.
+    let mut vanished_selects: Vec<String> = Vec::new();
+    for m in mappings {
+        if let Some(td) = tombstone_detection(m) {
+            if let Some(vs) = &td.vanished_source {
+                let resolved_view = qi(&format!("_resolved_{}", m.target.name()));
+                let mut null_cols: Vec<String> = vec!["'delete' AS _action".to_string()];
+                for col in out_cols {
+                    if col == "_cluster_id" {
+                        null_cols.push(format!("_vs.{} AS {}", vs.cluster_col, qi(col)));
+                    } else if col == "_base" {
+                        null_cols.push(format!("NULL::jsonb AS {}", qi(col)));
+                    } else {
+                        null_cols.push(format!("NULL::text AS {}", qi(col)));
+                    }
+                }
+                vanished_selects.push(format!(
+                    "SELECT {columns} FROM {} AS _vs \
+                     LEFT JOIN {resolved_view} AS _r ON _r.\"_entity_id\" = _vs.{} \
+                     WHERE _r.\"_entity_id\" IS NULL",
+                    vs.table,
+                    vs.cluster_col,
+                    columns = null_cols.join(", "),
+                ));
+            }
+        }
+    }
+
+    let mut all_selects = selects;
+    all_selects.extend(vanished_selects);
 
     let sql = format!(
         "-- Delta: {source_name} (change detection)\n\
          CREATE OR REPLACE VIEW {view_name} AS\n\
          {selects};\n",
-        selects = selects.join("\nUNION ALL\n"),
+        selects = all_selects.join("\nUNION ALL\n"),
     );
 
     Ok(sql)
@@ -1860,6 +2106,317 @@ mappings:
         assert!(
             !sql.contains("_written_s_t2"),
             "s_t2 branch should not reference _written:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_suppress_via_derive_tombstones() {
+        // derive_tombstones + written_state → detection via _written table
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    written_state: true
+    derive_tombstones: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // Default policy is suppress: _ws._cluster_id IS NOT NULL → NULL
+        assert!(
+            sql.contains("_ws.\"_cluster_id\" IS NOT NULL THEN NULL"),
+            "suppress should emit NULL for hard-deleted entities:\n{sql}"
+        );
+        // Vanished entities UNION ALL
+        assert!(
+            sql.contains("UNION ALL"),
+            "should have vanished-entity UNION ALL:\n{sql}"
+        );
+        assert!(
+            sql.contains("_resolved_t"),
+            "vanished query should reference _resolved:\n{sql}"
+        );
+        assert!(
+            sql.contains("AS _vs"),
+            "vanished query should alias persistence table as _vs:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_delete_via_derive_tombstones() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    written_state: true
+    derive_tombstones: true
+    tombstone_policy: delete
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            sql.contains("_ws.\"_cluster_id\" IS NOT NULL THEN 'delete'"),
+            "delete policy should emit 'delete' for hard-deleted entities:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_suppress_via_cluster_members() {
+        // cluster_members alone → detection via cluster_members table
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    cluster_members: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // Default policy is suppress: _cm_hd._src_id IS NOT NULL → NULL
+        assert!(
+            sql.contains("_cm_hd.\"_src_id\" IS NOT NULL THEN NULL"),
+            "cluster_members should detect hard-deleted entities:\n{sql}"
+        );
+        // LEFT JOIN cluster_members
+        assert!(
+            sql.contains("LEFT JOIN \"_cluster_members_s\" AS _cm_hd"),
+            "should LEFT JOIN cluster_members:\n{sql}"
+        );
+        // Vanished entities via cluster_members
+        assert!(
+            sql.contains("UNION ALL"),
+            "should have vanished-entity UNION ALL:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_delete_via_cluster_members() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    cluster_members: true
+    tombstone_policy: delete
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            sql.contains("_cm_hd.\"_src_id\" IS NOT NULL THEN 'delete'"),
+            "delete policy via cluster_members:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_cluster_members_preferred_over_written_state() {
+        // When both cluster_members and derive_tombstones+written_state exist,
+        // cluster_members is preferred for detection.
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    cluster_members: true
+    written_state: true
+    derive_tombstones: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // Should use cluster_members, not _written, for detection
+        assert!(
+            sql.contains("_cm_hd.\"_src_id\" IS NOT NULL"),
+            "should prefer cluster_members for detection:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_suppress_union_all_path() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t1: { fields: { name: { strategy: coalesce } } }
+  t2: { fields: { email: { strategy: coalesce } } }
+mappings:
+  - name: s_t1
+    source: s
+    target: t1
+    written_state: true
+    derive_tombstones: true
+    fields: [{ source: name, target: name }]
+  - name: s_t2
+    source: s
+    target: t2
+    fields: [{ source: email, target: email }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // s_t1 should have hard-delete suppress branch
+        assert!(
+            sql.contains("_ws.\"_cluster_id\" IS NOT NULL THEN NULL"),
+            "s_t1 branch should suppress hard-deleted entities:\n{sql}"
+        );
+        // Vanished entities for s_t1
+        assert!(
+            sql.contains("_resolved_t1"),
+            "vanished query should reference _resolved_t1:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn no_detection_without_persistence() {
+        // No cluster_members, no derive_tombstones — no detection
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            !sql.contains("_ws."),
+            "without written_state, no _ws references:\n{sql}"
+        );
+        assert!(
+            !sql.contains("_cm_hd"),
+            "without cluster_members, no _cm_hd references:\n{sql}"
+        );
+        assert!(
+            !sql.contains("UNION ALL"),
+            "without detection source, no vanished UNION ALL:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_policy_alone_is_inert() {
+        // tombstone_policy without detection source does nothing
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone_policy: delete
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            !sql.contains("THEN 'delete'"),
+            "tombstone_policy without detection source should be inert:\n{sql}"
+        );
+        assert!(
+            !sql.contains("UNION ALL"),
+            "no vanished UNION ALL without detection source:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn written_state_without_derive_tombstones_no_hard_delete() {
+        // written_state alone (e.g. for derive_noop) should NOT add hard-delete branches
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    written_state: true
+    derive_noop: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // _ws is joined for noop, but there should be no hard-delete branch
+        assert!(
+            !sql.contains("_ws.\"_cluster_id\" IS NOT NULL THEN NULL"),
+            "noop-only should not have hard-delete suppress:\n{sql}"
+        );
+        assert!(
+            !sql.contains("UNION ALL"),
+            "noop-only should not have vanished UNION ALL:\n{sql}"
         );
     }
 }

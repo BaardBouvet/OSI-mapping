@@ -1,0 +1,82 @@
+version: "1.0"
+description: >
+  Entity-level hard-delete detection via cluster_members.
+  Two systems (CRM and ERP) synchronize customer records through the engine.
+  When a customer is hard-deleted from ERP (row gone, no tombstone),
+  the engine detects the absence by checking cluster_members — the ETL
+  feedback table that records which entities were synced to which source.
+  tombstone_policy controls what the engine emits for the vanished entity.
+
+sources:
+  crm:
+    primary_key: id
+  erp:
+    primary_key: cust_id
+
+targets:
+  customer:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+
+mappings:
+  - name: crm_customers
+    source: crm
+    target: customer
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+        priority: 1
+
+  - name: erp_customers
+    source: erp
+    target: customer
+    cluster_members: true
+    tombstone_policy: suppress
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+
+tests:
+  - description: >
+      Alice exists in CRM but was hard-deleted from ERP.
+      The cluster_members table records that erp_customers previously
+      synced Alice (it has an entry with her cluster_id + src_id).
+      Without tombstone detection, the delta would emit 'insert' for ERP
+      (re-inserting Alice into the system that just deleted her).
+      With cluster_members + tombstone_policy: suppress, the engine
+      detects the hard delete and excludes the row from the delta entirely.
+      CRM's delta is unaffected.
+    input:
+      crm:
+        - { id: "C1", email: "alice@example.com", name: "Alice" }
+        - { id: "C2", email: "bob@example.com", name: "Bob" }
+      erp:
+        - { cust_id: "E2", email: "bob@example.com", name: "Bob" }
+      _cluster_members_erp_customers:
+        - _cluster_id: "crm_customers:C1"
+          _src_id: "E1"
+        - _cluster_id: "erp_customers:E2"
+          _src_id: "E2"
+    expected: {}
+
+  - description: >
+      Bob is a new customer in CRM, never synced to ERP before.
+      No cluster_members entry exists for Bob in erp_customers.
+      The delta correctly emits 'insert' for ERP — this is a genuine
+      first sync, not a re-insertion.
+    input:
+      crm:
+        - { id: "C1", email: "bob@example.com", name: "Bob" }
+      erp: []
+      _cluster_members_erp_customers: []
+    expected:
+      erp:
+        inserts:
+          - { email: "bob@example.com", name: "Bob" }

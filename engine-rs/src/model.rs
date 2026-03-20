@@ -240,6 +240,19 @@ pub enum Strategy {
     BoolOr,
 }
 
+/// Policy for detected tombstones — what to do when a previously-synced
+/// entity or element is absent from the current state.
+/// Requires `derive_tombstones` + `written_state`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TombstonePolicy {
+    /// Exclude from delta entirely — no re-insert, no delete.
+    #[default]
+    Suppress,
+    /// Emit `'delete'` — ETL deletes from this target system.
+    Delete,
+}
+
 /// A source-to-target mapping.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -296,11 +309,16 @@ pub struct Mapping {
     /// writer to the target.
     #[serde(default)]
     pub derive_noop: bool,
-    /// When true and `written_state` is declared, elements that were in the
-    /// previously-written JSONB array but are now absent from the source's
-    /// forward view are excluded from all sources' reconstructed arrays.
-    /// The engine derives tombstones by comparing the written state against
-    /// the current forward view — no explicit tombstone records needed.
+    /// When true and `written_state` is declared, the engine derives
+    /// tombstones by comparing written state against current state.  This
+    /// enriches the source data with deletion information the source
+    /// system doesn't provide natively:
+    /// - **Entity level:** entities in `_written` but absent from the
+    ///   source are treated as hard-deleted (policy per `tombstone_policy`,
+    ///   default suppress).
+    /// - **Element level:** elements in the written JSONB array but absent
+    ///   from the forward view are excluded from all sources' arrays.
+    ///
     /// Off by default — opt-in because the written JSONB stores the merged
     /// output, not per-source contributions, which can cause false
     /// tombstones when sources contribute different elements.
@@ -318,6 +336,13 @@ pub struct Mapping {
     /// noop detection and resolution.
     #[serde(default)]
     pub passthrough: Vec<String>,
+    /// Entity-level tombstone policy — what to do when a tombstone is
+    /// detected for a previously-synced entity.  The tombstone may be
+    /// derived (via `derive_tombstones`) or detected via `cluster_members`
+    /// (row exists but source row is gone).  `suppress` (default) excludes
+    /// the row from the delta; `delete` emits a delete action.
+    #[serde(default)]
+    pub tombstone_policy: Option<TombstonePolicy>,
 }
 
 impl Mapping {
@@ -361,6 +386,28 @@ impl Mapping {
     /// The effective array path (from `array` or `array_path`).
     pub fn effective_array(&self) -> Option<&str> {
         self.array.as_deref().or(self.array_path.as_deref())
+    }
+
+    /// Effective entity-level tombstone policy.
+    ///
+    /// Returns `Some(policy)` when entity-level hard-delete detection is
+    /// active.  Detection requires a persistence table that outlives the
+    /// source row:
+    /// - `cluster_members` — ETL feedback table records which entities were
+    ///   synced to which source.  Always sufficient on its own.
+    /// - `derive_tombstones` + `written_state` — the `_written` table
+    ///   records what was previously written to the target.
+    ///
+    /// Either path activates detection.  The policy is controlled by
+    /// `tombstone_policy` (default `Suppress`).
+    pub fn effective_tombstone_policy(&self) -> Option<TombstonePolicy> {
+        let has_detection = self.cluster_members.is_some()
+            || (self.derive_tombstones && self.written_state.is_some());
+        if has_detection {
+            Some(self.tombstone_policy.unwrap_or_default())
+        } else {
+            None
+        }
     }
 }
 
