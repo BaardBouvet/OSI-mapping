@@ -324,17 +324,19 @@ pub struct Mapping {
     #[serde(default)]
     pub passthrough: Vec<String>,
     /// Whether to re-insert entities that disappeared from this source.
-    /// When `false` and a detection mechanism is available (`cluster_members`
-    /// or `derive_tombstones` + `written_state`), entities that were
-    /// previously synced but are now absent are excluded from the delta
-    /// instead of being re-inserted.  Default `true` (normal insert
-    /// behaviour).
-    #[serde(default = "default_true")]
+    /// When `false` (default) and a detection mechanism is available
+    /// (`cluster_members` or `derive_tombstones` + `written_state`), entities
+    /// that were previously synced but are now absent are excluded from the
+    /// delta instead of being re-inserted.  Set to `true` to allow
+    /// re-insertion (opt out of hard-delete detection).
+    #[serde(default)]
     pub reinsert: bool,
-}
-
-fn default_true() -> bool {
-    true
+    /// SQL boolean expression — when true, the entity is treated as
+    /// disappeared from this source (soft delete).  The row still exists
+    /// in the source but is semantically deleted.  Independent of
+    /// `reinsert` — always suppresses the row from the delta.
+    #[serde(default)]
+    pub tombstone: Option<String>,
 }
 
 impl Mapping {
@@ -387,8 +389,8 @@ impl Mapping {
     /// - `cluster_members` — ETL feedback table.
     /// - `derive_tombstones` + `written_state` — written-state table.
     ///
-    /// When true, the delta CASE emits NULL (exclude) instead of 'insert'
-    /// for entities that were previously synced but are now absent.
+    /// Note: `tombstone` does NOT contribute here — tombstone suppression
+    /// is independent and always active when the expression is set.
     pub fn suppress_reinsert(&self) -> bool {
         let has_detection = self.cluster_members.is_some()
             || (self.derive_tombstones && self.written_state.is_some());

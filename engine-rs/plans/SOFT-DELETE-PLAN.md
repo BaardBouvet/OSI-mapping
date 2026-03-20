@@ -1,11 +1,11 @@
 # Soft-delete (tombstone) support
 
-**Status:** Plan
+**Status:** Implemented
 
 First-class support for source-provided tombstones — rows that remain in the
 source but are semantically deleted (soft delete).  When a source provides a
-deletion signal, the engine should treat the entity as disappeared from that
-source, feeding into the same `reinsert` mechanism used for hard deletes.
+deletion signal, the engine treats the entity as disappeared from that
+source.  Independent of `reinsert` — always suppresses the row from the delta.
 
 Complements [HARD-DELETE-PROPAGATION-PLAN](HARD-DELETE-PROPAGATION-PLAN.md)
 (entity disappears because the row is gone) and
@@ -60,15 +60,14 @@ mappings:
     source: crm
     target: customer
     tombstone: "deleted_at IS NOT NULL"
-    reinsert: false
     fields:
       - source: email
         target: email
 ```
 
-This integrates with the existing `reinsert` mechanism:
+This integrates with the delta CASE independently of `reinsert`:
 - The delta CASE sees the row as "disappeared" — same as a hard delete
-- `reinsert: false` suppresses re-insertion from other sources
+- Always emits NULL (suppress) — the row is excluded from the delta
 
 ## Design
 
@@ -92,7 +91,7 @@ insert/update/delete/noop logic:
 CASE
   -- Soft-delete: source row exists but is tombstoned
   WHEN _src_id IS NOT NULL AND (deleted_at IS NOT NULL) THEN NULL
-  -- Hard-delete: source row gone but was previously synced
+  -- Hard-delete: source row gone but was previously synced (reinsert: false)
   WHEN _src_id IS NULL AND _cm_hd."_src_id" IS NOT NULL THEN NULL
   -- Normal insert/update/noop...
   WHEN _src_id IS NULL THEN 'insert'
@@ -103,17 +102,16 @@ END
 
 The suppress branch always emits `NULL` (row excluded from delta).
 
-### Integration with `reinsert`
+### Independence from `reinsert`
 
-`tombstone` is a detection mechanism, just like `cluster_members` or
-`derive_tombstones`.  When present, it contributes to `suppress_reinsert()`:
+`tombstone` is independent of the `reinsert` mechanism.  It does NOT
+contribute to `suppress_reinsert()`.  The tombstone CASE branch is always
+active when the expression is set — no detection mechanism needed:
 
 ```rust
-pub fn suppress_reinsert(&self) -> bool {
-    let has_detection = self.cluster_members.is_some()
-        || (self.derive_tombstones && self.written_state.is_some())
-        || self.tombstone.is_some();  // NEW
-    has_detection && !self.reinsert
+// In action_case():
+if let Some(ref expr) = mapping.tombstone {
+    branches.push(format!("WHEN {src_id} IS NOT NULL AND ({expr}) THEN NULL"));
 }
 ```
 
@@ -139,7 +137,6 @@ A mapping can have both:
     source: erp
     target: customer
     tombstone: "erp_deleted = true"
-    reinsert: false
     reverse_filter: "tier IS NOT NULL"
     fields: [...]
 ```
@@ -149,7 +146,7 @@ A mapping can have both:
 | Aspect | `propagated-delete` (current) | `tombstone` (proposed) |
 |---|---|---|
 | Detection | User wires `expression` + `bool_or` target field | Declared on mapping |
-| Delta action | `'update'` (sets `is_deleted: true`) | suppress (NULL) |
+| Delta action | `'update'` (sets `is_deleted: true`) | suppress (excluded from delta) |
 | Scope | Cross-system propagation via resolution | Per-source detection |
 | Complexity | 3-4 properties across mapping + target | 1 property on mapping |
 | Target schema | Requires `is_deleted` field on target | No target field needed |
@@ -168,12 +165,12 @@ Add `tombstone: Option<String>` to `Mapping`:
 ```rust
 /// SQL boolean expression — when true, the entity is treated as
 /// disappeared from this source (soft delete).  Feeds into
-/// `reinsert` mechanism.
+/// `reinsert` mechanism.  Independent — always suppresses when set.
 #[serde(default)]
 pub tombstone: Option<String>,
 ```
 
-Update `suppress_reinsert()` to include `self.tombstone.is_some()`.
+`suppress_reinsert()` is NOT updated — tombstone is independent.
 
 ### 2. Delta render
 
@@ -182,10 +179,9 @@ hard-delete detection:
 
 ```rust
 // Soft-delete: source row exists but tombstone expression is true
+// Independent of reinsert — always suppresses
 if let Some(ref expr) = mapping.tombstone {
-    if mapping.suppress_reinsert() {
-        branches.push(format!("WHEN {src_id} IS NOT NULL AND ({expr}) THEN NULL"));
-    }
+    branches.push(format!("WHEN {src_id} IS NOT NULL AND ({expr}) THEN NULL"));
 }
 ```
 
@@ -199,17 +195,14 @@ Add to `mapping-schema.json`:
 ```json
 "tombstone": {
   "type": "string",
-  "description": "SQL boolean expression — when true, the entity is treated as disappeared from this source (soft delete). Integrates with reinsert mechanism."
+  "description": "SQL boolean expression — when true, the entity is treated as disappeared from this source (soft delete). Always suppresses the row from the delta, independent of the reinsert setting."
 }
 ```
 
 ### 4. Validation
 
-- `tombstone` has no prerequisites (like `reinsert`, it's inert without
-  detection but harmless).
-- Warn if `tombstone` is set without `reinsert: false`?  Probably not — the
-  default `reinsert: true` means tombstone detection is inactive, which is
-  safe.
+- `tombstone` has no prerequisites — always active when set.
+- No need for `reinsert: false` — tombstone suppression is independent.
 
 ### 5. Example
 
@@ -241,7 +234,6 @@ mappings:
     source: crm
     target: customer
     tombstone: "deleted_at IS NOT NULL"
-    reinsert: false
     fields:
       - source: email
         target: email
@@ -253,7 +245,6 @@ mappings:
     source: erp
     target: customer
     cluster_members: true
-    reinsert: false
     fields:
       - source: email
         target: email

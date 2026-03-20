@@ -1,0 +1,59 @@
+version: "1.0"
+description: >
+  Soft-delete detection via tombstone expression.
+  CRM has a deleted_at column — when set, the customer is treated as
+  disappeared from CRM.  ERP has no soft-delete column.
+  The tombstone property is independent of reinsert — it always
+  suppresses the soft-deleted row from the delta.
+
+sources:
+  crm:
+    primary_key: id
+  erp:
+    primary_key: cust_id
+
+targets:
+  customer:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+
+mappings:
+  - name: crm_customers
+    source: crm
+    target: customer
+    tombstone: "deleted_at IS NOT NULL"
+    passthrough: [deleted_at]
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+        priority: 1
+
+  - name: erp_customers
+    source: erp
+    target: customer
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+
+tests:
+  - description: >
+      Alice is soft-deleted in CRM (deleted_at is set).
+      ERP still has Alice as an active customer.
+      CRM's delta suppresses Alice — no re-insert to CRM.
+      ERP's delta is unaffected (update/noop for Alice).
+      Bob is active in both systems — normal behavior.
+    input:
+      crm:
+        - { id: "C1", email: "alice@example.com", name: "Alice", deleted_at: "2026-03-15" }
+        - { id: "C2", email: "bob@example.com", name: "Bob", deleted_at: null }
+      erp:
+        - { cust_id: "E1", email: "alice@example.com", name: "Alice" }
+        - { cust_id: "E2", email: "bob@example.com", name: "Bob" }
+    expected: {}

@@ -324,6 +324,11 @@ fn action_case(
         // They should not produce insert rows (can't insert partial records).
         branches.push(format!("WHEN {src_id} IS NULL THEN NULL"));
     } else {
+        // Soft-delete: source row exists but tombstone expression is true.
+        // Independent of reinsert — always suppresses.
+        if let Some(ref expr) = mapping.tombstone {
+            branches.push(format!("WHEN {src_id} IS NOT NULL AND ({expr}) THEN NULL"));
+        }
         // Suppress re-insertion: entity was previously synced but source
         // row is now gone (_src_id IS NULL).  Exclude from delta.
         if let Some(det) = detection_expr {
@@ -653,6 +658,12 @@ fn merged_action_case(
         .collect();
 
     let mut branches = Vec::new();
+
+    // Soft-delete: source row exists but tombstone expression is true.
+    // Uses the primary mapping's tombstone (shared source).
+    if let Some(ref expr) = primary_mappings.first().and_then(|m| m.tombstone.as_ref()) {
+        branches.push(format!("WHEN {src_id} IS NOT NULL AND ({expr}) THEN NULL"));
+    }
 
     // Suppress re-insertion: entity was previously synced but source
     // row is now gone (_src_id IS NULL).  Exclude from delta.
@@ -2139,8 +2150,8 @@ mappings:
     }
 
     #[test]
-    fn derive_tombstones_default_reinsert_no_entity_detection() {
-        // derive_tombstones + written_state without reinsert: false → no entity-level detection
+    fn derive_tombstones_reinsert_true_opts_out() {
+        // derive_tombstones + written_state + reinsert: true → no entity-level detection
         let doc = parse(
             r#"
 version: "1.0"
@@ -2154,6 +2165,7 @@ mappings:
     target: t
     written_state: true
     derive_tombstones: true
+    reinsert: true
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2163,11 +2175,11 @@ mappings:
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             !sql.contains("IS NOT NULL THEN NULL"),
-            "derive_tombstones without reinsert: false should not suppress:\n{sql}"
+            "reinsert: true should opt out of detection:\n{sql}"
         );
         assert!(
             !sql.contains("UNION ALL"),
-            "no vanished UNION ALL without reinsert: false:\n{sql}"
+            "no vanished UNION ALL with reinsert: true:\n{sql}"
         );
     }
 
@@ -2212,8 +2224,8 @@ mappings:
     }
 
     #[test]
-    fn cluster_members_default_reinsert_no_detection() {
-        // cluster_members without reinsert: false → no detection
+    fn cluster_members_reinsert_true_opts_out() {
+        // cluster_members + reinsert: true → no detection (opt out)
         let doc = parse(
             r#"
 version: "1.0"
@@ -2226,6 +2238,7 @@ mappings:
     source: s
     target: t
     cluster_members: true
+    reinsert: true
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2235,11 +2248,11 @@ mappings:
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             !sql.contains("_cm_hd"),
-            "cluster_members without reinsert: false should not detect:\n{sql}"
+            "reinsert: true should opt out of detection:\n{sql}"
         );
         assert!(
             !sql.contains("UNION ALL"),
-            "no vanished UNION ALL without reinsert: false:\n{sql}"
+            "no vanished UNION ALL with reinsert: true:\n{sql}"
         );
     }
 
@@ -2414,6 +2427,131 @@ mappings:
         assert!(
             !sql.contains("UNION ALL"),
             "noop-only should not have vanished UNION ALL:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_suppresses_soft_deleted_row() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone: "deleted_at IS NOT NULL"
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            sql.contains("_src_id IS NOT NULL AND (deleted_at IS NOT NULL) THEN NULL"),
+            "tombstone should suppress soft-deleted entities:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_independent_of_reinsert() {
+        // tombstone works even with reinsert: true
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone: "deleted_at IS NOT NULL"
+    reinsert: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            sql.contains("_src_id IS NOT NULL AND (deleted_at IS NOT NULL) THEN NULL"),
+            "tombstone should work even with reinsert: true:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_no_vanished_union_all() {
+        // tombstone alone does not produce vanished-entity UNION ALL
+        // (soft-deleted rows still exist in source — no vanishment)
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone: "deleted_at IS NOT NULL"
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            !sql.contains("UNION ALL"),
+            "tombstone alone should not produce UNION ALL:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_with_cluster_members() {
+        // Both tombstone (soft) and cluster_members (hard) active
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t: { fields: { name: { strategy: coalesce } } }
+mappings:
+  - name: s
+    source: s
+    target: t
+    tombstone: "deleted_at IS NOT NULL"
+    cluster_members: true
+    fields: [{ source: name, target: name }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // Soft-delete branch (before hard-delete)
+        assert!(
+            sql.contains("_src_id IS NOT NULL AND (deleted_at IS NOT NULL) THEN NULL"),
+            "tombstone branch should be present:\n{sql}"
+        );
+        // Hard-delete branch
+        assert!(
+            sql.contains("_cm_hd.\"_src_id\" IS NOT NULL THEN NULL"),
+            "cluster_members hard-delete branch should be present:\n{sql}"
+        );
+        // Vanished entities
+        assert!(
+            sql.contains("UNION ALL"),
+            "should have vanished-entity UNION ALL:\n{sql}"
         );
     }
 }

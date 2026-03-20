@@ -368,7 +368,8 @@ Maps fields from one source dataset to one target entity.
 | `derive_noop` | boolean | no | Target-centric noop detection via written state |
 | `derive_tombstones` | boolean | no | Element-level deletion propagation via written state |
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
-| `reinsert` | boolean | no | Whether to re-insert entities that disappeared from this source (default `true`) |
+| `reinsert` | boolean | no | Whether to re-insert entities that disappeared from this source (default `false`) |
+| `tombstone` | string | no | SQL boolean expression — when true, entity is treated as soft-deleted |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
 
 ```yaml
@@ -640,20 +641,42 @@ When `true` (requires `written_state`), derives per-field `_ts_{field}` timestam
 
 ### `reinsert`
 
-Whether to re-insert entities that disappeared from this source. When `false` and a detection mechanism is available — `cluster_members` (preferred) or `derive_tombstones` + `written_state` — the engine suppresses re-insertion by emitting `NULL` instead of `'insert'` for entities that were previously synced but are now absent.
+Whether to re-insert entities that disappeared from this source. When `false` (default) and a detection mechanism is available — `cluster_members` (preferred) or `derive_tombstones` + `written_state` — disappeared entities are excluded from the delta instead of being re-inserted. Set to `true` to allow re-insertion (opt out of hard-delete detection).
 
-Default is `true` (normal insert behavior). Without a detection mechanism, `reinsert: false` is inert (no error, just unused).
+Without a detection mechanism, the setting is inert (no error, just unused).
+
+```yaml
+  - name: erp
+    source: erp
+    target: customer
+    cluster_members: true          # reinsert defaults to false — detection is active
+    fields: [...]
+```
 
 ```yaml
   - name: erp
     source: erp
     target: customer
     cluster_members: true
-    reinsert: false              # suppress re-insertion of hard-deleted entities
+    reinsert: true               # opt out — allow re-insertion even with cluster_members
     fields: [...]
 ```
 
 **Examples:** [hard-delete](../examples/hard-delete/)
+
+### `tombstone`
+
+SQL boolean expression — when true, the entity is treated as disappeared from this source (soft delete). The row still exists in the source but is semantically deleted. Always suppresses the row from the delta, independent of the `reinsert` setting.
+
+```yaml
+  - name: crm
+    source: crm
+    target: customer
+    tombstone: "deleted_at IS NOT NULL"
+    fields: [...]
+```
+
+**Examples:** [soft-delete](../examples/soft-delete/)
 
 ---
 

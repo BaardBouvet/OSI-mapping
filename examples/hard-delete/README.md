@@ -25,16 +25,17 @@ The engine recognizes this as a hard delete and suppresses re-insertion.
 
 - **`cluster_members: true`** — the ETL feedback table records which
   entities were synced; persists when the source row disappears
-- **`reinsert: false`** — suppress re-insertion of hard-deleted entities
-  (exclude from the delta entirely). Default is `true` (normal insert).
+- **`reinsert`** — defaults to `false`, which suppresses re-insertion of
+  hard-deleted entities (exclude from the delta entirely). Set to `true`
+  to allow re-insertion (opt out of detection).
 - **Two detection paths** — `cluster_members` (ETL feedback) or
   `derive_tombstones` + `written_state` (noop/element state table).
-  Either activates entity-level detection when `reinsert: false`.
+  Either activates entity-level detection.
 
 ## How it works
 
-1. The ERP mapping declares `cluster_members: true` and
-   `reinsert: false`.
+1. The ERP mapping declares `cluster_members: true` (reinsert defaults
+   to `false`, so detection is active).
 2. The engine LEFT JOINs `_cluster_members_erp_customers` into the delta.
 3. For each entity where `_src_id IS NULL` (no source row) but
    `_cm_hd._src_id IS NOT NULL` (previously synced), the engine emits

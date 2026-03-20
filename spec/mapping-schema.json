@@ -255,8 +255,12 @@
         },
         "reinsert": {
           "type": "boolean",
-          "default": true,
-          "description": "Whether to re-insert entities that disappeared from this source. When false and a detection mechanism is available (cluster_members or derive_tombstones+written_state), the engine suppresses re-insertion — emitting NULL instead of 'insert' for entities that were previously synced but are now absent. Default true (normal insert behavior)."
+          "default": false,
+          "description": "Whether to re-insert entities that disappeared from this source. When false (default) and a detection mechanism is available (cluster_members or derive_tombstones+written_state), disappeared entities are excluded from the delta instead of being re-inserted. Set to true to allow re-insertion (opt out of hard-delete detection)."
+        },
+        "tombstone": {
+          "type": "string",
+          "description": "SQL boolean expression — when true, the entity is treated as disappeared from this source (soft delete). The row still exists in the source but is semantically deleted. Always suppresses the row from the delta, independent of the reinsert setting."
         }
       },
       "anyOf": [

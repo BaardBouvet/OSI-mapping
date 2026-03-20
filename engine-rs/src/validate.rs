@@ -314,6 +314,7 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
         // reinsert is a pure policy knob — no prerequisites.
         // Detection comes from cluster_members or derive_tombstones+written_state.
         // Without a detection source, the knob is inert (no error, just unused).
+        // tombstone is validated as a SQL expression above — no prerequisites.
     }
 }
 
@@ -831,6 +832,14 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
                 result,
             );
         }
+        if let Some(ref expr) = m.tombstone {
+            check_expr(
+                expr,
+                ExprContext::ReverseFilter,
+                &format!("mapping '{}' tombstone", m.name),
+                result,
+            );
+        }
 
         if let Some(ref lm) = m.last_modified {
             if let Some(expr) = lm.expression() {
@@ -1174,6 +1183,16 @@ fn pass_column_refs(doc: &MappingDocument, result: &mut ValidationResult) {
                 filter,
                 &target_cols,
                 &format!("mapping '{}' reverse_filter", m.name),
+                result,
+            );
+        }
+
+        // tombstone: — source columns available (evaluated in reverse view context)
+        if let Some(ref expr) = m.tombstone {
+            check_column_refs(
+                expr,
+                &source_cols,
+                &format!("mapping '{}' tombstone", m.name),
                 result,
             );
         }
