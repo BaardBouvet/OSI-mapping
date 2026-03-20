@@ -23,7 +23,7 @@ mappings:
   - name: crm_customers
     source: crm
     target: customer
-    tombstone: { field: deleted_at }
+    tombstone: { field: deleted_at, undelete_value: null }
     fields:
       - source: email
         target: email
@@ -42,16 +42,45 @@ mappings:
 
 tests:
   - description: >
-      Alice is soft-deleted in CRM (deleted_at is set).
-      ERP still has Alice as an active customer.
-      CRM's delta suppresses Alice — no re-insert to CRM.
-      ERP's delta is unaffected (update/noop for Alice).
-      Bob is active in both systems — normal behavior.
+      Alice is soft-deleted in CRM.  Bob is active in CRM only.
+      CRM's delta suppresses Alice (no stale write-back to CRM).
+      Bob is CRM-only and active, so he gets inserted into ERP.
+      ERP Alice is noop — both systems already agree on her data.
     input:
       crm:
         - { id: "C1", email: "alice@example.com", name: "Alice", deleted_at: "2026-03-15" }
         - { id: "C2", email: "bob@example.com", name: "Bob", deleted_at: null }
       erp:
         - { cust_id: "E1", email: "alice@example.com", name: "Alice" }
-        - { cust_id: "E2", email: "bob@example.com", name: "Bob" }
-    expected: {}
+    expected:
+      erp:
+        inserts:
+          - { _cluster_id: "crm_customers:C2", email: "bob@example.com", name: "Bob" }
+
+  - description: >
+      Baseline — same data but Alice is NOT soft-deleted.
+      Bob still gets inserted into ERP.  Alice is noop (data matches).
+      Proves that suppression only activates when deleted_at is set.
+    input:
+      crm:
+        - { id: "C1", email: "alice@example.com", name: "Alice", deleted_at: null }
+        - { id: "C2", email: "bob@example.com", name: "Bob", deleted_at: null }
+      erp:
+        - { cust_id: "E1", email: "alice@example.com", name: "Alice" }
+    expected:
+      erp:
+        inserts:
+          - { _cluster_id: "crm_customers:C2", email: "bob@example.com", name: "Bob" }
+
+  - description: >
+      Soft-deleted CRM row must not win resolution.
+      CRM has Alice with name "A. Customer" (priority 1) but she is
+      soft-deleted.  ERP has Alice with name "Alice".  The soft-deleted
+      CRM name must NOT overwrite ERP — ERP sees noop, not an update.
+    input:
+      crm:
+        - { id: "C1", email: "alice@example.com", name: "A. Customer", deleted_at: "2026-03-15" }
+      erp:
+        - { cust_id: "E1", email: "alice@example.com", name: "Alice" }
+    expected:
+      erp: {}

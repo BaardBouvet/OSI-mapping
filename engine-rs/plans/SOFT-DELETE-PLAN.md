@@ -4,7 +4,7 @@
 
 First-class support for source-provided tombstones — rows that remain in the
 source but are semantically deleted (soft delete).  The engine knows the
-tombstone field and its default value, enabling both suppression and automatic
+tombstone field and its value, enabling both suppression and automatic
 undelete.
 
 - `resurrect: false` (default) + `tombstone` → suppress (NULL action)
@@ -54,26 +54,26 @@ This works but requires:
 ### What first-class support adds
 
 A `tombstone` mapping property declares the deletion signal as a structured
-object with `field`, optional `default`, and escape hatches for custom
-`detect` and `undelete` expressions:
+object with `field` and exactly one of `undelete_value` or `undelete_expression`,
+plus optional `detect` and `undelete_columns`:
 
 ```yaml
-# Nullable timestamp (most common) — default derives to null
+# Nullable timestamp — undelete_value: null means IS NOT NULL = deleted
 mappings:
   - name: crm
     source: crm
     target: customer
-    tombstone: { field: deleted_at }
+    tombstone: { field: deleted_at, undelete_value: null }
     fields:
       - source: email
         target: email
 
-# Boolean flag with explicit default value
+# Boolean flag with explicit undelete value
 mappings:
   - name: crm
     source: crm
     target: customer
-    tombstone: { field: is_deleted, default: false }
+    tombstone: { field: is_deleted, undelete_value: false }
     fields:
       - source: email
         target: email
@@ -86,8 +86,8 @@ mappings:
     tombstone:
       field: status
       detect: "status IN ('deleted', 'archived')"
-      undelete:
-        status: "'active'"
+      undelete_expression: "'active'"
+      undelete_columns:
         deleted_at: "NULL"
     resurrect: true
     fields:
@@ -97,27 +97,28 @@ mappings:
 
 This integrates with `resurrect`:
 - `resurrect: false` (default) → suppress (NULL action, row excluded)
-- `resurrect: true` → undelete ('update' action, default value projected)
+- `resurrect: true` → undelete ('update' action, undelete value/expression projected)
 
 ## Design
 
 ### Mapping property: `tombstone`
 
-A structured object with `field` (required), `default`, `detect`, and
-`undelete`.  When `detect` and `undelete` are omitted, they are derived
-from `field` + `default`:
+A structured object with `field` (required) and exactly one of
+`undelete_value` or `undelete_expression`.  When `undelete_value` is given,
+`detect` is derived automatically:
 
-| `field` | `default` | Derived `detect` | Derived `undelete` |
+| `field` | `undelete_value` | Derived `detect` | Undelete projection |
 |---|---|---|---|
-| `deleted_at` | (null) | `"deleted_at" IS NOT NULL` | `NULL` |
+| `deleted_at` | `null` | `"deleted_at" IS NOT NULL` | `NULL` |
 | `is_deleted` | `false` | `"is_deleted" IS DISTINCT FROM FALSE` | `FALSE` |
 | `status` | `'active'` | `"status" IS DISTINCT FROM 'active'` | `'active'` |
 
-When `detect` or `undelete` is provided, it takes precedence (raw SQL).
-The `undelete` property can be a string (single column) or a map of
-column → SQL expression for multi-column undelete.
+When `undelete_expression` is used, `detect` must be provided explicitly.
 
-The tombstone `field` (and any `undelete` map keys) are auto-included in
+The `undelete_columns` property is a map of column → SQL expression for
+additional columns to override during undelete.
+
+The tombstone `field` (and any `undelete_columns` keys) are auto-included in
 the effective passthrough — no need for manual `passthrough: [deleted_at]`.
 
 ### Interaction with `resurrect`
@@ -163,7 +164,7 @@ A mapping can have both:
   - name: erp
     source: erp
     target: customer
-    tombstone: { field: is_deleted, default: true }
+    tombstone: { field: is_deleted, undelete_value: true }
     reverse_filter: "tier IS NOT NULL"
     fields: [...]
 ```
@@ -198,31 +199,23 @@ pub tombstone: Option<Tombstone>,
 ```rust
 pub struct Tombstone {
     pub field: String,
-    pub default: TombstoneDefault,
+    pub undelete_value: Option<TombstoneDefault>,
+    pub undelete_expression: Option<String>,
     pub detect: Option<String>,
-    pub undelete: Option<UndeleteProjection>,
+    pub undelete_columns: Option<IndexMap<String, String>>,
 }
 ```
 
 `TombstoneDefault` enum with custom serde Deserialize:
 
 ```rust
-pub enum TombstoneDefault { #[default] Null, Bool(bool), String(String) }
-```
-
-`UndeleteProjection` enum:
-
-```rust
-pub enum UndeleteProjection {
-    Single(String),              // string → applies to tombstone field
-    Multi(IndexMap<String, String>), // map → column → SQL expr
-}
+pub enum TombstoneDefault { Null, Bool(bool), String(String) }
 ```
 
 Key methods:
-- `Tombstone::detection_expr()` — returns `detect` or derives from field + default
-- `Tombstone::undelete_overrides()` — returns column → SQL pairs
-- `Tombstone::passthrough_columns()` — field + undelete map keys
+- `Tombstone::detection_expr()` — returns `detect` or derives from field + undelete_value
+- `Tombstone::undelete_overrides()` — returns column → SQL pairs (tombstone field + undelete_columns)
+- `Tombstone::passthrough_columns()` — field + undelete_columns keys
 - `TombstoneDefault::to_sql()` — renders SQL literal (NULL, FALSE, 'value')
 - `Mapping::effective_passthrough()` — `passthrough` + tombstone columns
 
@@ -263,10 +256,15 @@ Three rendering paths updated: single-mapping, merged-child, UNION ALL.
   "required": ["field"],
   "properties": {
     "field": { "type": "string" },
-    "default": {},
+    "undelete_value": {},
+    "undelete_expression": { "type": "string" },
     "detect": { "$ref": "#/$defs/Expression" },
-    "undelete": { "oneOf": [{ "type": "string" }, { "type": "object" }] }
-  }
+    "undelete_columns": { "type": "object", "additionalProperties": { "type": "string" } }
+  },
+  "oneOf": [
+    { "required": ["undelete_value"] },
+    { "required": ["undelete_expression"] }
+  ]
 }
 ```
 
@@ -277,7 +275,7 @@ Three rendering paths updated: single-mapping, merged-child, UNION ALL.
 
 ### 5. Example
 
-`examples/soft-delete/` — `tombstone: { field: deleted_at }` with no explicit passthrough.
+`examples/soft-delete/` — `tombstone: { field: deleted_at, undelete_value: null }` with no explicit passthrough.
 
 ```yaml
 version: "1.0"

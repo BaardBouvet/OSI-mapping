@@ -70,8 +70,10 @@ Larger features that expand the type system and analytics layer.
 | Plan | Status | Work |
 |------|--------|------|
 | ANALYTICS-PROVENANCE-PLAN | Planned | `_provenance_` and `_contributions_` views for source-tracing and stewardship. |
+| COMPUTED-FIELDS-PLAN | Design | Cross-target aggregation (`from:` + `match:`) via post-resolution `_enriched_` layer. Schema change — must land before 0.1. |
 
 **Exit criteria:** `_provenance_` and `_contributions_` views render correctly and are covered by an example.
+Cross-target aggregated fields render in enriched layer, flow through reverse views, and are covered by the missing-bottom example.
 
 ## Phase 4 — Quality, docs, and 0.1 release
 
@@ -88,12 +90,16 @@ Hardening, documentation, CI/CD, and project identity before the 1.0 tag.
 | LEARNING-GUIDE-PLAN | Planned | Progressive 7-chapter learning guide teaching mapping concepts. |
 | DOCS-SITE-PLAN | ~~Planned~~ **Done** | mdBook documentation site with search, deployed to GitHub Pages. |
 | CONSUMER-NAMING-PLAN | Planned | Rename consumer-facing `_delta_` → `sync_` and `_cluster_members_` → `cluster_members_` for naming consistency before 1.0. |
+| DELTA-RESERVED-COLUMNS-PLAN | Proposed | Namespace engine metadata columns (`__osi_*`) to prevent collisions with user data columns. Bundle with CONSUMER-NAMING-PLAN. |
+| CLI-TEST-COMMAND-PLAN | Proposed | `osi-engine test` subcommand — execute embedded test cases against PostgreSQL. Extract from `tests/integration.rs`. |
 | NAMING-PLAN | Design | Rename project (recommended: "Crossfold"). Update crate, binary, repo, docs. |
 
 **Exit criteria:** CI pipeline green on every push. Pre-built binaries on
 GitHub Releases. Documentation site live. Proptest harness runs in CI.
 Project name settled and applied across all artifacts.
 Consumer-facing naming consistency applied (`sync_{source}` and `cluster_members_{mapping}`).
+Delta metadata columns use `__osi_*` namespace — no collisions with user data.
+`osi-engine test` runs embedded test cases against a PostgreSQL database.
 
 ## Post-0.1
 

@@ -1192,6 +1192,38 @@ fn pass_column_refs(doc: &MappingDocument, result: &mut ValidationResult) {
                     ),
                 );
             }
+            // Exactly one of undelete_value / undelete_expression must be set.
+            match (&ts.undelete_value, &ts.undelete_expression) {
+                (None, None) => {
+                    result.error(
+                        "Tombstone",
+                        format!(
+                            "mapping '{}' tombstone: exactly one of undelete_value or undelete_expression is required",
+                            m.name
+                        ),
+                    );
+                }
+                (Some(_), Some(_)) => {
+                    result.error(
+                        "Tombstone",
+                        format!(
+                            "mapping '{}' tombstone: undelete_value and undelete_expression are mutually exclusive",
+                            m.name
+                        ),
+                    );
+                }
+                _ => {}
+            }
+            // detect is required when undelete_expression is used.
+            if ts.undelete_expression.is_some() && ts.detect.is_none() {
+                result.error(
+                    "Tombstone",
+                    format!(
+                        "mapping '{}' tombstone: detect is required when undelete_expression is used",
+                        m.name
+                    ),
+                );
+            }
         }
 
         for fm in &m.fields {

@@ -1,0 +1,128 @@
+version: "1.0"
+description: >
+  Element-level soft-delete for value lists.  Two CRM systems track
+  contact tags as JSONB object arrays.  Each tag carries an optional
+  removed_at timestamp that signals soft-deletion.  When one CRM marks
+  a tag as removed, coalesce resolution picks the non-null timestamp
+  and the other CRM's delta propagates the removal.
+
+  This is the recommended pattern for soft-deleting individual elements
+  in value lists: promote scalar values to objects carrying lifecycle
+  metadata.
+
+sources:
+  crm_a:
+    primary_key: id
+  crm_b:
+    primary_key: id
+
+targets:
+  contact:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+
+  tag_entry:
+    fields:
+      contact_ref:
+        strategy: identity
+        link_group: tag_id
+      tag:
+        strategy: identity
+        link_group: tag_id
+      tag_order:
+        strategy: coalesce
+      removed_at:
+        strategy: coalesce
+
+mappings:
+  - name: crm_a_contacts
+    source: crm_a
+    target: contact
+    priority: 1
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+
+  - name: crm_a_tags
+    source: crm_a
+    parent: crm_a_contacts
+    array: tags
+    parent_fields:
+      parent_email: email
+    target: tag_entry
+    priority: 1
+    fields:
+      - source: parent_email
+        target: contact_ref
+        references: crm_a_contacts
+      - source: tag
+        target: tag
+      - target: tag_order
+        order: true
+      - source: removed_at
+        target: removed_at
+
+  - name: crm_b_contacts
+    source: crm_b
+    target: contact
+    priority: 2
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+
+  - name: crm_b_tags
+    source: crm_b
+    parent: crm_b_contacts
+    array: tags
+    parent_fields:
+      parent_email: email
+    target: tag_entry
+    priority: 2
+    fields:
+      - source: parent_email
+        target: contact_ref
+        references: crm_b_contacts
+      - source: tag
+        target: tag
+      - target: tag_order
+        order: true
+      - source: removed_at
+        target: removed_at
+
+tests:
+  - description: >
+      CRM A soft-deletes the "churned" tag by setting removed_at.
+      CRM B still has the tag without the marker.  Coalesce picks the
+      non-null value from CRM A.  CRM B's delta receives an update
+      propagating the removal timestamp to the reconstructed tags array.
+    input:
+      crm_a:
+        - id: "A1"
+          email: "alice@example.com"
+          name: "Alice"
+          tags:
+            - { tag: "vip" }
+            - { tag: "churned", removed_at: "2026-01-15" }
+      crm_b:
+        - id: "B1"
+          email: "alice@example.com"
+          name: "Alice"
+          tags:
+            - { tag: "vip" }
+            - { tag: "churned" }
+    expected:
+      crm_b:
+        updates:
+          - id: "B1"
+            email: "alice@example.com"
+            name: "Alice"
+            tags:
+              - { tag: "vip", removed_at: null }
+              - { tag: "churned", removed_at: "2026-01-15" }

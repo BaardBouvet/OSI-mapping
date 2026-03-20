@@ -461,28 +461,36 @@ impl LinkField {
 /// Soft-delete detection configuration.
 ///
 /// Declares a source column that signals deletion and how to detect /
-/// reverse it.  `detect` and `undelete` are derived from `field` +
-/// `default` when omitted, but can be overridden with raw SQL.
+/// reverse it.  Exactly one of `undelete_value` or `undelete_expression`
+/// must be set.  When `undelete_value` is given, `detect` is derived
+/// automatically; when `undelete_expression` is given, `detect` must be
+/// provided explicitly.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tombstone {
     /// Source column carrying the deletion signal.
     pub field: String,
-    /// The default (non-deleted) value.  Used to derive `detect` and
-    /// `undelete` when they are not specified explicitly.
-    /// Defaults to null — i.e. `field IS NOT NULL` means deleted.
+    /// The value this field holds when the entity is **not** deleted.
+    /// Used to derive `detect` (IS DISTINCT FROM …) and the field's
+    /// undelete projection.  Mutually exclusive with `undelete_expression`.
+    /// Examples: `null` for timestamps, `false` for boolean flags,
+    /// `'active'` for enum values.
+    #[serde(default, deserialize_with = "deser_some_tombstone_default")]
+    pub undelete_value: Option<TombstoneDefault>,
+    /// Raw SQL expression to project for the tombstone field when
+    /// undeleting (resurrect: true).  Mutually exclusive with
+    /// `undelete_value`.  Requires `detect` (cannot be derived).
     #[serde(default)]
-    pub default: TombstoneDefault,
+    pub undelete_expression: Option<String>,
     /// SQL boolean expression that evaluates to true when the entity is
-    /// soft-deleted.  When omitted, derived from `field` + `default`.
+    /// soft-deleted.  When omitted, derived from `field` + `undelete_value`.
     #[serde(default)]
     pub detect: Option<String>,
-    /// SQL expression(s) to project when undeleting (resurrect: true).
-    /// When omitted, the tombstone field is projected with the `default`
-    /// value.  A string applies to the tombstone field only; a map
-    /// overrides arbitrary columns (map keys auto-included as passthrough).
+    /// Additional columns to override when undeleting (resurrect: true).
+    /// Map of column name → SQL expression.  Keys are auto-included as
+    /// passthrough columns.
     #[serde(default)]
-    pub undelete: Option<UndeleteProjection>,
+    pub undelete_columns: Option<IndexMap<String, String>>,
 }
 
 impl Tombstone {
@@ -492,47 +500,39 @@ impl Tombstone {
             return expr.clone();
         }
         let field = qi(&self.field);
-        match &self.default {
-            TombstoneDefault::Null => format!("{field} IS NOT NULL"),
-            other => format!("{field} IS DISTINCT FROM {}", other.to_sql()),
+        match &self.undelete_value {
+            Some(TombstoneDefault::Null) | None => format!("{field} IS NOT NULL"),
+            Some(other) => format!("{field} IS DISTINCT FROM {}", other.to_sql()),
         }
     }
 
     /// Column → SQL expression pairs for undelete projection.
-    /// Always includes the tombstone field itself; may include extras
-    /// from the map form.
+    /// Includes the tombstone field itself plus any extra columns.
     pub fn undelete_overrides(&self) -> IndexMap<String, String> {
-        match &self.undelete {
-            None => {
-                let mut m = IndexMap::new();
-                m.insert(self.field.clone(), self.default.to_sql());
-                m
-            }
-            Some(UndeleteProjection::Single(expr)) => {
-                let mut m = IndexMap::new();
-                m.insert(self.field.clone(), expr.clone());
-                m
-            }
-            Some(UndeleteProjection::Multi(map)) => {
-                let mut result = IndexMap::new();
-                // Ensure the tombstone field itself is included (from default
-                // if not explicitly in the map).
-                if !map.contains_key(&self.field) {
-                    result.insert(self.field.clone(), self.default.to_sql());
-                }
-                for (k, v) in map {
-                    result.insert(k.clone(), v.clone());
-                }
-                result
+        let mut result = IndexMap::new();
+        // Tombstone field itself.
+        let field_expr = match &self.undelete_expression {
+            Some(expr) => expr.clone(),
+            None => match &self.undelete_value {
+                Some(v) => v.to_sql(),
+                None => "NULL".to_string(),
+            },
+        };
+        result.insert(self.field.clone(), field_expr);
+        // Extra columns.
+        if let Some(ref map) = self.undelete_columns {
+            for (k, v) in map {
+                result.insert(k.clone(), v.clone());
             }
         }
+        result
     }
 
     /// Columns that must be auto-included as passthrough:
-    /// the tombstone field + any extra map keys from `undelete`.
+    /// the tombstone field + any extra column keys from `undelete_columns`.
     pub fn passthrough_columns(&self) -> Vec<&str> {
         let mut cols = vec![self.field.as_str()];
-        if let Some(UndeleteProjection::Multi(map)) = &self.undelete {
+        if let Some(ref map) = self.undelete_columns {
             for k in map.keys() {
                 if k != &self.field && !cols.contains(&k.as_str()) {
                     cols.push(k.as_str());
@@ -543,60 +543,10 @@ impl Tombstone {
     }
 }
 
-/// Undelete projection — what value(s) to write back when undeleting.
-#[derive(Debug, Clone)]
-pub enum UndeleteProjection {
-    /// Single SQL expression applied to the tombstone field.
-    Single(String),
-    /// Map of column → SQL expression for multi-column undelete.
-    Multi(IndexMap<String, String>),
-}
-
-impl<'de> serde::Deserialize<'de> for UndeleteProjection {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct UndeleteVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for UndeleteVisitor {
-            type Value = UndeleteProjection;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a string (SQL expression) or a map of column: expression")
-            }
-
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<UndeleteProjection, E> {
-                Ok(UndeleteProjection::Single(v.to_string()))
-            }
-
-            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<UndeleteProjection, E> {
-                Ok(UndeleteProjection::Single(v))
-            }
-
-            fn visit_map<M>(self, mut access: M) -> Result<UndeleteProjection, M::Error>
-            where
-                M: serde::de::MapAccess<'de>,
-            {
-                let mut map = IndexMap::new();
-                while let Some((key, value)) = access.next_entry::<String, String>()? {
-                    map.insert(key, value);
-                }
-                Ok(UndeleteProjection::Multi(map))
-            }
-        }
-
-        deserializer.deserialize_any(UndeleteVisitor)
-    }
-}
-
-// ── TombstoneDefault (soft-delete default value) ──────────────────────
-
-/// The default (non-deleted) value for a tombstone field.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// The non-deleted value for a tombstone field.
+#[derive(Debug, Clone, PartialEq)]
 pub enum TombstoneDefault {
-    /// SQL NULL — the most common case (`deleted_at IS NOT NULL`).
-    #[default]
+    /// SQL NULL — `deleted_at IS NOT NULL` means deleted.
     Null,
     /// SQL boolean literal (`is_deleted = false`).
     Bool(bool),
@@ -653,6 +603,17 @@ impl<'de> serde::Deserialize<'de> for TombstoneDefault {
 
         deserializer.deserialize_any(TombstoneDefaultVisitor)
     }
+}
+
+/// Deserialize `undelete_value` so that YAML `null` becomes
+/// `Some(TombstoneDefault::Null)` instead of the serde-default `None`.
+fn deser_some_tombstone_default<'de, D>(
+    deserializer: D,
+) -> Result<Option<TombstoneDefault>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    TombstoneDefault::deserialize(deserializer).map(Some)
 }
 
 /// ETL feedback configuration — per-mapping cluster membership table.

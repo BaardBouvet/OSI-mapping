@@ -140,6 +140,85 @@ The core metaphor: **multiple streams of data converge into a single truth, then
 
 ---
 
+## Harmonization Family
+
+These names lean into the "bringing disparate sources into harmony" metaphor — treating integration as harmonization rather than mechanical merging.
+
+### 7. Attune
+
+**Tagline:** *Attune your data sources.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ❓ Needs verification |
+| GitHub | ❓ Needs verification |
+| PyPI | ❓ Needs verification |
+
+**Why it works:**
+- "Attune" means to bring into harmony or make receptive — exactly what the tool does to conflicting sources
+- 6 characters, two syllables, easy to say and spell
+- Works naturally as both verb and noun: "attune the mapping" / "the attune schema"
+- Excellent CLI feel: `attune render mapping.yaml`, `attune validate`
+- Distinctive — unlikely to collide with data tooling
+- Elegant and understated, avoids the "enterprise middleware" feel
+
+**Risks:** Could be perceived as too soft/abstract for a technical tool. Less immediately obvious what it does compared to Crossfold or Viewfold.
+
+### 8. Concord
+
+**Tagline:** *Bring your data into agreement.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ❓ Needs verification |
+| GitHub | ❓ Needs verification |
+| PyPI | ❓ Needs verification |
+
+**Why it works:**
+- Literally means "agreement, harmony" (from Latin *concordia*)
+- 7 characters, two syllables
+- Strong historical/literary resonance — treaties, agreements, shared truth
+- Good CLI feel: `concord render mapping.yaml`
+- Evokes the outcome: after resolution, all sources are in concord
+
+**Risks:** Concord is a common place name (New Hampshire, Massachusetts, grape variety, the supersonic jet). May have crates.io/GitHub collisions due to general popularity of the word.
+
+### 9. Harmonic
+
+**Tagline:** *Harmonic resolution for multi-source data.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ❓ Needs verification |
+| GitHub | ❓ Needs verification |
+| PyPI | ❓ Needs verification |
+
+**Why it works:**
+- In music, harmonics are frequencies that naturally combine — parallel to combining data from multiple sources
+- In math/physics, "harmonic" implies smooth convergence to an equilibrium
+- 8 characters, three syllables
+- Sounds technical and precise: `harmonic render mapping.yaml`
+
+**Risks:** Three syllables is slightly longer to say. "Harmonic" is a common word in science/engineering — higher collision risk. May feel more like a library name than a CLI tool.
+
+### 10. Consonance
+
+**Tagline:** *Where your data sources agree.*
+
+| Platform | Status |
+|----------|--------|
+| crates.io | ❓ Needs verification |
+| GitHub | ❓ Needs verification |
+
+**Why it works:**
+- Musical term: pleasant agreement of sounds. Opposite of dissonance — which is what conflicting source data is.
+- The metaphor is strong: the tool takes dissonant data and produces consonance.
+- 10 characters — at the upper limit of the naming criteria.
+
+**Risks:** 10 characters and four syllables is borderline too long. Harder to type as a CLI command. Less "punchy" than shorter alternatives.
+
+---
+
 ## Tier 3: Considered and Rejected
 
 | Name | Why rejected |

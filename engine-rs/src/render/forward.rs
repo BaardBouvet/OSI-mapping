@@ -281,6 +281,11 @@ pub fn render_forward_body(
         None => "NULL::text AS _last_modified".into(),
     });
 
+    // Soft-delete detection: when the mapping declares a tombstone, non-identity
+    // fields are NULLed in the forward view so soft-deleted rows cannot win
+    // field resolution.  Identity fields keep their values for entity linking.
+    let tombstone_detect = mapping.tombstone.as_ref().map(|t| t.detection_expr());
+
     // If target is known, emit ALL target fields in target-definition order
     // (NULL for fields this mapping doesn't contribute to).
     if let Some(target) = target {
@@ -342,17 +347,37 @@ pub fn render_forward_body(
                     "NULL".into()
                 };
                 // Cast to target field type for UNION ALL compatibility across mappings.
-                cols.push(format!("{expr}::{cast_type} AS {qfname}"));
+                // Soft-deleted non-identity fields → NULL so they lose resolution.
+                let is_identity = fdef.strategy() == crate::model::Strategy::Identity;
+                if let (Some(detect), false) = (&tombstone_detect, is_identity) {
+                    cols.push(format!(
+                        "CASE WHEN ({detect}) THEN NULL::{cast_type} ELSE {expr}::{cast_type} END AS {qfname}"
+                    ));
+                } else {
+                    cols.push(format!("{expr}::{cast_type} AS {qfname}"));
+                }
 
                 // Per-field priority (always present, NULL when unset)
-                cols.push(match fm.priority {
-                    Some(p) => format!("{p} AS {}", qi(&format!("_priority_{fname}"))),
-                    None => format!("NULL::int AS {}", qi(&format!("_priority_{fname}"))),
-                });
+                // Soft-deleted non-identity fields → NULL priority so they cannot win.
+                if let (Some(detect), false) = (&tombstone_detect, is_identity) {
+                    cols.push(match fm.priority {
+                        Some(p) => format!(
+                            "CASE WHEN ({detect}) THEN NULL::int ELSE {p} END AS {}",
+                            qi(&format!("_priority_{fname}"))
+                        ),
+                        None => format!("NULL::int AS {}", qi(&format!("_priority_{fname}"))),
+                    });
+                } else {
+                    cols.push(match fm.priority {
+                        Some(p) => format!("{p} AS {}", qi(&format!("_priority_{fname}"))),
+                        None => format!("NULL::int AS {}", qi(&format!("_priority_{fname}"))),
+                    });
+                }
 
                 // Per-field timestamp (always present, NULL when unset)
                 // When derive_timestamps is active and no explicit last_modified,
                 // generate CASE that compares against written JSONB.
+                // Soft-deleted non-identity fields → NULL timestamp.
                 let derive_ts = mapping.derive_timestamps
                     && mapping.written_state.is_some()
                     && fm.last_modified.is_none();
@@ -362,13 +387,14 @@ pub fn render_forward_body(
                     None
                 };
 
-                cols.push(if let Some(ts) = &fm.last_modified {
+                let ts_alias = qi(&format!("_ts_{fname}"));
+                let ts_col = if let Some(ts) = &fm.last_modified {
                     if let Some(field) = ts.field_name() {
-                        format!("{} AS {}", qi(field), qi(&format!("_ts_{fname}")))
+                        format!("{} AS {ts_alias}", qi(field))
                     } else if let Some(expr) = ts.expression() {
-                        format!("({expr}) AS {}", qi(&format!("_ts_{fname}")))
+                        format!("({expr}) AS {ts_alias}")
                     } else {
-                        format!("NULL::text AS {}", qi(&format!("_ts_{fname}")))
+                        format!("NULL::text AS {ts_alias}")
                     }
                 } else if let Some(src_col) = source_col_for_ts {
                     let ws = mapping.written_state.as_ref().unwrap();
@@ -405,12 +431,31 @@ pub fn render_forward_body(
                          WHEN _ws.{wts}->>'{src_esc}' IS NOT NULL \
                          THEN {changed_expr} \
                          ELSE {bootstrap_expr} \
-                         END AS {}",
-                        qi(&format!("_ts_{fname}"))
+                         END AS {ts_alias}",
                     )
                 } else {
-                    format!("NULL::text AS {}", qi(&format!("_ts_{fname}")))
-                });
+                    format!("NULL::text AS {ts_alias}")
+                };
+                // Wrap in soft-delete guard for non-identity fields.
+                if let (Some(detect), false) = (&tombstone_detect, is_identity) {
+                    // Replace " AS <alias>" with CASE wrapping.
+                    // The ts_col already ends with " AS <alias>", so we wrap the
+                    // expression part.  Simplest: if already NULL, keep it;
+                    // otherwise wrap.
+                    let null_ts = format!("NULL::text AS {ts_alias}");
+                    if ts_col == null_ts {
+                        cols.push(ts_col);
+                    } else {
+                        // Strip trailing " AS <alias>" to get the bare expression.
+                        let suffix = format!(" AS {ts_alias}");
+                        let bare = ts_col.strip_suffix(&suffix).unwrap_or(&ts_col);
+                        cols.push(format!(
+                            "CASE WHEN ({detect}) THEN NULL::text ELSE ({bare})::text END AS {ts_alias}"
+                        ));
+                    }
+                } else {
+                    cols.push(ts_col);
+                }
 
                 // Echo-aware normalize columns (Phase 2 precision-loss).
                 // When any mapping declares `normalize` for this target field,
@@ -418,15 +463,20 @@ pub fn render_forward_body(
                 // resolution view can detect and suppress echo values.
                 if let Some(canonical_norm) = normalize_fields.get(fname) {
                     let norm_expr = canonical_norm.replace("%s", &format!("({expr})"));
-                    cols.push(format!(
-                        "{norm_expr} AS {}",
-                        qi(&format!("_normalize_{fname}"))
-                    ));
+                    let norm_alias = qi(&format!("_normalize_{fname}"));
+                    let has_norm_alias = qi(&format!("_has_normalize_{fname}"));
                     let has_own = fm.normalize.is_some();
-                    cols.push(format!(
-                        "{has_own} AS {}",
-                        qi(&format!("_has_normalize_{fname}"))
-                    ));
+                    if let (Some(detect), false) = (&tombstone_detect, is_identity) {
+                        cols.push(format!(
+                            "CASE WHEN ({detect}) THEN NULL::text ELSE {norm_expr} END AS {norm_alias}"
+                        ));
+                        cols.push(format!(
+                            "CASE WHEN ({detect}) THEN NULL::boolean ELSE {has_own} END AS {has_norm_alias}"
+                        ));
+                    } else {
+                        cols.push(format!("{norm_expr} AS {norm_alias}"));
+                        cols.push(format!("{has_own} AS {has_norm_alias}"));
+                    }
                 }
             } else {
                 // Not mapped by this mapping — emit NULL placeholders
@@ -904,6 +954,65 @@ mappings:
         assert!(
             sql.contains("LEAD(") && sql.contains("ORDER BY item.idx)"),
             "should emit LEAD window function: {sql}"
+        );
+    }
+
+    #[test]
+    fn tombstone_nulls_non_identity_fields() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  crm: { primary_key: id }
+targets:
+  contact:
+    fields:
+      email: { strategy: identity }
+      name: { strategy: coalesce }
+mappings:
+  - name: crm_contact
+    source: crm
+    target: contact
+    tombstone:
+      field: deleted_at
+      undelete_value: null
+    fields:
+      - { source: email, target: email }
+      - { source: full_name, target: name, priority: 10 }
+"#,
+        );
+        let target = doc.targets.get("contact").unwrap();
+        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[], &HashMap::new())
+            .unwrap();
+
+        // Identity field "email" must NOT be wrapped (entities still link).
+        assert!(
+            sql.contains("\"email\"::text AS \"email\""),
+            "identity field should be projected without CASE: {sql}"
+        );
+        // Non-identity field "name" must be wrapped in soft-delete CASE.
+        assert!(
+            sql.contains(
+                "CASE WHEN (\"deleted_at\" IS NOT NULL) THEN NULL::text ELSE \"full_name\"::text END AS \"name\""
+            ),
+            "non-identity field should be wrapped in soft-delete CASE: {sql}"
+        );
+        // Priority for non-identity "name" must also be NULLed when soft-deleted.
+        assert!(
+            sql.contains(
+                "CASE WHEN (\"deleted_at\" IS NOT NULL) THEN NULL::int ELSE 10 END AS \"_priority_name\""
+            ),
+            "non-identity priority should be NULLed when soft-deleted: {sql}"
+        );
+        // Timestamp for non-identity "name" — no explicit ts so it's already NULL (no wrapping needed).
+        assert!(
+            sql.contains("NULL::text AS \"_ts_name\""),
+            "NULL timestamp does not need wrapping: {sql}"
+        );
+        // Identity "email" priority should NOT be wrapped.
+        assert!(
+            sql.contains("NULL::int AS \"_priority_email\""),
+            "identity priority should not be wrapped: {sql}"
         );
     }
 }

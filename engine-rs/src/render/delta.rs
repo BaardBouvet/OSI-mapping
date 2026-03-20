@@ -158,6 +158,9 @@ struct NestingNode<'a> {
     item_fields: Vec<String>,
     /// The parent_field alias that links back to the parent level (for GROUP BY).
     parent_fk_field: Option<String>,
+    /// The source column name that `parent_fields` maps to (the value side).
+    /// Used to join the nested CTE back to the parent reverse view.
+    parent_source_col: Option<String>,
     /// Target field name of the `order: true` field, if any.
     /// When present, `jsonb_agg` uses this for ORDER BY instead of first item_field.
     order_field: Option<String>,
@@ -173,6 +176,9 @@ struct NestedCteResult {
     alias: String,
     /// The JSONB column name this node produces (= segment name).
     column: String,
+    /// The source column on the parent reverse view that the CTE's
+    /// `_parent_key` should be joined against (from `parent_source_col`).
+    parent_join_col: Option<String>,
 }
 
 /// Per-node deletion filter for element-deletion-wins semantics.
@@ -433,7 +439,7 @@ pub fn render_delta_view(
         .collect();
 
     // Build nesting tree from all nested-path mappings (including multi-segment).
-    let nesting_roots = build_nesting_tree(mappings, &pk_columns);
+    let nesting_roots = build_nesting_tree(mappings, &pk_columns, targets);
 
     // If there are nested children, group them by parent mapping and aggregate.
     if !parent_mappings.is_empty() && !nesting_roots.is_empty() {
@@ -1227,6 +1233,7 @@ fn render_delta_union_all(
 fn build_nesting_tree<'a>(
     mappings: &[&'a Mapping],
     pk_columns: &std::collections::HashSet<&str>,
+    targets: &IndexMap<String, Target>,
 ) -> Vec<NestingNode<'a>> {
     // Collect all nested mappings with their parsed info.
     struct FlatNested<'a> {
@@ -1234,6 +1241,7 @@ fn build_nesting_tree<'a>(
         mapping: &'a Mapping,
         item_fields: Vec<String>,
         parent_fk_field: Option<String>,
+        parent_source_col: Option<String>,
         order_field: Option<String>,
     }
 
@@ -1260,6 +1268,48 @@ fn build_nesting_tree<'a>(
                 }
             }
             let parent_fk_field = m.source.parent_fields.keys().next().cloned();
+            // Determine the parent join column for the delta view.
+            // When the parent FK's target field has `references:` on the
+            // target definition, the reverse view generates a subselect
+            // that translates the resolved entity reference back to the
+            // parent's _src_id.  In that case the CTE's _parent_key
+            // contains the parent source PK, so the delta should join on
+            // the PK column (signalled by parent_source_col = None).
+            //
+            // When the target field does NOT have references, the reverse
+            // view uses the resolved value directly (e.g. an email
+            // address).  Then the CTE's _parent_key contains that value,
+            // and the delta must join on the corresponding source column
+            // on the parent reverse view.
+            let parent_source_col = parent_fk_field.as_ref().and_then(|alias| {
+                let fm = m
+                    .fields
+                    .iter()
+                    .find(|f| f.source_name() == Some(alias.as_str()))?;
+                let tgt_name = fm.target.as_deref()?;
+                let child_target = targets.get(m.target.name())?;
+                let field_def = child_target.fields.get(tgt_name)?;
+                if field_def.references().is_some() {
+                    // Target field has references → reverse view returns
+                    // parent _src_id → use PK column.
+                    None
+                } else {
+                    // No target reference → reverse keeps resolved value
+                    // → join on the source column.
+                    Some(
+                        m.source
+                            .parent_fields
+                            .values()
+                            .next()
+                            .map(|pref| match pref {
+                                crate::model::ParentFieldRef::Simple(c) => c.clone(),
+                                crate::model::ParentFieldRef::Qualified { field, .. } => {
+                                    field.clone()
+                                }
+                            })?,
+                    )
+                }
+            });
             let order_field = m
                 .fields
                 .iter()
@@ -1271,6 +1321,7 @@ fn build_nesting_tree<'a>(
                 mapping: m,
                 item_fields,
                 parent_fk_field,
+                parent_source_col,
                 order_field,
             });
         }
@@ -1290,6 +1341,7 @@ fn build_nesting_tree<'a>(
                 mapping: flat.mapping,
                 item_fields: flat.item_fields,
                 parent_fk_field: flat.parent_fk_field,
+                parent_source_col: flat.parent_source_col,
                 order_field: flat.order_field,
                 children: Vec::new(),
             });
@@ -1303,6 +1355,7 @@ fn build_nesting_tree<'a>(
                     mapping: flat.mapping,
                     item_fields: flat.item_fields,
                     parent_fk_field: flat.parent_fk_field,
+                    parent_source_col: flat.parent_source_col,
                     order_field: flat.order_field,
                     children: Vec::new(),
                 });
@@ -1477,6 +1530,7 @@ fn build_nested_ctes(
         ctes: all_ctes,
         alias,
         column: node.segment.clone(),
+        parent_join_col: node.parent_source_col.clone(),
     }
 }
 
@@ -1885,8 +1939,17 @@ fn render_delta_with_nested(
     let mut join_clauses: Vec<String> = Vec::new();
     let qpk = qi(&parent_pk_col);
     for rr in &root_results {
+        // Use the parent source column from parent_fields when available,
+        // falling back to the source PK column.  This is needed when the
+        // child's parent_fields maps to a non-PK column (e.g. email)
+        // that differs from the source primary key.
+        let join_col = rr
+            .parent_join_col
+            .as_deref()
+            .map(qi)
+            .unwrap_or_else(|| qpk.clone());
         join_clauses.push(format!(
-            "LEFT JOIN {} ON {}._parent_key = p.{qpk}::text",
+            "LEFT JOIN {} ON {}._parent_key = p.{join_col}::text",
             rr.alias, rr.alias,
         ));
     }
@@ -2519,7 +2582,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at }
+    tombstone: { field: deleted_at, undelete_value: null }
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2547,7 +2610,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at }
+    tombstone: { field: deleted_at, undelete_value: null }
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2582,7 +2645,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at }
+    tombstone: { field: deleted_at, undelete_value: null }
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2610,7 +2673,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at }
+    tombstone: { field: deleted_at, undelete_value: null }
     cluster_members: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2638,7 +2701,7 @@ mappings:
 
     #[test]
     fn tombstone_bool_default() {
-        // tombstone with default: false
+        // tombstone with undelete_value: false
         let doc = parse(
             r#"
 version: "1.0"
@@ -2652,7 +2715,7 @@ mappings:
     target: t
     tombstone:
       field: is_deleted
-      default: false
+      undelete_value: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2663,13 +2726,13 @@ mappings:
         // Detection: is_deleted IS DISTINCT FROM FALSE
         assert!(
             sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN NULL"#),
-            "tombstone with default: false should use IS DISTINCT FROM:\n{sql}"
+            "tombstone with undelete_value: false should use IS DISTINCT FROM:\n{sql}"
         );
     }
 
     #[test]
     fn tombstone_bool_default_undelete_projection() {
-        // tombstone default: false + resurrect: true → undelete with default value
+        // tombstone undelete_value: false + resurrect: true → undelete with value
         let doc = parse(
             r#"
 version: "1.0"
@@ -2683,7 +2746,7 @@ mappings:
     target: t
     tombstone:
       field: is_deleted
-      default: false
+      undelete_value: false
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2697,10 +2760,10 @@ mappings:
             sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN 'update'"#),
             "tombstone + resurrect:true should emit 'update':\n{sql}"
         );
-        // Should project default value (FALSE) when tombstone detected
+        // Should project value (FALSE) when tombstone detected
         assert!(
             sql.contains(r#"CASE WHEN ("is_deleted" IS DISTINCT FROM FALSE) THEN FALSE ELSE "is_deleted" END AS "is_deleted""#),
-            "should project default value for tombstone field:\n{sql}"
+            "should project value for tombstone field:\n{sql}"
         );
     }
 
@@ -2718,7 +2781,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at }
+    tombstone: { field: deleted_at, undelete_value: null }
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2747,6 +2810,7 @@ mappings:
     tombstone:
       field: status
       detect: "status IN ('deleted', 'archived')"
+      undelete_expression: "'active'"
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2777,7 +2841,7 @@ mappings:
     tombstone:
       field: status
       detect: "status IN ('deleted', 'archived')"
-      undelete: "'active'"
+      undelete_expression: "'active'"
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2795,7 +2859,7 @@ mappings:
 
     #[test]
     fn tombstone_multi_column_undelete() {
-        // Multi-column undelete: map form overrides multiple columns
+        // Multi-column undelete: undelete_value + undelete_columns
         let doc = parse(
             r#"
 version: "1.0"
@@ -2809,8 +2873,8 @@ mappings:
     target: t
     tombstone:
       field: deleted_at
-      undelete:
-        deleted_at: "NULL"
+      undelete_value: null
+      undelete_columns:
         status: "'active'"
     resurrect: true
     fields: [{ source: name, target: name }]
@@ -2833,7 +2897,7 @@ mappings:
 
     #[test]
     fn tombstone_multi_column_auto_passthrough() {
-        // Extra columns in undelete map should auto-include as passthrough
+        // Extra columns in undelete_columns should auto-include as passthrough
         let doc = parse(
             r#"
 version: "1.0"
@@ -2847,8 +2911,8 @@ mappings:
     target: t
     tombstone:
       field: deleted_at
-      undelete:
-        deleted_at: "NULL"
+      undelete_value: null
+      undelete_columns:
         status: "'active'"
     fields: [{ source: name, target: name }]
 "#,

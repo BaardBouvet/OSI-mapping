@@ -5,6 +5,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | Plan | Status | Summary |
 |------|--------|---------|
 | [ASYMMETRY-ANALYSIS.md](ASYMMETRY-ANALYSIS.md) | Design | Read/write asymmetry: mapping concern vs ETL concern — analysis of where shape differences belong. |
+| [CLI-TEST-COMMAND-PLAN.md](CLI-TEST-COMMAND-PLAN.md) | Proposed | CLI `test` subcommand — execute embedded test cases against PostgreSQL. |
 | [PLAN.md](PLAN.md) | Done | Original implementation plan — Rust engine compiling YAML to a DAG of PostgreSQL views. |
 | [PRIMARY-KEYS-PLAN.md](PRIMARY-KEYS-PLAN.md) | Done | Replace synthetic `_row_id` with real source primary keys via `sources:` section. |
 | [ANALYTICS-VIEW-PLAN.md](ANALYTICS-VIEW-PLAN.md) | Done | Consumer-friendly analytics view exposing resolved golden records. |
@@ -35,8 +36,10 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
 | [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Done | Element-level deletion for array targets — `_element_delta_{child}` views via parent `written_state`. |
 | [HARD-DELETE-PROPAGATION-PLAN.md](HARD-DELETE-PROPAGATION-PLAN.md) | Design | Hard-delete propagation via ETL-layer provenance tracking — prevents re-insertion loops. |
+| [HUBSPOT-DELAYED-ENRICHMENT-PLAN.md](HUBSPOT-DELAYED-ENRICHMENT-PLAN.md) | Design | Delayed enrichment from external providers: group NULL-bleed, cluster-merge, dangling-FK failure modes and split-mapping pattern. |
 | [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Done (Phase 1) | ETL-maintained state as engine input — `written_state` table + `written_noop` opt-in for target-centric noop detection. |
 | [EVENTUAL-CONSISTENCY-PLAN.md](EVENTUAL-CONSISTENCY-PLAN.md) | Design | Write-read visibility delays: failure modes and ETL-layer mitigation strategies for eventually consistent sources. |
+| [MULTI-DEPLOYMENT-LOOP-PREVENTION-PLAN.md](MULTI-DEPLOYMENT-LOOP-PREVENTION-PLAN.md) | Design | Infinite-loop prevention across independent deployments: insert circuit breaker, authority partitioning, origin tagging, convergence tests. |
 | [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Done | `normalize` property on field mappings for lossy noop comparison and echo-aware `last_modified` resolution. |
 | [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
 | [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Done | Validate expressions as safe SQL snippets; cross-target `lookup:` superseded by COMPUTED-FIELDS-PLAN. |
@@ -46,6 +49,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [PASSTHROUGH-PLAN.md](PASSTHROUGH-PLAN.md) | Done | Carry unmapped source columns through to delta output for ETL context. |
 | [NULL-WINS-PLAN.md](NULL-WINS-PLAN.md) | Maybe | `null_wins` expression on field mappings — may not implement; sentinel pattern works today. |
 | [OUTPUT-CONTRACT-PLAN.md](OUTPUT-CONTRACT-PLAN.md) | Maybe | Tracks hardcoded consumer-facing output columns (`_cluster_id`, `_action`, `_src_id`); configurable aliases via `output.columns`. |
+| [DELTA-RESERVED-COLUMNS-PLAN.md](DELTA-RESERVED-COLUMNS-PLAN.md) | Proposed | Support source columns like `_base` without collisions by namespacing consumer-facing delta metadata columns. |
 | [NATURAL-KEYS-PLAN.md](NATURAL-KEYS-PLAN.md) | Done | Natural keys (email, business codes, composite PKs) work correctly today — no engine changes needed. |
 | [TYPE-HIERARCHY-PLAN.md](TYPE-HIERARCHY-PLAN.md) | Design | `hierarchy:` on target fields for IS-A type relationships; `type_matches` helper in reverse_filter. |
 | [TARGET-PATH-PLAN.md](TARGET-PATH-PLAN.md) | Design | Analysis of `target_path` (dotted notation on targets) — recommends output formatting over pipeline changes. |
@@ -65,3 +69,5 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [TIME-RANGE-RESOLUTION-PLAN.md](TIME-RANGE-RESOLUTION-PLAN.md) | Design | Support `last_modified` as a time range (min/max) instead of a single point; range resolution strategies. |
 | [SCHEMA-VALIDATION-PLAN.md](SCHEMA-VALIDATION-PLAN.md) | Done | JSON Schema validation as Pass 0 — reports all structural errors before serde deserialization. |
 | [HUMAN-CONFIRMATION-PLAN.md](HUMAN-CONFIRMATION-PLAN.md) | Design | Human-in-the-loop approval for reverse ETL — confirmation gates per system, action, field, and pattern. |
+| [COMBINED-ETL-REVERSE-ETL-ANALYSIS.md](COMBINED-ETL-REVERSE-ETL-ANALYSIS.md) | Design | Which stateful features belong in engine vs combined ETL runtime; recommends `derive_tombstones` and hard-delete propagation as experimental. |
+| [SCALAR-ARRAY-DELETION-PLAN.md](SCALAR-ARRAY-DELETION-PLAN.md) | Proposed | Detect element-level deletions in pure scalar arrays without source schema changes; extends `derive_tombstones` with soft/hard/signal modes. |

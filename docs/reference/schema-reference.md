@@ -666,20 +666,21 @@ Without a detection mechanism, the setting is inert (no error, just unused).
 
 ### `tombstone`
 
-Soft-delete detection.  Declares a source column that signals deletion and how to detect / reverse it.
+Soft-delete detection.  Declares a source column that signals deletion and how to detect / reverse it.  Exactly one of `undelete_value` or `undelete_expression` is required.
 
-| Property | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `field` | string | **yes** | — | Source column carrying the deletion signal |
-| `default` | null / boolean / string | no | `null` | Default (non-deleted) value — derives `detect` and `undelete` when omitted |
-| `detect` | string (SQL) | no | derived | SQL expression — true when entity is soft-deleted |
-| `undelete` | string or map | no | derived | SQL expression(s) to project when undeleting |
+| Property | Type | Required | Description |
+|---|---|---|---|
+| `field` | string | **yes** | Source column carrying the deletion signal |
+| `undelete_value` | null / boolean / string | one-of | The value this field holds when NOT deleted — derives `detect` and undelete projection |
+| `undelete_expression` | string (SQL) | one-of | Raw SQL expression for the tombstone field when undeleting; requires `detect` |
+| `detect` | string (SQL) | no | SQL expression — true when entity is soft-deleted; derived from `field` + `undelete_value` when omitted |
+| `undelete_columns` | map (string → SQL) | no | Additional columns to override when undeleting; keys auto-included as passthrough |
 
-When `detect` is omitted, it is derived from `field` + `default`:
+When `detect` is omitted, it is derived from `field` + `undelete_value`:
 
-| `default` | Derived `detect` |
+| `undelete_value` | Derived `detect` |
 |---|---|
-| `null` (default) | `"field" IS NOT NULL` |
+| `null` | `"field" IS NOT NULL` |
 | `false` | `"field" IS DISTINCT FROM FALSE` |
 | `'active'` | `"field" IS DISTINCT FROM 'active'` |
 
@@ -690,14 +691,14 @@ Behavior depends on `resurrect`:
 | `false` (default) | Suppress — row excluded from delta |
 | `true` | Undelete — delta emits `'update'` with undelete values |
 
-The tombstone `field` (and any `undelete` map keys) are auto-included as passthrough columns.
+The tombstone `field` (and any `undelete_columns` keys) are auto-included as passthrough columns.
 
 ```yaml
-  # deleted_at IS NOT NULL → soft-deleted (default: null)
+  # deleted_at IS NOT NULL → soft-deleted
   - name: crm
     source: crm
     target: customer
-    tombstone: { field: deleted_at }
+    tombstone: { field: deleted_at, undelete_value: null }
     fields: [...]
 ```
 
@@ -707,7 +708,7 @@ The tombstone `field` (and any `undelete` map keys) are auto-included as passthr
   - name: crm
     source: crm
     target: customer
-    tombstone: { field: is_deleted, default: false }
+    tombstone: { field: is_deleted, undelete_value: false }
     resurrect: true
     fields: [...]
 ```
@@ -720,8 +721,8 @@ The tombstone `field` (and any `undelete` map keys) are auto-included as passthr
     tombstone:
       field: status
       detect: "status IN ('deleted', 'archived')"
-      undelete:
-        status: "'active'"
+      undelete_expression: "'active'"
+      undelete_columns:
         deleted_at: "NULL"
     resurrect: true
     fields: [...]

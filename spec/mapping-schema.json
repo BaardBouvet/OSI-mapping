@@ -426,7 +426,7 @@
 
     "Tombstone": {
       "type": "object",
-      "description": "Soft-delete detection configuration. Declares a source column that signals deletion and how to detect/reverse it.",
+      "description": "Soft-delete detection configuration. Declares a source column that signals deletion and how to detect/reverse it. Exactly one of undelete_value or undelete_expression is required.",
       "required": ["field"],
       "additionalProperties": false,
       "properties": {
@@ -434,21 +434,27 @@
           "type": "string",
           "description": "Source column carrying the deletion signal. Auto-included as passthrough."
         },
-        "default": {
-          "description": "The default (non-deleted) value. Used to derive detect and undelete when not specified. Defaults to null (i.e. field IS NOT NULL means deleted). Set to false for boolean flags, or a string for enum values."
+        "undelete_value": {
+          "description": "The value this field holds when the entity is NOT deleted. Used to derive detect and undelete projection. null = IS NOT NULL means deleted; false for boolean flags; a string for enum values. Mutually exclusive with undelete_expression."
+        },
+        "undelete_expression": {
+          "type": "string",
+          "description": "Raw SQL expression to project for the tombstone field when undeleting (resurrect: true). Requires detect. Mutually exclusive with undelete_value."
         },
         "detect": {
           "$ref": "#/$defs/Expression",
-          "description": "SQL boolean expression that evaluates to true when the entity is soft-deleted. When omitted, derived from field + default."
+          "description": "SQL boolean expression that evaluates to true when the entity is soft-deleted. When omitted, derived from field + undelete_value."
         },
-        "undelete": {
-          "description": "SQL expression(s) to project when undeleting (resurrect: true). A string applies to the tombstone field only; a map overrides arbitrary columns (map keys auto-included as passthrough). When omitted, derived from default.",
-          "oneOf": [
-            { "type": "string" },
-            { "type": "object", "additionalProperties": { "type": "string" } }
-          ]
+        "undelete_columns": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Additional columns to override when undeleting (resurrect: true). Map of column name to SQL expression. Keys are auto-included as passthrough."
         }
-      }
+      },
+      "oneOf": [
+        { "required": ["undelete_value"] },
+        { "required": ["undelete_expression"] }
+      ]
     },
 
     "Expression": {
