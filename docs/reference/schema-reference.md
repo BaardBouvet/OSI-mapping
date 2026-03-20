@@ -370,7 +370,7 @@ Maps fields from one source dataset to one target entity.
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
 | `resurrect` | boolean | no | Whether to resurrect entities that disappeared from this source (default `false`) |
 | `tombstone_field` | string | no | Soft-delete detection — source column that signals deletion |
-| `alive` | null / boolean / string | no | Value that means "not deleted" for `tombstone_field` (default `null`) |
+| `tombstone_default` | null / boolean / string | no | Default (non-deleted) value for `tombstone_field` (default `null`) |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
 
 ```yaml
@@ -667,24 +667,24 @@ Without a detection mechanism, the setting is inert (no error, just unused).
 
 ### `tombstone_field`
 
-Soft-delete detection.  Declares a source column that signals deletion.  When the column differs from its `alive` value, the entity is treated as soft-deleted.
+Soft-delete detection.  Declares a source column that signals deletion.  When the column differs from its `tombstone_default` value, the entity is treated as soft-deleted.
 
 | Property | Type | Default | Description |
 |---|---|---|---|
 | `tombstone_field` | string | — | Source column carrying the deletion signal |
-| `alive` | null / boolean / string | `null` | Value that means "not deleted" |
+| `tombstone_default` | null / boolean / string | `null` | Default (non-deleted) value |
 
 Behavior depends on `resurrect`:
 
 | `resurrect` | Effect |
 |---|---|
 | `false` (default) | Suppress — row excluded from delta |
-| `true` | Undelete — delta emits `'update'` with the alive value so the ETL clears the soft-delete marker |
+| `true` | Undelete — delta emits `'update'` with the default value so the ETL clears the soft-delete marker |
 
 The tombstone field is auto-included as a passthrough column (no need to list it in `passthrough`).
 
 ```yaml
-  # deleted_at IS NOT NULL → soft-deleted (alive defaults to null)
+  # deleted_at IS NOT NULL → soft-deleted (tombstone_default defaults to null)
   - name: crm
     source: crm
     target: customer
@@ -699,7 +699,7 @@ The tombstone field is auto-included as a passthrough column (no need to list it
     source: crm
     target: customer
     tombstone_field: is_deleted
-    alive: false
+    tombstone_default: false
     resurrect: true
     fields: [...]
 ```

@@ -333,23 +333,23 @@ pub struct Mapping {
     /// re-insertion (opt out of hard-delete detection).
     ///
     /// For soft deletes (`tombstone_field`), `resurrect: true` enables
-    /// undelete: the delta emits `'update'` with the alive value, telling
+    /// undelete: the delta emits `'update'` with the default value, telling
     /// the ETL to clear the soft-delete marker.
     #[serde(default)]
     pub resurrect: bool,
     /// Soft-delete detection — source column that signals deletion.
-    /// When the column differs from its `alive` value, the entity is
-    /// treated as soft-deleted.
+    /// When the column differs from its `tombstone_default` value, the entity
+    /// is treated as soft-deleted.
     ///
     /// - `resurrect: false` (default): suppress the row (NULL action)
-    /// - `resurrect: true`: emit `'update'` with the alive value (undelete)
+    /// - `resurrect: true`: emit `'update'` with the default value (undelete)
     #[serde(default)]
     pub tombstone_field: Option<String>,
-    /// The value that means "alive" (not deleted) for `tombstone_field`.
+    /// The default (non-deleted) value for `tombstone_field`.
     /// Defaults to null — i.e. `deleted_at IS NOT NULL` means deleted.
     /// Set to `false` for boolean flags, or a string for enum values.
     #[serde(default)]
-    pub alive: AliveValue,
+    pub tombstone_default: TombstoneDefault,
 }
 
 impl Mapping {
@@ -428,8 +428,8 @@ impl Mapping {
     pub fn tombstone_detection_expr(&self) -> Option<String> {
         self.tombstone_field.as_ref().map(|f| {
             let field = qi(f);
-            match &self.alive {
-                AliveValue::Null => format!("{field} IS NOT NULL"),
+            match &self.tombstone_default {
+                TombstoneDefault::Null => format!("{field} IS NOT NULL"),
                 other => format!("{field} IS DISTINCT FROM {}", other.to_sql()),
             }
         })
@@ -477,11 +477,11 @@ impl LinkField {
     }
 }
 
-// ── AliveValue (soft-delete alive marker) ─────────────────────────────
+// ── TombstoneDefault (soft-delete default value) ──────────────────────
 
-/// The "alive" value for a tombstone field — the value that means "not deleted."
+/// The default (non-deleted) value for a tombstone field.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub enum AliveValue {
+pub enum TombstoneDefault {
     /// SQL NULL — the most common case (`deleted_at IS NOT NULL`).
     #[default]
     Null,
@@ -491,54 +491,54 @@ pub enum AliveValue {
     String(String),
 }
 
-impl AliveValue {
+impl TombstoneDefault {
     /// Render as a SQL literal.
     pub fn to_sql(&self) -> String {
         match self {
-            AliveValue::Null => "NULL".to_string(),
-            AliveValue::Bool(true) => "TRUE".to_string(),
-            AliveValue::Bool(false) => "FALSE".to_string(),
-            AliveValue::String(s) => format!("'{}'", s.replace('\'', "''")),
+            TombstoneDefault::Null => "NULL".to_string(),
+            TombstoneDefault::Bool(true) => "TRUE".to_string(),
+            TombstoneDefault::Bool(false) => "FALSE".to_string(),
+            TombstoneDefault::String(s) => format!("'{}'", s.replace('\'', "''")),
         }
     }
 }
 
-impl<'de> serde::Deserialize<'de> for AliveValue {
+impl<'de> serde::Deserialize<'de> for TombstoneDefault {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        struct AliveVisitor;
+        struct TombstoneDefaultVisitor;
 
-        impl<'de> serde::de::Visitor<'de> for AliveVisitor {
-            type Value = AliveValue;
+        impl<'de> serde::de::Visitor<'de> for TombstoneDefaultVisitor {
+            type Value = TombstoneDefault;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str("null, a boolean, or a string")
             }
 
-            fn visit_unit<E: serde::de::Error>(self) -> Result<AliveValue, E> {
-                Ok(AliveValue::Null)
+            fn visit_unit<E: serde::de::Error>(self) -> Result<TombstoneDefault, E> {
+                Ok(TombstoneDefault::Null)
             }
 
-            fn visit_none<E: serde::de::Error>(self) -> Result<AliveValue, E> {
-                Ok(AliveValue::Null)
+            fn visit_none<E: serde::de::Error>(self) -> Result<TombstoneDefault, E> {
+                Ok(TombstoneDefault::Null)
             }
 
-            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<AliveValue, E> {
-                Ok(AliveValue::Bool(v))
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<TombstoneDefault, E> {
+                Ok(TombstoneDefault::Bool(v))
             }
 
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<AliveValue, E> {
-                Ok(AliveValue::String(v.to_string()))
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<TombstoneDefault, E> {
+                Ok(TombstoneDefault::String(v.to_string()))
             }
 
-            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<AliveValue, E> {
-                Ok(AliveValue::String(v))
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<TombstoneDefault, E> {
+                Ok(TombstoneDefault::String(v))
             }
         }
 
-        deserializer.deserialize_any(AliveVisitor)
+        deserializer.deserialize_any(TombstoneDefaultVisitor)
     }
 }
 

@@ -327,7 +327,7 @@ fn action_case(
         // Soft-delete: source row exists but tombstone field signals deletion.
         if let Some(det) = mapping.tombstone_detection_expr() {
             if mapping.resurrect {
-                // Undelete: emit 'update' so the ETL writes the alive value back
+                // Undelete: emit 'update' so the ETL writes the default value back
                 branches.push(format!(
                     "WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"
                 ));
@@ -517,12 +517,12 @@ pub fn render_delta_view(
             }
         }
         // When resurrect: true + tombstone_field, override the tombstone field
-        // projection with a CASE that outputs the alive value.
+        // projection with a CASE that outputs the default value.
         if mapping.resurrect {
             if let Some(ref tf) = mapping.tombstone_field {
                 let ts_field = qi(tf);
                 let det = mapping.tombstone_detection_expr().unwrap();
-                let alive_sql = mapping.alive.to_sql();
+                let alive_sql = mapping.tombstone_default.to_sql();
                 if let Some(pos) = out_exprs.iter().position(|e| e == &ts_field) {
                     out_exprs[pos] = format!(
                         "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
@@ -996,13 +996,13 @@ fn render_delta_with_children(
         }
     }
     // When resurrect: true + tombstone_field, override the tombstone field
-    // projection with a CASE that outputs the alive value.
+    // projection with a CASE that outputs the default value.
     if let Some(m) = primary_mappings.first() {
         if m.resurrect {
             if let Some(ref tf) = m.tombstone_field {
                 let ts_field = qi(tf);
                 let det = m.tombstone_detection_expr().unwrap();
-                let alive_sql = m.alive.to_sql();
+                let alive_sql = m.tombstone_default.to_sql();
                 if let Some(pos) = out_exprs.iter().position(|e| e == &ts_field) {
                     out_exprs[pos] = format!(
                         "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
@@ -1120,7 +1120,7 @@ fn render_delta_union_all(
                 m.tombstone_field.as_ref().map(|tf| {
                     let ts_field = qi(tf);
                     let det = m.tombstone_detection_expr().unwrap();
-                    let alive_sql = m.alive.to_sql();
+                    let alive_sql = m.tombstone_default.to_sql();
                     let expr = format!(
                         "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
                     );
@@ -2557,10 +2557,10 @@ mappings:
             sql.contains(r#""deleted_at" IS NOT NULL) THEN 'update'"#),
             "tombstone + resurrect: true should emit 'update' (undelete):\n{sql}"
         );
-        // Should project the alive value (NULL) for the tombstone field
+        // Should project the default value (NULL) for the tombstone field
         assert!(
             sql.contains(r#"CASE WHEN ("deleted_at" IS NOT NULL) THEN NULL ELSE "deleted_at" END AS "deleted_at""#),
-            "should project alive value for tombstone field:\n{sql}"
+            "should project default value for tombstone field:\n{sql}"
         );
     }
 
@@ -2633,8 +2633,8 @@ mappings:
     }
 
     #[test]
-    fn tombstone_bool_alive() {
-        // tombstone_field + alive: false
+    fn tombstone_bool_default() {
+        // tombstone_field + tombstone_default: false
         let doc = parse(
             r#"
 version: "1.0"
@@ -2647,7 +2647,7 @@ mappings:
     source: s
     target: t
     tombstone_field: is_deleted
-    alive: false
+    tombstone_default: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2658,13 +2658,13 @@ mappings:
         // Detection: is_deleted IS DISTINCT FROM FALSE
         assert!(
             sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN NULL"#),
-            "tombstone with alive: false should use IS DISTINCT FROM:\n{sql}"
+            "tombstone with tombstone_default: false should use IS DISTINCT FROM:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_bool_alive_undelete_projection() {
-        // tombstone_field + alive: false + resurrect: true → undelete with alive value
+    fn tombstone_bool_default_undelete_projection() {
+        // tombstone_field + tombstone_default: false + resurrect: true → undelete with default value
         let doc = parse(
             r#"
 version: "1.0"
@@ -2677,7 +2677,7 @@ mappings:
     source: s
     target: t
     tombstone_field: is_deleted
-    alive: false
+    tombstone_default: false
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2691,10 +2691,10 @@ mappings:
             sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN 'update'"#),
             "tombstone + resurrect:true should emit 'update':\n{sql}"
         );
-        // Should project alive value (FALSE) when tombstone detected
+        // Should project default value (FALSE) when tombstone detected
         assert!(
             sql.contains(r#"CASE WHEN ("is_deleted" IS DISTINCT FROM FALSE) THEN FALSE ELSE "is_deleted" END AS "is_deleted""#),
-            "should project alive value for tombstone field:\n{sql}"
+            "should project default value for tombstone field:\n{sql}"
         );
     }
 

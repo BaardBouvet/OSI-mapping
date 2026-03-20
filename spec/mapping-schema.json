@@ -260,10 +260,10 @@
         },
         "tombstone_field": {
           "type": "string",
-          "description": "Source column that signals deletion (soft-delete detection). When the column differs from its alive value, the entity is treated as soft-deleted. With resurrect: false (default), the row is suppressed. With resurrect: true, the delta emits 'update' with the alive value to undelete."
+          "description": "Source column that signals deletion (soft-delete detection). When the column differs from its tombstone_default value, the entity is treated as soft-deleted. With resurrect: false (default), the row is suppressed. With resurrect: true, the delta emits 'update' with the default value to undelete."
         },
-        "alive": {
-          "description": "The value that means 'not deleted' for tombstone_field. Defaults to null (i.e. field IS NOT NULL means deleted). Set to false for boolean flags, or a string for enum values."
+        "tombstone_default": {
+          "description": "The default (non-deleted) value for tombstone_field. Defaults to null (i.e. field IS NOT NULL means deleted). Set to false for boolean flags, or a string for enum values."
         }
       },
       "anyOf": [

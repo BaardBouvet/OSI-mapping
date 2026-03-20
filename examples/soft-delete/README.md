@@ -14,17 +14,17 @@ Without detection, the engine sees the CRM row as normal and emits
 Other sources may re-insert the customer into CRM, creating a loop.
 
 With `tombstone_field: deleted_at`, the engine detects that the field
-differs from its alive value (null by default) and treats the entity
+differs from its default value (null by default) and treats the entity
 as soft-deleted. When `resurrect: false` (default), the row is
 suppressed. When `resurrect: true`, the delta emits `'update'` with
-the alive value so the ETL can clear the soft-delete marker.
+the default value so the ETL can clear the soft-delete marker.
 
 ## Key features
 
 - **`tombstone_field`** — source column carrying the deletion signal.
-  When the column differs from `alive` (default: null), the entity is
+  When the column differs from `tombstone_default` (default: null), the entity is
   soft-deleted.
-- **`alive`** — optional property specifying the "not deleted" value.
+- **`tombstone_default`** — optional property specifying the default (non-deleted) value.
   Defaults to null. Set to `false` for boolean flags, or a string for
   enum values.
 - **`resurrect`** — controls behavior: `false` (default) suppresses,

@@ -4,11 +4,11 @@
 
 First-class support for source-provided tombstones — rows that remain in the
 source but are semantically deleted (soft delete).  The engine knows the
-tombstone field and its "alive" value, enabling both suppression and automatic
+tombstone field and its default value, enabling both suppression and automatic
 undelete.
 
 - `resurrect: false` (default) + `tombstone_field` → suppress (NULL action)
-- `resurrect: true` + `tombstone_field` → undelete ('update' action + alive value)
+- `resurrect: true` + `tombstone_field` → undelete ('update' action + default value)
 
 Complements [HARD-DELETE-PROPAGATION-PLAN](HARD-DELETE-PROPAGATION-PLAN.md)
 (entity disappears because the row is gone) and
@@ -53,12 +53,12 @@ This works but requires:
 
 ### What first-class support adds
 
-Two mapping properties — `tombstone_field` and optional `alive` — declare
+Two mapping properties — `tombstone_field` and optional `tombstone_default` — declare
 the deletion signal.  The engine derives the detection expression and knows
 how to reverse the soft delete:
 
 ```yaml
-# Nullable timestamp (most common) — alive defaults to null
+# Nullable timestamp (most common) — tombstone_default defaults to null
 mappings:
   - name: crm
     source: crm
@@ -68,13 +68,13 @@ mappings:
       - source: email
         target: email
 
-# Boolean flag with explicit alive value
+# Boolean flag with explicit default value
 mappings:
   - name: crm
     source: crm
     target: customer
     tombstone_field: is_deleted
-    alive: false
+    tombstone_default: false
     fields:
       - source: email
         target: email
@@ -82,17 +82,17 @@ mappings:
 
 This integrates with `resurrect`:
 - `resurrect: false` (default) → suppress (NULL action, row excluded)
-- `resurrect: true` → undelete ('update' action, alive value projected)
+- `resurrect: true` → undelete ('update' action, default value projected)
 
 ## Design
 
-### New mapping properties: `tombstone_field` + `alive`
+### New mapping properties: `tombstone_field` + `tombstone_default`
 
-`tombstone_field` is the source column name.  `alive` (optional) is the value
+`tombstone_field` is the source column name.  `tombstone_default` (optional) is the value
 that means "not deleted" — defaults to null.  The engine derives the detection
 expression:
 
-| `tombstone_field` | `alive` | Detection expression |
+| `tombstone_field` | `tombstone_default` | Detection expression |
 |---|---|---|
 | `deleted_at` | (default: null) | `"deleted_at" IS NOT NULL` |
 | `is_deleted` | `false` | `"is_deleted" IS DISTINCT FROM FALSE` |
@@ -106,13 +106,13 @@ for manual `passthrough: [deleted_at]`.
 | `resurrect` | Tombstone detected | Action | Projection |
 |---|---|---|---|
 | `false` (default) | yes | NULL (suppress) | — |
-| `true` | yes | `'update'` (undelete) | tombstone field → alive value |
+| `true` | yes | `'update'` (undelete) | tombstone field → default value |
 | either | no | normal logic | normal |
 
 When `resurrect: true` and tombstone is detected, the delta:
 1. Emits `'update'` instead of NULL — the ETL will write back
-2. Projects the alive value for the tombstone field — the ETL writes the
-   alive value back to the source, clearing the soft delete
+2. Projects the default value for the tombstone field — the ETL writes the
+   default value back to the source, clearing the soft delete
 
 ```sql
 -- Action CASE (resurrect: true)
@@ -148,7 +148,7 @@ A mapping can have both:
     source: erp
     target: customer
     tombstone_field: is_deleted
-    alive: true
+    tombstone_default: true
     reverse_filter: "tier IS NOT NULL"
     fields: [...]
 ```
@@ -176,19 +176,19 @@ Two flat properties on `Mapping`:
 
 ```rust
 pub tombstone_field: Option<String>,  // source column name
-pub alive: AliveValue,                // default: Null
+pub tombstone_default: TombstoneDefault,                // default: Null
 ```
 
-`AliveValue` enum with custom serde Deserialize:
+`TombstoneDefault` enum with custom serde Deserialize:
 
 ```rust
 #[derive(Debug, Clone, Default, PartialEq)]
-pub enum AliveValue { #[default] Null, Bool(bool), String(String) }
+pub enum TombstoneDefault { #[default] Null, Bool(bool), String(String) }
 ```
 
 Key methods:
-- `Mapping::tombstone_detection_expr()` — derives SQL from field + alive
-- `AliveValue::to_sql()` — renders SQL literal (NULL, FALSE, 'value')
+- `Mapping::tombstone_detection_expr()` — derives SQL from field + tombstone_default
+- `TombstoneDefault::to_sql()` — renders SQL literal (NULL, FALSE, 'value')
 - `Mapping::effective_passthrough()` — `passthrough` + tombstone field
 
 `suppress_resurrect()` is NOT updated — tombstone is independent.
@@ -209,13 +209,13 @@ if let Some(det) = mapping.tombstone_detection_expr() {
 ```
 
 When `resurrect: true`, the delta also overrides the tombstone field
-projection with the alive value:
+projection with the default value:
 
 ```rust
 let ts_override = format!(
-    "CASE WHEN ({det}) THEN {alive} ELSE {field} END AS {field}",
+    "CASE WHEN ({det}) THEN {default_val} ELSE {field} END AS {field}",
     det = mapping.tombstone_detection_expr().unwrap(),
-    alive = mapping.alive.to_sql(),
+    default_val = mapping.tombstone_default.to_sql(),
     field = qi(tf),
 );
 ```
@@ -229,8 +229,8 @@ Three rendering paths updated: single-mapping, merged-child, UNION ALL.
   "type": "string",
   "description": "Source column that signals deletion"
 },
-"alive": {
-  "description": "Value that means 'not deleted' (null, boolean, string)"
+"tombstone_default": {
+  "description": "Default (non-deleted) value (null, boolean, string)"
 }
 ```
 
@@ -308,16 +308,16 @@ tests:
 A SQL expression (`"deleted_at IS NOT NULL"`) only answers "is this row
 deleted?".  It can't answer "what value should the field have to undelete?"
 
-A field + alive value gives the engine both:
+A field + default value gives the engine both:
 - **Detection:** derive `field IS NOT NULL` or `field IS DISTINCT FROM value`
-- **Reversal:** project the alive value when undeleting
+- **Reversal:** project the default value when undeleting
 
 This enables automatic undelete when `resurrect: true` — the engine knows
 exactly what to write back to clear the soft-delete marker.
 
 ### Why flat properties instead of a nested object?
 
-`tombstone_field` + `alive` as top-level mapping properties is consistent
+`tombstone_field` + `tombstone_default` as top-level mapping properties is consistent
 with how other mapping properties work (e.g. `written_state`, `cluster_members`,
 `derive_tombstones`).  No special shorthand/object-form serde gymnastics
 needed.
