@@ -311,9 +311,9 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        // tombstone_policy is a pure policy knob — no prerequisites.
+        // reinsert is a pure policy knob — no prerequisites.
         // Detection comes from cluster_members or derive_tombstones+written_state.
-        // Without a detection source, the policy is inert (no error, just unused).
+        // Without a detection source, the knob is inert (no error, just unused).
     }
 }
 
@@ -1748,7 +1748,7 @@ mappings:
     }
 
     #[test]
-    fn tombstone_policy_without_derive_tombstones_is_valid() {
+    fn reinsert_false_without_derive_tombstones_is_valid() {
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1762,7 +1762,7 @@ mappings:
     source: s
     target: t
     written_state: true
-    tombstone_policy: suppress
+    reinsert: false
     fields:
       - { source: name, target: name }
 "#;
@@ -1770,17 +1770,17 @@ mappings:
         let result = validate(&doc);
         let policy_errors: Vec<_> = result
             .errors()
-            .filter(|d| d.message.contains("tombstone_policy"))
+            .filter(|d| d.message.contains("reinsert"))
             .collect();
         assert!(
             policy_errors.is_empty(),
-            "tombstone_policy + written_state (no derive_tombstones) should be valid, got: {policy_errors:?}"
+            "reinsert: false + written_state (no derive_tombstones) should be valid, got: {policy_errors:?}"
         );
     }
 
     #[test]
-    fn tombstone_policy_alone_is_valid() {
-        // tombstone_policy is a pure policy knob — no prerequisites
+    fn reinsert_false_alone_is_valid() {
+        // reinsert is a pure policy knob — no prerequisites
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1793,7 +1793,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_policy: suppress
+    reinsert: false
     fields:
       - { source: name, target: name }
 "#;
@@ -1801,16 +1801,16 @@ mappings:
         let result = validate(&doc);
         let policy_errors: Vec<_> = result
             .errors()
-            .filter(|d| d.message.contains("tombstone_policy"))
+            .filter(|d| d.message.contains("reinsert"))
             .collect();
         assert!(
             policy_errors.is_empty(),
-            "tombstone_policy alone should be valid (pure policy), got: {policy_errors:?}"
+            "reinsert: false alone should be valid (pure policy), got: {policy_errors:?}"
         );
     }
 
     #[test]
-    fn tombstone_policy_with_derive_tombstones_is_valid() {
+    fn reinsert_false_with_derive_tombstones_is_valid() {
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1825,7 +1825,7 @@ mappings:
     target: t
     written_state: true
     derive_tombstones: true
-    tombstone_policy: suppress
+    reinsert: false
     fields:
       - { source: name, target: name }
 "#;
@@ -1833,11 +1833,11 @@ mappings:
         let result = validate(&doc);
         let policy_errors: Vec<_> = result
             .errors()
-            .filter(|d| d.message.contains("tombstone_policy"))
+            .filter(|d| d.message.contains("reinsert"))
             .collect();
         assert!(
             policy_errors.is_empty(),
-            "tombstone_policy + derive_tombstones + written_state should be valid, got: {policy_errors:?}"
+            "reinsert: false + derive_tombstones + written_state should be valid, got: {policy_errors:?}"
         );
     }
 }

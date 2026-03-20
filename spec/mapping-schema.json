@@ -242,7 +242,7 @@
         },
         "derive_tombstones": {
           "type": "boolean",
-          "description": "When true (requires written_state), derives tombstones by comparing written state against current state. Entity level: entities in _written but absent from the source are treated as hard-deleted (policy per tombstone_policy, default suppress). Element level: elements in the written JSONB array but absent from the forward view are excluded from all sources' reconstructed arrays."
+          "description": "When true (requires written_state), derives tombstones by comparing written state against current state. Entity level: entities in _written but absent from the source are treated as hard-deleted (suppressed when reinsert is false). Element level: elements in the written JSONB array but absent from the forward view are excluded from all sources' reconstructed arrays."
         },
         "derive_timestamps": {
           "type": "boolean",
@@ -253,10 +253,10 @@
           "items": { "type": "string" },
           "description": "Source columns to carry through to delta output without mapping to a target field. Included in _base and reverse/delta views but excluded from noop detection and resolution."
         },
-        "tombstone_policy": {
-          "type": "string",
-          "enum": ["suppress", "delete"],
-          "description": "Entity-level tombstone policy — what to do when a previously-synced entity disappears from this source. 'suppress' (default) excludes the row from the delta — no re-insert, no delete. 'delete' emits a delete action so the ETL removes the entity from the target. Detection uses cluster_members or derive_tombstones+written_state."
+        "reinsert": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to re-insert entities that disappeared from this source. When false and a detection mechanism is available (cluster_members or derive_tombstones+written_state), the engine suppresses re-insertion — emitting NULL instead of 'insert' for entities that were previously synced but are now absent. Default true (normal insert behavior)."
         }
       },
       "anyOf": [

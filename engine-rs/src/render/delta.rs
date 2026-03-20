@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use std::collections::BTreeMap;
 
 use super::forward::{parse_path_segments, PathSegment};
-use crate::model::{Mapping, Source, Strategy, Target, TombstonePolicy};
+use crate::model::{Mapping, Source, Strategy, Target};
 use crate::{qi, sql_escape};
 
 /// A tree node for rebuilding nested JSONB from extracted fields.
@@ -215,7 +215,9 @@ struct VanishedSource {
 
 /// Compute hard-delete detection for a mapping, if applicable.
 fn tombstone_detection(mapping: &Mapping) -> Option<TombstoneDetection> {
-    mapping.effective_tombstone_policy()?;
+    if !mapping.suppress_reinsert() {
+        return None;
+    }
 
     if let Some(ref cm) = mapping.cluster_members {
         let cm_table = qi(&cm.table_name(&mapping.name));
@@ -262,10 +264,9 @@ fn tombstone_detection(mapping: &Mapping) -> Option<TombstoneDetection> {
 /// When `written_col` is `Some`, a second noop branch compares resolved fields
 /// against the `_ws.{written_col}` JSONB column (target-centric noop).
 ///
-/// When `tombstone_policy` is `Some`, a branch before the insert detects
+/// When `detection_expr` is `Some`, a branch before the insert detects
 /// entities that were previously synced but have `_src_id IS NULL` (source
-/// row gone).  `detection_expr` is the SQL condition proving prior sync
-/// (e.g. `_cm_hd."_src_id" IS NOT NULL` or `_ws."_cluster_id" IS NOT NULL`).
+/// row gone) and suppresses re-insertion (emits NULL instead of 'insert').
 ///
 /// When `src_id_qualifier` is `Some`, all `_src_id` references are qualified
 /// to avoid ambiguity with a LEFT JOINed table that also has `_src_id`.
@@ -273,7 +274,6 @@ fn action_case(
     mapping: &Mapping,
     pk_columns: &std::collections::HashSet<&str>,
     written_col: Option<&str>,
-    tombstone_policy: Option<TombstonePolicy>,
     detection_expr: Option<&str>,
     src_id_qualifier: Option<&str>,
 ) -> String {
@@ -324,14 +324,10 @@ fn action_case(
         // They should not produce insert rows (can't insert partial records).
         branches.push(format!("WHEN {src_id} IS NULL THEN NULL"));
     } else {
-        // Hard-delete detection: entity was previously synced but source
-        // row is now gone (_src_id IS NULL).
-        if let (Some(policy), Some(det)) = (tombstone_policy, detection_expr) {
-            let action = match policy {
-                TombstonePolicy::Suppress => "NULL",
-                TombstonePolicy::Delete => "'delete'",
-            };
-            branches.push(format!("WHEN {src_id} IS NULL AND {det} THEN {action}"));
+        // Suppress re-insertion: entity was previously synced but source
+        // row is now gone (_src_id IS NULL).  Exclude from delta.
+        if let Some(det) = detection_expr {
+            branches.push(format!("WHEN {src_id} IS NULL AND {det} THEN NULL"));
         }
         // Filter inserts: if delete conditions exist, an entity with _src_id IS NULL
         // that also matches the delete conditions should be excluded (not inserted).
@@ -494,7 +490,6 @@ pub fn render_delta_view(
             mapping,
             &pk_columns,
             written_col,
-            mapping.effective_tombstone_policy(),
             td.as_ref().map(|t| t.detection_expr.as_str()),
             src_qualifier,
         );
@@ -613,7 +608,6 @@ fn merged_action_case(
     all_reverse_fields: &[String],
     written_col: Option<&str>,
     normalize_map: &std::collections::HashMap<&str, &str>,
-    tombstone_policy: Option<TombstonePolicy>,
     detection_expr: Option<&str>,
     src_id_qualifier: Option<&str>,
 ) -> String {
@@ -660,14 +654,10 @@ fn merged_action_case(
 
     let mut branches = Vec::new();
 
-    // Hard-delete detection: entity was previously synced but source
-    // row is now gone (_src_id IS NULL).
-    if let (Some(policy), Some(det)) = (tombstone_policy, detection_expr) {
-        let action = match policy {
-            TombstonePolicy::Suppress => "NULL",
-            TombstonePolicy::Delete => "'delete'",
-        };
-        branches.push(format!("WHEN {src_id} IS NULL AND {det} THEN {action}"));
+    // Suppress re-insertion: entity was previously synced but source
+    // row is now gone (_src_id IS NULL).  Exclude from delta.
+    if let Some(det) = detection_expr {
+        branches.push(format!("WHEN {src_id} IS NULL AND {det} THEN NULL"));
     }
 
     if !delete_conditions.is_empty() {
@@ -929,9 +919,6 @@ fn render_delta_with_children(
             Some((src, norm))
         })
         .collect();
-    let primary_tombstone_policy = primary_mappings
-        .iter()
-        .find_map(|m| m.effective_tombstone_policy());
     // Use detection from the first primary mapping that has it.
     let primary_td = primary_mappings.iter().find_map(|m| tombstone_detection(m));
     let merged_src_qualifier = primary_td
@@ -944,7 +931,6 @@ fn render_delta_with_children(
         reverse_fields,
         written_col,
         &normalize_map,
-        primary_tombstone_policy,
         primary_td.as_ref().map(|t| t.detection_expr.as_str()),
         merged_src_qualifier,
     );
@@ -1056,7 +1042,6 @@ fn render_delta_union_all(
                 m,
                 pk_columns,
                 written_col,
-                m.effective_tombstone_policy(),
                 td.as_ref().map(|t| t.detection_expr.as_str()),
                 src_qualifier,
             );
@@ -2111,7 +2096,7 @@ mappings:
 
     #[test]
     fn tombstone_suppress_via_derive_tombstones() {
-        // derive_tombstones + written_state → detection via _written table
+        // derive_tombstones + written_state + reinsert: false → detection via _written table
         let doc = parse(
             r#"
 version: "1.0"
@@ -2125,6 +2110,7 @@ mappings:
     target: t
     written_state: true
     derive_tombstones: true
+    reinsert: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2153,7 +2139,8 @@ mappings:
     }
 
     #[test]
-    fn tombstone_delete_via_derive_tombstones() {
+    fn derive_tombstones_default_reinsert_no_entity_detection() {
+        // derive_tombstones + written_state without reinsert: false → no entity-level detection
         let doc = parse(
             r#"
 version: "1.0"
@@ -2167,7 +2154,6 @@ mappings:
     target: t
     written_state: true
     derive_tombstones: true
-    tombstone_policy: delete
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2176,14 +2162,18 @@ mappings:
         let sql =
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
-            sql.contains("_ws.\"_cluster_id\" IS NOT NULL THEN 'delete'"),
-            "delete policy should emit 'delete' for hard-deleted entities:\n{sql}"
+            !sql.contains("IS NOT NULL THEN NULL"),
+            "derive_tombstones without reinsert: false should not suppress:\n{sql}"
+        );
+        assert!(
+            !sql.contains("UNION ALL"),
+            "no vanished UNION ALL without reinsert: false:\n{sql}"
         );
     }
 
     #[test]
     fn tombstone_suppress_via_cluster_members() {
-        // cluster_members alone → detection via cluster_members table
+        // cluster_members + reinsert: false → detection via cluster_members table
         let doc = parse(
             r#"
 version: "1.0"
@@ -2196,6 +2186,7 @@ mappings:
     source: s
     target: t
     cluster_members: true
+    reinsert: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2221,7 +2212,8 @@ mappings:
     }
 
     #[test]
-    fn tombstone_delete_via_cluster_members() {
+    fn cluster_members_default_reinsert_no_detection() {
+        // cluster_members without reinsert: false → no detection
         let doc = parse(
             r#"
 version: "1.0"
@@ -2234,7 +2226,6 @@ mappings:
     source: s
     target: t
     cluster_members: true
-    tombstone_policy: delete
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2243,8 +2234,12 @@ mappings:
         let sql =
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
-            sql.contains("_cm_hd.\"_src_id\" IS NOT NULL THEN 'delete'"),
-            "delete policy via cluster_members:\n{sql}"
+            !sql.contains("_cm_hd"),
+            "cluster_members without reinsert: false should not detect:\n{sql}"
+        );
+        assert!(
+            !sql.contains("UNION ALL"),
+            "no vanished UNION ALL without reinsert: false:\n{sql}"
         );
     }
 
@@ -2266,6 +2261,7 @@ mappings:
     cluster_members: true
     written_state: true
     derive_tombstones: true
+    reinsert: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2296,6 +2292,7 @@ mappings:
     target: t1
     written_state: true
     derive_tombstones: true
+    reinsert: false
     fields: [{ source: name, target: name }]
   - name: s_t2
     source: s
@@ -2355,8 +2352,8 @@ mappings:
     }
 
     #[test]
-    fn tombstone_policy_alone_is_inert() {
-        // tombstone_policy without detection source does nothing
+    fn reinsert_false_alone_is_inert() {
+        // reinsert: false without detection source does nothing
         let doc = parse(
             r#"
 version: "1.0"
@@ -2368,7 +2365,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone_policy: delete
+    reinsert: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2377,8 +2374,8 @@ mappings:
         let sql =
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
-            !sql.contains("THEN 'delete'"),
-            "tombstone_policy without detection source should be inert:\n{sql}"
+            !sql.contains("_cm_hd"),
+            "reinsert: false without detection source should be inert:\n{sql}"
         );
         assert!(
             !sql.contains("UNION ALL"),

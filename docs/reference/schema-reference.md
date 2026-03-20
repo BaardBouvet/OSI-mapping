@@ -368,6 +368,7 @@ Maps fields from one source dataset to one target entity.
 | `derive_noop` | boolean | no | Target-centric noop detection via written state |
 | `derive_tombstones` | boolean | no | Element-level deletion propagation via written state |
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
+| `reinsert` | boolean | no | Whether to re-insert entities that disappeared from this source (default `true`) |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
 
 ```yaml
@@ -636,6 +637,23 @@ When `true` (requires `written_state`), derives per-field `_ts_{field}` timestam
 ```
 
 **Examples:** [derive-timestamps](../examples/derive-timestamps/)
+
+### `reinsert`
+
+Whether to re-insert entities that disappeared from this source. When `false` and a detection mechanism is available — `cluster_members` (preferred) or `derive_tombstones` + `written_state` — the engine suppresses re-insertion by emitting `NULL` instead of `'insert'` for entities that were previously synced but are now absent.
+
+Default is `true` (normal insert behavior). Without a detection mechanism, `reinsert: false` is inert (no error, just unused).
+
+```yaml
+  - name: erp
+    source: erp
+    target: customer
+    cluster_members: true
+    reinsert: false              # suppress re-insertion of hard-deleted entities
+    fields: [...]
+```
+
+**Examples:** [hard-delete](../examples/hard-delete/)
 
 ---
 

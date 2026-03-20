@@ -240,19 +240,6 @@ pub enum Strategy {
     BoolOr,
 }
 
-/// Policy for detected tombstones — what to do when a previously-synced
-/// entity or element is absent from the current state.
-/// Requires `derive_tombstones` + `written_state`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TombstonePolicy {
-    /// Exclude from delta entirely — no re-insert, no delete.
-    #[default]
-    Suppress,
-    /// Emit `'delete'` — ETL deletes from this target system.
-    Delete,
-}
-
 /// A source-to-target mapping.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -314,8 +301,8 @@ pub struct Mapping {
     /// enriches the source data with deletion information the source
     /// system doesn't provide natively:
     /// - **Entity level:** entities in `_written` but absent from the
-    ///   source are treated as hard-deleted (policy per `tombstone_policy`,
-    ///   default suppress).
+    ///   source are treated as hard-deleted (suppressed when `reinsert`
+    ///   is false).
     /// - **Element level:** elements in the written JSONB array but absent
     ///   from the forward view are excluded from all sources' arrays.
     ///
@@ -336,13 +323,18 @@ pub struct Mapping {
     /// noop detection and resolution.
     #[serde(default)]
     pub passthrough: Vec<String>,
-    /// Entity-level tombstone policy — what to do when a tombstone is
-    /// detected for a previously-synced entity.  The tombstone may be
-    /// derived (via `derive_tombstones`) or detected via `cluster_members`
-    /// (row exists but source row is gone).  `suppress` (default) excludes
-    /// the row from the delta; `delete` emits a delete action.
-    #[serde(default)]
-    pub tombstone_policy: Option<TombstonePolicy>,
+    /// Whether to re-insert entities that disappeared from this source.
+    /// When `false` and a detection mechanism is available (`cluster_members`
+    /// or `derive_tombstones` + `written_state`), entities that were
+    /// previously synced but are now absent are excluded from the delta
+    /// instead of being re-inserted.  Default `true` (normal insert
+    /// behaviour).
+    #[serde(default = "default_true")]
+    pub reinsert: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Mapping {
@@ -388,26 +380,19 @@ impl Mapping {
         self.array.as_deref().or(self.array_path.as_deref())
     }
 
-    /// Effective entity-level tombstone policy.
+    /// Whether to suppress re-insertion of disappeared entities.
     ///
-    /// Returns `Some(policy)` when entity-level hard-delete detection is
-    /// active.  Detection requires a persistence table that outlives the
-    /// source row:
-    /// - `cluster_members` — ETL feedback table records which entities were
-    ///   synced to which source.  Always sufficient on its own.
-    /// - `derive_tombstones` + `written_state` — the `_written` table
-    ///   records what was previously written to the target.
+    /// Returns `true` when entity-level hard-delete detection is active
+    /// AND `reinsert` is `false`.  Detection requires a persistence table:
+    /// - `cluster_members` — ETL feedback table.
+    /// - `derive_tombstones` + `written_state` — written-state table.
     ///
-    /// Either path activates detection.  The policy is controlled by
-    /// `tombstone_policy` (default `Suppress`).
-    pub fn effective_tombstone_policy(&self) -> Option<TombstonePolicy> {
+    /// When true, the delta CASE emits NULL (exclude) instead of 'insert'
+    /// for entities that were previously synced but are now absent.
+    pub fn suppress_reinsert(&self) -> bool {
         let has_detection = self.cluster_members.is_some()
             || (self.derive_tombstones && self.written_state.is_some());
-        if has_detection {
-            Some(self.tombstone_policy.unwrap_or_default())
-        } else {
-            None
-        }
+        has_detection && !self.reinsert
     }
 }
 

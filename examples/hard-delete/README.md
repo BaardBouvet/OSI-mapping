@@ -16,32 +16,29 @@ is gone). Without detection, the engine sees `_src_id IS NULL` for Alice in
 ERP's delta and emits `'insert'` — re-inserting her into the system that
 just removed her. This creates a re-insertion loop.
 
-With `cluster_members` declared, the engine LEFT JOINs the feedback table
-into the delta view. Alice's entry exists in `cluster_members` (she was
-previously synced) but her source row is gone. The engine recognizes
-this as a hard delete and applies `tombstone_policy` to decide the response.
+With `cluster_members` declared and `reinsert: false`, the engine LEFT JOINs
+the feedback table into the delta view. Alice's entry exists in
+`cluster_members` (she was previously synced) but her source row is gone.
+The engine recognizes this as a hard delete and suppresses re-insertion.
 
 ## Key features
 
 - **`cluster_members: true`** — the ETL feedback table records which
   entities were synced; persists when the source row disappears
-- **`tombstone_policy: suppress`** — exclude hard-deleted entities from the
-  delta (no re-insertion, no explicit delete). This is the default.
-- **`tombstone_policy: delete`** — emit `'delete'` so the ETL cleans up the
-  target and removes the feedback entry
+- **`reinsert: false`** — suppress re-insertion of hard-deleted entities
+  (exclude from the delta entirely). Default is `true` (normal insert).
 - **Two detection paths** — `cluster_members` (ETL feedback) or
   `derive_tombstones` + `written_state` (noop/element state table).
-  Either activates entity-level detection.
+  Either activates entity-level detection when `reinsert: false`.
 
 ## How it works
 
 1. The ERP mapping declares `cluster_members: true` and
-   `tombstone_policy: suppress`.
+   `reinsert: false`.
 2. The engine LEFT JOINs `_cluster_members_erp_customers` into the delta.
 3. For each entity where `_src_id IS NULL` (no source row) but
-   `_cm_hd._src_id IS NOT NULL` (previously synced), the engine applies:
-   - `suppress`: emit `NULL` — row excluded from the delta entirely
-   - `delete`: emit `'delete'` — ETL deletes from target
+   `_cm_hd._src_id IS NOT NULL` (previously synced), the engine emits
+   `NULL` — the row is excluded from the delta entirely.
 4. Entities absent from both the source AND `cluster_members` get the
    normal `'insert'` action — they are genuinely new.
 5. Entities in `cluster_members` but absent from the resolved view
