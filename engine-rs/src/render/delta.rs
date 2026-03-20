@@ -215,7 +215,7 @@ struct VanishedSource {
 
 /// Compute hard-delete detection for a mapping, if applicable.
 fn tombstone_detection(mapping: &Mapping) -> Option<TombstoneDetection> {
-    if !mapping.suppress_reinsert() {
+    if !mapping.suppress_resurrect() {
         return None;
     }
 
@@ -325,9 +325,8 @@ fn action_case(
         branches.push(format!("WHEN {src_id} IS NULL THEN NULL"));
     } else {
         // Soft-delete: source row exists but tombstone field signals deletion.
-        if let Some(ref ts) = mapping.tombstone {
-            let det = ts.detection_expr();
-            if mapping.reinsert {
+        if let Some(det) = mapping.tombstone_detection_expr() {
+            if mapping.resurrect {
                 // Undelete: emit 'update' so the ETL writes the alive value back
                 branches.push(format!(
                     "WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"
@@ -337,7 +336,7 @@ fn action_case(
                 branches.push(format!("WHEN {src_id} IS NOT NULL AND ({det}) THEN NULL"));
             }
         }
-        // Suppress re-insertion: entity was previously synced but source
+        // Suppress resurrection: entity was previously synced but source
         // row is now gone (_src_id IS NULL).  Exclude from delta.
         if let Some(det) = detection_expr {
             branches.push(format!("WHEN {src_id} IS NULL AND {det} THEN NULL"));
@@ -517,13 +516,13 @@ pub fn render_delta_view(
                 out_exprs[pos] = format!("{rev_view}.{qi_cluster}");
             }
         }
-        // When reinsert: true + tombstone, override the tombstone field
+        // When resurrect: true + tombstone_field, override the tombstone field
         // projection with a CASE that outputs the alive value.
-        if mapping.reinsert {
-            if let Some(ref ts) = mapping.tombstone {
-                let ts_field = qi(ts.field());
-                let det = ts.detection_expr();
-                let alive_sql = ts.alive.to_sql();
+        if mapping.resurrect {
+            if let Some(ref tf) = mapping.tombstone_field {
+                let ts_field = qi(tf);
+                let det = mapping.tombstone_detection_expr().unwrap();
+                let alive_sql = mapping.alive.to_sql();
                 if let Some(pos) = out_exprs.iter().position(|e| e == &ts_field) {
                     out_exprs[pos] = format!(
                         "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
@@ -684,11 +683,13 @@ fn merged_action_case(
     let mut branches = Vec::new();
 
     // Soft-delete: source row exists but tombstone field signals deletion.
-    // Uses the primary mapping's tombstone (shared source).
-    if let Some(ts) = primary_mappings.first().and_then(|m| m.tombstone.as_ref()) {
-        let det = ts.detection_expr();
-        let reinsert = primary_mappings.first().is_some_and(|m| m.reinsert);
-        if reinsert {
+    // Uses the primary mapping's tombstone_field (shared source).
+    if let Some(det) = primary_mappings
+        .first()
+        .and_then(|m| m.tombstone_detection_expr())
+    {
+        let resurrect = primary_mappings.first().is_some_and(|m| m.resurrect);
+        if resurrect {
             branches.push(format!(
                 "WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"
             ));
@@ -697,7 +698,7 @@ fn merged_action_case(
         }
     }
 
-    // Suppress re-insertion: entity was previously synced but source
+    // Suppress resurrection: entity was previously synced but source
     // row is now gone (_src_id IS NULL).  Exclude from delta.
     if let Some(det) = detection_expr {
         branches.push(format!("WHEN {src_id} IS NULL AND {det} THEN NULL"));
@@ -994,14 +995,14 @@ fn render_delta_with_children(
             out_exprs[pos] = format!("_merged.{qi_cluster}");
         }
     }
-    // When reinsert: true + tombstone, override the tombstone field
+    // When resurrect: true + tombstone_field, override the tombstone field
     // projection with a CASE that outputs the alive value.
     if let Some(m) = primary_mappings.first() {
-        if m.reinsert {
-            if let Some(ref ts) = m.tombstone {
-                let ts_field = qi(ts.field());
-                let det = ts.detection_expr();
-                let alive_sql = ts.alive.to_sql();
+        if m.resurrect {
+            if let Some(ref tf) = m.tombstone_field {
+                let ts_field = qi(tf);
+                let det = m.tombstone_detection_expr().unwrap();
+                let alive_sql = m.alive.to_sql();
                 if let Some(pos) = out_exprs.iter().position(|e| e == &ts_field) {
                     out_exprs[pos] = format!(
                         "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
@@ -1113,13 +1114,13 @@ fn render_delta_union_all(
             let m_passthrough: std::collections::HashSet<&str> =
                 m.effective_passthrough().into_iter().collect();
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
-            // When reinsert: true + tombstone, compute the override expression
+            // When resurrect: true + tombstone_field, compute the override expression
             // for the tombstone field.
-            let ts_override: Option<(String, String)> = if m.reinsert {
-                m.tombstone.as_ref().map(|ts| {
-                    let ts_field = qi(ts.field());
-                    let det = ts.detection_expr();
-                    let alive_sql = ts.alive.to_sql();
+            let ts_override: Option<(String, String)> = if m.resurrect {
+                m.tombstone_field.as_ref().map(|tf| {
+                    let ts_field = qi(tf);
+                    let det = m.tombstone_detection_expr().unwrap();
+                    let alive_sql = m.alive.to_sql();
                     let expr = format!(
                         "CASE WHEN ({det}) THEN {alive_sql} ELSE {ts_field} END AS {ts_field}"
                     );
@@ -2178,7 +2179,7 @@ mappings:
 
     #[test]
     fn tombstone_suppress_via_derive_tombstones() {
-        // derive_tombstones + written_state + reinsert: false → detection via _written table
+        // derive_tombstones + written_state + resurrect: false → detection via _written table
         let doc = parse(
             r#"
 version: "1.0"
@@ -2192,7 +2193,7 @@ mappings:
     target: t
     written_state: true
     derive_tombstones: true
-    reinsert: false
+    resurrect: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2221,8 +2222,8 @@ mappings:
     }
 
     #[test]
-    fn derive_tombstones_reinsert_true_opts_out() {
-        // derive_tombstones + written_state + reinsert: true → no entity-level detection
+    fn derive_tombstones_resurrect_true_opts_out() {
+        // derive_tombstones + written_state + resurrect: true → no entity-level detection
         let doc = parse(
             r#"
 version: "1.0"
@@ -2236,7 +2237,7 @@ mappings:
     target: t
     written_state: true
     derive_tombstones: true
-    reinsert: true
+    resurrect: true
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2246,17 +2247,17 @@ mappings:
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             !sql.contains("IS NOT NULL THEN NULL"),
-            "reinsert: true should opt out of detection:\n{sql}"
+            "resurrect: true should opt out of detection:\n{sql}"
         );
         assert!(
             !sql.contains("UNION ALL"),
-            "no vanished UNION ALL with reinsert: true:\n{sql}"
+            "no vanished UNION ALL with resurrect: true:\n{sql}"
         );
     }
 
     #[test]
     fn tombstone_suppress_via_cluster_members() {
-        // cluster_members + reinsert: false → detection via cluster_members table
+        // cluster_members + resurrect: false → detection via cluster_members table
         let doc = parse(
             r#"
 version: "1.0"
@@ -2269,7 +2270,7 @@ mappings:
     source: s
     target: t
     cluster_members: true
-    reinsert: false
+    resurrect: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2295,8 +2296,8 @@ mappings:
     }
 
     #[test]
-    fn cluster_members_reinsert_true_opts_out() {
-        // cluster_members + reinsert: true → no detection (opt out)
+    fn cluster_members_resurrect_true_opts_out() {
+        // cluster_members + resurrect: true → no detection (opt out)
         let doc = parse(
             r#"
 version: "1.0"
@@ -2309,7 +2310,7 @@ mappings:
     source: s
     target: t
     cluster_members: true
-    reinsert: true
+    resurrect: true
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2319,11 +2320,11 @@ mappings:
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             !sql.contains("_cm_hd"),
-            "reinsert: true should opt out of detection:\n{sql}"
+            "resurrect: true should opt out of detection:\n{sql}"
         );
         assert!(
             !sql.contains("UNION ALL"),
-            "no vanished UNION ALL with reinsert: true:\n{sql}"
+            "no vanished UNION ALL with resurrect: true:\n{sql}"
         );
     }
 
@@ -2345,7 +2346,7 @@ mappings:
     cluster_members: true
     written_state: true
     derive_tombstones: true
-    reinsert: false
+    resurrect: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2376,7 +2377,7 @@ mappings:
     target: t1
     written_state: true
     derive_tombstones: true
-    reinsert: false
+    resurrect: false
     fields: [{ source: name, target: name }]
   - name: s_t2
     source: s
@@ -2436,8 +2437,8 @@ mappings:
     }
 
     #[test]
-    fn reinsert_false_alone_is_inert() {
-        // reinsert: false without detection source does nothing
+    fn resurrect_false_alone_is_inert() {
+        // resurrect: false without detection source does nothing
         let doc = parse(
             r#"
 version: "1.0"
@@ -2449,7 +2450,7 @@ mappings:
   - name: s
     source: s
     target: t
-    reinsert: false
+    resurrect: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2459,7 +2460,7 @@ mappings:
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             !sql.contains("_cm_hd"),
-            "reinsert: false without detection source should be inert:\n{sql}"
+            "resurrect: false without detection source should be inert:\n{sql}"
         );
         assert!(
             !sql.contains("UNION ALL"),
@@ -2514,7 +2515,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: deleted_at
+    tombstone_field: deleted_at
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2529,8 +2530,8 @@ mappings:
     }
 
     #[test]
-    fn tombstone_reinsert_true_undeletes() {
-        // tombstone + reinsert: true → emit 'update' (undelete)
+    fn tombstone_resurrect_true_undeletes() {
+        // tombstone_field + resurrect: true → emit 'update' (undelete)
         let doc = parse(
             r#"
 version: "1.0"
@@ -2542,8 +2543,8 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: deleted_at
-    reinsert: true
+    tombstone_field: deleted_at
+    resurrect: true
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2554,7 +2555,7 @@ mappings:
         // Should emit 'update' not NULL for soft-deleted entities
         assert!(
             sql.contains(r#""deleted_at" IS NOT NULL) THEN 'update'"#),
-            "tombstone + reinsert: true should emit 'update' (undelete):\n{sql}"
+            "tombstone + resurrect: true should emit 'update' (undelete):\n{sql}"
         );
         // Should project the alive value (NULL) for the tombstone field
         assert!(
@@ -2565,7 +2566,7 @@ mappings:
 
     #[test]
     fn tombstone_no_vanished_union_all() {
-        // tombstone alone does not produce vanished-entity UNION ALL
+        // tombstone_field alone does not produce vanished-entity UNION ALL
         let doc = parse(
             r#"
 version: "1.0"
@@ -2577,7 +2578,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: deleted_at
+    tombstone_field: deleted_at
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2605,7 +2606,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: deleted_at
+    tombstone_field: deleted_at
     cluster_members: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2632,8 +2633,8 @@ mappings:
     }
 
     #[test]
-    fn tombstone_object_form_bool_alive() {
-        // Object form: tombstone: { field: is_deleted, alive: false }
+    fn tombstone_bool_alive() {
+        // tombstone_field + alive: false
         let doc = parse(
             r#"
 version: "1.0"
@@ -2645,7 +2646,8 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: is_deleted, alive: false }
+    tombstone_field: is_deleted
+    alive: false
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2656,13 +2658,13 @@ mappings:
         // Detection: is_deleted IS DISTINCT FROM FALSE
         assert!(
             sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN NULL"#),
-            "object-form tombstone should use IS DISTINCT FROM:\n{sql}"
+            "tombstone with alive: false should use IS DISTINCT FROM:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_object_form_undelete_projection() {
-        // Object form + reinsert: true → undelete with alive value in projection
+    fn tombstone_bool_alive_undelete_projection() {
+        // tombstone_field + alive: false + resurrect: true → undelete with alive value
         let doc = parse(
             r#"
 version: "1.0"
@@ -2674,8 +2676,9 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: is_deleted, alive: false }
-    reinsert: true
+    tombstone_field: is_deleted
+    alive: false
+    resurrect: true
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2686,7 +2689,7 @@ mappings:
         // Should emit 'update' for undelete
         assert!(
             sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN 'update'"#),
-            "tombstone + reinsert:true should emit 'update':\n{sql}"
+            "tombstone + resurrect:true should emit 'update':\n{sql}"
         );
         // Should project alive value (FALSE) when tombstone detected
         assert!(
@@ -2709,7 +2712,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: deleted_at
+    tombstone_field: deleted_at
     fields: [{ source: name, target: name }]
 "#,
         );

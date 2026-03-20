@@ -3,7 +3,7 @@ description: >
   Soft-delete detection via tombstone field.
   CRM has a deleted_at column — when non-null, the customer is treated as
   disappeared from CRM.  ERP has no soft-delete column.
-  With the default reinsert: false, the soft-deleted row is suppressed.
+  With the default resurrect: false, the soft-deleted row is suppressed.
 
 sources:
   crm:
@@ -23,7 +23,7 @@ mappings:
   - name: crm_customers
     source: crm
     target: customer
-    tombstone: deleted_at
+    tombstone_field: deleted_at
     fields:
       - source: email
         target: email

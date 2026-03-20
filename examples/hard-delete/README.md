@@ -16,16 +16,16 @@ is gone). Without detection, the engine sees `_src_id IS NULL` for Alice in
 ERP's delta and emits `'insert'` — re-inserting her into the system that
 just removed her. This creates a re-insertion loop.
 
-With `cluster_members` declared and `reinsert: false`, the engine LEFT JOINs
+With `cluster_members` declared and `resurrect: false`, the engine LEFT JOINs
 the feedback table into the delta view. Alice's entry exists in
 `cluster_members` (she was previously synced) but her source row is gone.
-The engine recognizes this as a hard delete and suppresses re-insertion.
+The engine recognizes this as a hard delete and suppresses resurrection.
 
 ## Key features
 
 - **`cluster_members: true`** — the ETL feedback table records which
   entities were synced; persists when the source row disappears
-- **`reinsert`** — defaults to `false`, which suppresses re-insertion of
+- **`resurrect`** — defaults to `false`, which suppresses resurrection of
   hard-deleted entities (exclude from the delta entirely). Set to `true`
   to allow re-insertion (opt out of detection).
 - **Two detection paths** — `cluster_members` (ETL feedback) or
@@ -34,7 +34,7 @@ The engine recognizes this as a hard delete and suppresses re-insertion.
 
 ## How it works
 
-1. The ERP mapping declares `cluster_members: true` (reinsert defaults
+1. The ERP mapping declares `cluster_members: true` (resurrect defaults
    to `false`, so detection is active).
 2. The engine LEFT JOINs `_cluster_members_erp_customers` into the delta.
 3. For each entity where `_src_id IS NULL` (no source row) but

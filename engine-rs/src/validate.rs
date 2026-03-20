@@ -311,10 +311,10 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        // reinsert is a pure policy knob — no prerequisites.
+        // resurrect is a pure policy knob — no prerequisites.
         // Detection comes from cluster_members or derive_tombstones+written_state.
         // Without a detection source, the knob is inert (no error, just unused).
-        // tombstone is validated as a SQL expression above — no prerequisites.
+        // tombstone_field is validated as a column name below — no prerequisites.
     }
 }
 
@@ -832,7 +832,7 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
                 result,
             );
         }
-        // tombstone is a field-based config — no SQL expression to validate.
+        // tombstone_field is a column name — no SQL expression to validate.
         // Column existence is checked in the column-reference pass.
 
         if let Some(ref lm) = m.last_modified {
@@ -1181,15 +1181,14 @@ fn pass_column_refs(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        // tombstone: field must be a known source column
-        if let Some(ref ts) = m.tombstone {
-            let field = ts.field();
-            if !source_cols.is_empty() && !source_cols.contains(field) {
+        // tombstone_field: must be a known source column
+        if let Some(ref tf) = m.tombstone_field {
+            if !source_cols.is_empty() && !source_cols.contains(tf.as_str()) {
                 result.warning(
                     "Column",
                     format!(
-                        "mapping '{}' tombstone: unknown source column '{}'",
-                        m.name, field
+                        "mapping '{}' tombstone_field: unknown source column '{}'",
+                        m.name, tf
                     ),
                 );
             }
@@ -1765,7 +1764,7 @@ mappings:
     }
 
     #[test]
-    fn reinsert_false_without_derive_tombstones_is_valid() {
+    fn resurrect_false_without_derive_tombstones_is_valid() {
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1779,7 +1778,7 @@ mappings:
     source: s
     target: t
     written_state: true
-    reinsert: false
+    resurrect: false
     fields:
       - { source: name, target: name }
 "#;
@@ -1787,17 +1786,17 @@ mappings:
         let result = validate(&doc);
         let policy_errors: Vec<_> = result
             .errors()
-            .filter(|d| d.message.contains("reinsert"))
+            .filter(|d| d.message.contains("resurrect"))
             .collect();
         assert!(
             policy_errors.is_empty(),
-            "reinsert: false + written_state (no derive_tombstones) should be valid, got: {policy_errors:?}"
+            "resurrect: false + written_state (no derive_tombstones) should be valid, got: {policy_errors:?}"
         );
     }
 
     #[test]
-    fn reinsert_false_alone_is_valid() {
-        // reinsert is a pure policy knob — no prerequisites
+    fn resurrect_false_alone_is_valid() {
+        // resurrect is a pure policy knob — no prerequisites
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1810,7 +1809,7 @@ mappings:
   - name: s
     source: s
     target: t
-    reinsert: false
+    resurrect: false
     fields:
       - { source: name, target: name }
 "#;
@@ -1818,16 +1817,16 @@ mappings:
         let result = validate(&doc);
         let policy_errors: Vec<_> = result
             .errors()
-            .filter(|d| d.message.contains("reinsert"))
+            .filter(|d| d.message.contains("resurrect"))
             .collect();
         assert!(
             policy_errors.is_empty(),
-            "reinsert: false alone should be valid (pure policy), got: {policy_errors:?}"
+            "resurrect: false alone should be valid (pure policy), got: {policy_errors:?}"
         );
     }
 
     #[test]
-    fn reinsert_false_with_derive_tombstones_is_valid() {
+    fn resurrect_false_with_derive_tombstones_is_valid() {
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1842,7 +1841,7 @@ mappings:
     target: t
     written_state: true
     derive_tombstones: true
-    reinsert: false
+    resurrect: false
     fields:
       - { source: name, target: name }
 "#;
@@ -1850,11 +1849,11 @@ mappings:
         let result = validate(&doc);
         let policy_errors: Vec<_> = result
             .errors()
-            .filter(|d| d.message.contains("reinsert"))
+            .filter(|d| d.message.contains("resurrect"))
             .collect();
         assert!(
             policy_errors.is_empty(),
-            "reinsert: false + derive_tombstones + written_state should be valid, got: {policy_errors:?}"
+            "resurrect: false + derive_tombstones + written_state should be valid, got: {policy_errors:?}"
         );
     }
 }

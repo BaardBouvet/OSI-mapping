@@ -36,7 +36,7 @@ mappings:
     source: erp
     target: customer
     cluster_members: true
-    reinsert: false
+    resurrect: false
     fields:
       - source: email
         target: email
@@ -50,7 +50,7 @@ tests:
       synced Alice (it has an entry with her cluster_id + src_id).
       Without tombstone detection, the delta would emit 'insert' for ERP
       (re-inserting Alice into the system that just deleted her).
-      With cluster_members + reinsert: false, the engine
+      With cluster_members + resurrect: false, the engine
       detects the hard delete and excludes the row from the delta entirely.
       CRM's delta is unaffected.
     input:

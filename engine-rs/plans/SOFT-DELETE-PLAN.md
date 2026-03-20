@@ -7,13 +7,12 @@ source but are semantically deleted (soft delete).  The engine knows the
 tombstone field and its "alive" value, enabling both suppression and automatic
 undelete.
 
-- `reinsert: false` (default) + tombstone → suppress (NULL action)
-- `reinsert: true` + tombstone → undelete ('update' action + alive value)
+- `resurrect: false` (default) + `tombstone_field` → suppress (NULL action)
+- `resurrect: true` + `tombstone_field` → undelete ('update' action + alive value)
 
 Complements [HARD-DELETE-PROPAGATION-PLAN](HARD-DELETE-PROPAGATION-PLAN.md)
 (entity disappears because the row is gone) and
 [PROPAGATED-DELETE-PLAN](PROPAGATED-DELETE-PLAN.md) (existing `bool_or` +
-`reverse_filter` pattern).
 `reverse_filter` pattern).
 
 ## Motivation
@@ -49,78 +48,80 @@ This works but requires:
 1. A dedicated target field (`is_deleted`) and strategy (`bool_or`)
 2. An expression mapping on every source that has a deletion signal
 3. Manual `reverse_filter` on every mapping that should respond to deletions
-4. No integration with `reinsert` — the delta still emits `'update'` for
+4. No integration with `resurrect` — the delta still emits `'update'` for
    the deleted row (updating it to `is_deleted: true`) rather than `'delete'`
 
 ### What first-class support adds
 
-A `tombstone` property on the mapping declares the field and its alive
-value.  The engine derives the detection expression and knows how to
-reverse the soft delete:
+Two mapping properties — `tombstone_field` and optional `alive` — declare
+the deletion signal.  The engine derives the detection expression and knows
+how to reverse the soft delete:
 
 ```yaml
-# Shorthand — field with NULL alive value (most common)
+# Nullable timestamp (most common) — alive defaults to null
 mappings:
   - name: crm
     source: crm
     target: customer
-    tombstone: deleted_at
+    tombstone_field: deleted_at
     fields:
       - source: email
         target: email
 
-# Object form — field with explicit alive value
+# Boolean flag with explicit alive value
 mappings:
   - name: crm
     source: crm
     target: customer
-    tombstone: { field: is_deleted, alive: false }
+    tombstone_field: is_deleted
+    alive: false
     fields:
       - source: email
         target: email
 ```
 
-This integrates with `reinsert`:
-- `reinsert: false` (default) → suppress (NULL action, row excluded)
-- `reinsert: true` → undelete ('update' action, alive value projected)
+This integrates with `resurrect`:
+- `resurrect: false` (default) → suppress (NULL action, row excluded)
+- `resurrect: true` → undelete ('update' action, alive value projected)
 
 ## Design
 
-### New mapping property: `tombstone`
+### New mapping properties: `tombstone_field` + `alive`
 
-A field name (shorthand) or `{ field, alive }` object.  The engine derives
-the detection expression from the field and alive value:
+`tombstone_field` is the source column name.  `alive` (optional) is the value
+that means "not deleted" — defaults to null.  The engine derives the detection
+expression:
 
-| Shorthand | Object form | Detection expression |
+| `tombstone_field` | `alive` | Detection expression |
 |---|---|---|
-| `tombstone: deleted_at` | `{ field: deleted_at }` | `"deleted_at" IS NOT NULL` |
-| — | `{ field: is_deleted, alive: false }` | `"is_deleted" IS DISTINCT FROM FALSE` |
-| — | `{ field: status, alive: active }` | `"status" IS DISTINCT FROM 'active'` |
+| `deleted_at` | (default: null) | `"deleted_at" IS NOT NULL` |
+| `is_deleted` | `false` | `"is_deleted" IS DISTINCT FROM FALSE` |
+| `status` | `active` | `"status" IS DISTINCT FROM 'active'` |
 
 The tombstone field is auto-included in the effective passthrough — no need
 for manual `passthrough: [deleted_at]`.
 
-### Interaction with `reinsert`
+### Interaction with `resurrect`
 
-| `reinsert` | Tombstone detected | Action | Projection |
+| `resurrect` | Tombstone detected | Action | Projection |
 |---|---|---|---|
 | `false` (default) | yes | NULL (suppress) | — |
 | `true` | yes | `'update'` (undelete) | tombstone field → alive value |
 | either | no | normal logic | normal |
 
-When `reinsert: true` and tombstone is detected, the delta:
+When `resurrect: true` and tombstone is detected, the delta:
 1. Emits `'update'` instead of NULL — the ETL will write back
 2. Projects the alive value for the tombstone field — the ETL writes the
    alive value back to the source, clearing the soft delete
 
 ```sql
--- Action CASE (reinsert: true)
+-- Action CASE (resurrect: true)
 CASE
   WHEN _src_id IS NOT NULL AND ("deleted_at" IS NOT NULL) THEN 'update'
   ...
 END AS _action
 
--- Tombstone field projection (reinsert: true)
+-- Tombstone field projection (resurrect: true)
 CASE WHEN ("deleted_at" IS NOT NULL) THEN NULL
      ELSE "deleted_at" END AS "deleted_at"
 ```
@@ -138,7 +139,7 @@ handles soft deletes directly.
 
 | Feature | Purpose | Scope |
 |---|---|---|
-| `tombstone` | "This source says this entity is deleted" | Per-mapping detection |
+| `tombstone_field` | "This source says this entity is deleted" | Per-mapping detection |
 | `reverse_filter` | "This mapping only accepts rows matching this condition" | Per-mapping routing |
 
 A mapping can have both:
@@ -146,67 +147,60 @@ A mapping can have both:
   - name: erp
     source: erp
     target: customer
-    tombstone: "erp_deleted = true"
+    tombstone_field: is_deleted
+    alive: true
     reverse_filter: "tier IS NOT NULL"
     fields: [...]
 ```
 
 ### Difference from `propagated-delete` pattern
 
-| Aspect | `propagated-delete` (current) | `tombstone` (proposed) |
+| Aspect | `propagated-delete` (current) | `tombstone_field` |
 |---|---|---|
 | Detection | User wires `expression` + `bool_or` target field | Declared on mapping |
-| Delta action | `'update'` (sets `is_deleted: true`) | suppress (excluded from delta) |
+| Delta action | `'update'` (sets `is_deleted: true`) | suppress or undelete |
 | Scope | Cross-system propagation via resolution | Per-source detection |
-| Complexity | 3-4 properties across mapping + target | 1 property on mapping |
+| Complexity | 3-4 properties across mapping + target | 1-2 properties on mapping |
 | Target schema | Requires `is_deleted` field on target | No target field needed |
 
-They can coexist.  `tombstone` is the per-source detection signal.
+They can coexist.  `tombstone_field` is the per-source detection signal.
 `propagated-delete` is cross-source propagation via resolution.  A system
-might use `tombstone` to detect soft deletes from one source, while using
+might use `tombstone_field` to detect soft deletes from one source, while using
 `bool_or` to propagate a unified deletion signal to all sources.
 
 ## Implementation
 
 ### 1. Model
 
-`Tombstone` struct with field-based config and serde shorthand:
+Two flat properties on `Mapping`:
 
 ```rust
-/// Shorthand: `tombstone: deleted_at` (alive defaults to Null)
-/// Object:    `tombstone: { field: is_deleted, alive: false }`
-#[derive(Debug, Deserialize)]
-#[serde(from = "TombstoneRaw")]
-pub struct Tombstone { field: String, alive: AliveValue }
+pub tombstone_field: Option<String>,  // source column name
+pub alive: AliveValue,                // default: Null
+```
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum TombstoneRaw {
-    Field(String),
-    Config { field: String, #[serde(default)] alive: AliveValue },
-}
+`AliveValue` enum with custom serde Deserialize:
 
+```rust
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum AliveValue { #[default] Null, Bool(bool), String(String) }
 ```
 
 Key methods:
-- `Tombstone::detection_expr()` — derives SQL from field + alive
-- `Tombstone::field()` — the source column name
+- `Mapping::tombstone_detection_expr()` — derives SQL from field + alive
 - `AliveValue::to_sql()` — renders SQL literal (NULL, FALSE, 'value')
 - `Mapping::effective_passthrough()` — `passthrough` + tombstone field
 
-`suppress_reinsert()` is NOT updated — tombstone is independent.
+`suppress_resurrect()` is NOT updated — tombstone is independent.
 
 ### 2. Delta render
 
 In `action_case()` and `merged_action_case()`, tombstone branches on
-`reinsert`:
+`resurrect`:
 
 ```rust
-if let Some(ref ts) = mapping.tombstone {
-    let det = ts.detection_expr();
-    if mapping.reinsert {
+if let Some(det) = mapping.tombstone_detection_expr() {
+    if mapping.resurrect {
         branches.push(format!("WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"));
     } else {
         branches.push(format!("WHEN {src_id} IS NOT NULL AND ({det}) THEN NULL"));
@@ -214,16 +208,15 @@ if let Some(ref ts) = mapping.tombstone {
 }
 ```
 
-When `reinsert: true`, the delta also overrides the tombstone field
+When `resurrect: true`, the delta also overrides the tombstone field
 projection with the alive value:
 
 ```rust
-// ts_override replaces the tombstone field column
 let ts_override = format!(
     "CASE WHEN ({det}) THEN {alive} ELSE {field} END AS {field}",
-    det = ts.detection_expr(),
-    alive = ts.alive().to_sql(),
-    field = qi(ts.field()),
+    det = mapping.tombstone_detection_expr().unwrap(),
+    alive = mapping.alive.to_sql(),
+    field = qi(tf),
 );
 ```
 
@@ -232,25 +225,23 @@ Three rendering paths updated: single-mapping, merged-child, UNION ALL.
 ### 3. Schema
 
 ```json
-"tombstone": {
-  "oneOf": [
-    { "type": "string", "description": "Field name (alive defaults to null)" },
-    { "type": "object", "properties": {
-        "field": { "type": "string" },
-        "alive": { "description": "Value when not deleted (null, boolean, string)" }
-      }, "required": ["field"] }
-  ]
+"tombstone_field": {
+  "type": "string",
+  "description": "Source column that signals deletion"
+},
+"alive": {
+  "description": "Value that means 'not deleted' (null, boolean, string)"
 }
 ```
 
 ### 4. Validation
 
 - Tombstone field must exist as a source column (checked via `source_cols`)
-- No `check_expr` needed — not a SQL expression anymore
+- No `check_expr` needed — not a SQL expression
 
 ### 5. Example
 
-`examples/soft-delete/` — `tombstone: deleted_at` with no explicit passthrough.
+`examples/soft-delete/` — `tombstone_field: deleted_at` with no explicit passthrough.
 
 ```yaml
 version: "1.0"
@@ -277,7 +268,7 @@ mappings:
   - name: crm_customers
     source: crm
     target: customer
-    tombstone: deleted_at
+    tombstone_field: deleted_at
     fields:
       - source: email
         target: email
@@ -321,26 +312,27 @@ A field + alive value gives the engine both:
 - **Detection:** derive `field IS NOT NULL` or `field IS DISTINCT FROM value`
 - **Reversal:** project the alive value when undeleting
 
-This enables automatic undelete when `reinsert: true` — the engine knows
+This enables automatic undelete when `resurrect: true` — the engine knows
 exactly what to write back to clear the soft-delete marker.
 
-### Why two forms (string shorthand + object)?
+### Why flat properties instead of a nested object?
 
-The overwhelmingly common case is a nullable timestamp column (alive = NULL):
-`tombstone: deleted_at`.  The object form handles less common cases:
-`tombstone: { field: is_deleted, alive: false }`.
+`tombstone_field` + `alive` as top-level mapping properties is consistent
+with how other mapping properties work (e.g. `written_state`, `cluster_members`,
+`derive_tombstones`).  No special shorthand/object-form serde gymnastics
+needed.
 
 ### Why not extend `filter` instead?
 
 `filter` controls what rows enter the forward view — filtered rows don't
-contribute identity or fields at all.  `tombstone` is different: the row
-still exists and its identity should still link entities, but the entity is
-treated as disappeared from this source's perspective in the delta.
+contribute identity or fields at all.  `tombstone_field` is different: the
+row still exists and its identity should still link entities, but the entity
+is treated as disappeared from this source's perspective in the delta.
 
 If tombstoned rows were filtered out of the forward view, the identity
 graph would lose edges, potentially unlinking entities that should remain
-linked.  `tombstone` keeps the row in the forward view (preserving identity)
-while the delta treats it as disappeared.
+linked.  `tombstone_field` keeps the row in the forward view (preserving
+identity) while the delta treats it as disappeared.
 
 ### Should tombstoned rows contribute to resolution?
 
@@ -361,7 +353,7 @@ delta says "don't sync back to this source."
 
 ## Future considerations
 
-- **Cross-source propagation:** `tombstone` detects per-source soft deletes.
+- **Cross-source propagation:** `tombstone_field` detects per-source soft deletes.
   For cross-system propagation ("CRM deletes → delete from all systems"),
   the existing `propagated-delete` pattern (`bool_or` + `reverse_filter`)
   still works.

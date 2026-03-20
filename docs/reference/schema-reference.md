@@ -368,8 +368,9 @@ Maps fields from one source dataset to one target entity.
 | `derive_noop` | boolean | no | Target-centric noop detection via written state |
 | `derive_tombstones` | boolean | no | Element-level deletion propagation via written state |
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
-| `reinsert` | boolean | no | Whether to re-insert entities that disappeared from this source (default `false`) |
-| `tombstone` | string / object | no | Soft-delete detection — source column that signals deletion |
+| `resurrect` | boolean | no | Whether to resurrect entities that disappeared from this source (default `false`) |
+| `tombstone_field` | string | no | Soft-delete detection — source column that signals deletion |
+| `alive` | null / boolean / string | no | Value that means "not deleted" for `tombstone_field` (default `null`) |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
 
 ```yaml
@@ -639,9 +640,9 @@ When `true` (requires `written_state`), derives per-field `_ts_{field}` timestam
 
 **Examples:** [derive-timestamps](../examples/derive-timestamps/)
 
-### `reinsert`
+### `resurrect`
 
-Whether to re-insert entities that disappeared from this source. When `false` (default) and a detection mechanism is available — `cluster_members` (preferred) or `derive_tombstones` + `written_state` — disappeared entities are excluded from the delta instead of being re-inserted. Set to `true` to allow re-insertion (opt out of hard-delete detection).
+Whether to resurrect entities that disappeared from this source. When `false` (default) and a detection mechanism is available — `cluster_members` (preferred) or `derive_tombstones` + `written_state` — disappeared entities are excluded from the delta instead of being re-inserted. Set to `true` to allow re-insertion (opt out of hard-delete detection).
 
 Without a detection mechanism, the setting is inert (no error, just unused).
 
@@ -649,7 +650,7 @@ Without a detection mechanism, the setting is inert (no error, just unused).
   - name: erp
     source: erp
     target: customer
-    cluster_members: true          # reinsert defaults to false — detection is active
+    cluster_members: true          # resurrect defaults to false — detection is active
     fields: [...]
 ```
 
@@ -658,24 +659,24 @@ Without a detection mechanism, the setting is inert (no error, just unused).
     source: erp
     target: customer
     cluster_members: true
-    reinsert: true               # opt out — allow re-insertion even with cluster_members
+    resurrect: true               # opt out — allow re-insertion even with cluster_members
     fields: [...]
 ```
 
 **Examples:** [hard-delete](../examples/hard-delete/)
 
-### `tombstone`
+### `tombstone_field`
 
 Soft-delete detection.  Declares a source column that signals deletion.  When the column differs from its `alive` value, the entity is treated as soft-deleted.
 
-| Form | Syntax | Alive value |
-|---|---|---|
-| String (shorthand) | `tombstone: deleted_at` | `null` (default) |
-| Object | `tombstone: { field: is_deleted, alive: false }` | explicit |
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `tombstone_field` | string | — | Source column carrying the deletion signal |
+| `alive` | null / boolean / string | `null` | Value that means "not deleted" |
 
-Behavior depends on `reinsert`:
+Behavior depends on `resurrect`:
 
-| `reinsert` | Effect |
+| `resurrect` | Effect |
 |---|---|
 | `false` (default) | Suppress — row excluded from delta |
 | `true` | Undelete — delta emits `'update'` with the alive value so the ETL clears the soft-delete marker |
@@ -683,24 +684,23 @@ Behavior depends on `reinsert`:
 The tombstone field is auto-included as a passthrough column (no need to list it in `passthrough`).
 
 ```yaml
-  # Shorthand: deleted_at IS NOT NULL → soft-deleted
+  # deleted_at IS NOT NULL → soft-deleted (alive defaults to null)
   - name: crm
     source: crm
     target: customer
-    tombstone: deleted_at
+    tombstone_field: deleted_at
     fields: [...]
 ```
 
 ```yaml
-  # Object form: is_deleted != false → soft-deleted
-  # reinsert: true → undelete (emit is_deleted = false)
+  # is_deleted != false → soft-deleted
+  # resurrect: true → undelete (emit is_deleted = false)
   - name: crm
     source: crm
     target: customer
-    tombstone:
-      field: is_deleted
-      alive: false
-    reinsert: true
+    tombstone_field: is_deleted
+    alive: false
+    resurrect: true
     fields: [...]
 ```
 

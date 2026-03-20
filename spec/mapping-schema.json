@@ -242,7 +242,7 @@
         },
         "derive_tombstones": {
           "type": "boolean",
-          "description": "When true (requires written_state), derives tombstones by comparing written state against current state. Entity level: entities in _written but absent from the source are treated as hard-deleted (suppressed when reinsert is false). Element level: elements in the written JSONB array but absent from the forward view are excluded from all sources' reconstructed arrays."
+          "description": "When true (requires written_state), derives tombstones by comparing written state against current state. Entity level: entities in _written but absent from the source are treated as hard-deleted (suppressed when resurrect is false). Element level: elements in the written JSONB array but absent from the forward view are excluded from all sources' reconstructed arrays."
         },
         "derive_timestamps": {
           "type": "boolean",
@@ -253,25 +253,17 @@
           "items": { "type": "string" },
           "description": "Source columns to carry through to delta output without mapping to a target field. Included in _base and reverse/delta views but excluded from noop detection and resolution."
         },
-        "reinsert": {
+        "resurrect": {
           "type": "boolean",
           "default": false,
-          "description": "Whether to re-insert entities that disappeared from this source. When false (default) and a detection mechanism is available (cluster_members or derive_tombstones+written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (tombstone)."
+          "description": "Whether to resurrect entities that disappeared from this source. When false (default) and a detection mechanism is available (cluster_members or derive_tombstones+written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (tombstone_field)."
         },
-        "tombstone": {
-          "oneOf": [
-            { "type": "string", "description": "Source column name (alive value defaults to null)" },
-            {
-              "type": "object",
-              "required": ["field"],
-              "additionalProperties": false,
-              "properties": {
-                "field": { "type": "string", "description": "Source column that carries the deletion signal" },
-                "alive": { "description": "Value that means 'not deleted'. Null (default), boolean, or string." }
-              }
-            }
-          ],
-          "description": "Soft-delete detection. Declares a source column that signals deletion. When the column differs from its alive value, the entity is treated as soft-deleted. With reinsert: false (default), the row is suppressed. With reinsert: true, the delta emits 'update' with the alive value to undelete."
+        "tombstone_field": {
+          "type": "string",
+          "description": "Source column that signals deletion (soft-delete detection). When the column differs from its alive value, the entity is treated as soft-deleted. With resurrect: false (default), the row is suppressed. With resurrect: true, the delta emits 'update' with the alive value to undelete."
+        },
+        "alive": {
+          "description": "The value that means 'not deleted' for tombstone_field. Defaults to null (i.e. field IS NOT NULL means deleted). Set to false for boolean flags, or a string for enum values."
         }
       },
       "anyOf": [

@@ -303,7 +303,7 @@ pub struct Mapping {
     /// enriches the source data with deletion information the source
     /// system doesn't provide natively:
     /// - **Entity level:** entities in `_written` but absent from the
-    ///   source are treated as hard-deleted (suppressed when `reinsert`
+    ///   source are treated as hard-deleted (suppressed when `resurrect`
     ///   is false).
     /// - **Element level:** elements in the written JSONB array but absent
     ///   from the forward view are excluded from all sources' arrays.
@@ -325,29 +325,31 @@ pub struct Mapping {
     /// noop detection and resolution.
     #[serde(default)]
     pub passthrough: Vec<String>,
-    /// Whether to re-insert entities that disappeared from this source.
+    /// Whether to resurrect entities that disappeared from this source.
     /// When `false` (default) and a detection mechanism is available
     /// (`cluster_members` or `derive_tombstones` + `written_state`), entities
     /// that were previously synced but are now absent are excluded from the
     /// delta instead of being re-inserted.  Set to `true` to allow
     /// re-insertion (opt out of hard-delete detection).
     ///
-    /// For soft deletes (`tombstone`), `reinsert: true` enables undelete:
-    /// the delta emits `'update'` with the alive value, telling the ETL
-    /// to clear the soft-delete marker.
+    /// For soft deletes (`tombstone_field`), `resurrect: true` enables
+    /// undelete: the delta emits `'update'` with the alive value, telling
+    /// the ETL to clear the soft-delete marker.
     #[serde(default)]
-    pub reinsert: bool,
-    /// Soft-delete detection.  Declares a source column that signals
-    /// deletion.  When the column differs from its `alive` value,
-    /// the entity is treated as soft-deleted.
+    pub resurrect: bool,
+    /// Soft-delete detection — source column that signals deletion.
+    /// When the column differs from its `alive` value, the entity is
+    /// treated as soft-deleted.
     ///
-    /// - `reinsert: false` (default): suppress the row (NULL action)
-    /// - `reinsert: true`: emit `'update'` with the alive value (undelete)
-    ///
-    /// String shorthand: `tombstone: deleted_at` (alive = null).
-    /// Object form: `tombstone: { field: is_deleted, alive: false }`.
+    /// - `resurrect: false` (default): suppress the row (NULL action)
+    /// - `resurrect: true`: emit `'update'` with the alive value (undelete)
     #[serde(default)]
-    pub tombstone: Option<Tombstone>,
+    pub tombstone_field: Option<String>,
+    /// The value that means "alive" (not deleted) for `tombstone_field`.
+    /// Defaults to null — i.e. `deleted_at IS NOT NULL` means deleted.
+    /// Set to `false` for boolean flags, or a string for enum values.
+    #[serde(default)]
+    pub alive: AliveValue,
 }
 
 impl Mapping {
@@ -393,19 +395,19 @@ impl Mapping {
         self.array.as_deref().or(self.array_path.as_deref())
     }
 
-    /// Whether to suppress re-insertion of disappeared entities.
+    /// Whether to suppress resurrection of disappeared entities.
     ///
     /// Returns `true` when entity-level hard-delete detection is active
-    /// AND `reinsert` is `false`.  Detection requires a persistence table:
+    /// AND `resurrect` is `false`.  Detection requires a persistence table:
     /// - `cluster_members` — ETL feedback table.
     /// - `derive_tombstones` + `written_state` — written-state table.
     ///
-    /// Note: `tombstone` does NOT contribute here — tombstone suppression
-    /// is independent and always active when the expression is set.
-    pub fn suppress_reinsert(&self) -> bool {
+    /// Note: `tombstone_field` does NOT contribute here — tombstone
+    /// suppression is independent and always active when set.
+    pub fn suppress_resurrect(&self) -> bool {
         let has_detection = self.cluster_members.is_some()
             || (self.derive_tombstones && self.written_state.is_some());
-        has_detection && !self.reinsert
+        has_detection && !self.resurrect
     }
 
     /// Effective passthrough columns — explicit passthrough plus the
@@ -413,13 +415,24 @@ impl Mapping {
     /// → delta views without the user listing it manually).
     pub fn effective_passthrough(&self) -> Vec<&str> {
         let mut cols: Vec<&str> = self.passthrough.iter().map(|s| s.as_str()).collect();
-        if let Some(ref ts) = self.tombstone {
-            let f = ts.field();
-            if !cols.contains(&f) {
-                cols.push(f);
+        if let Some(ref f) = self.tombstone_field {
+            if !cols.contains(&f.as_str()) {
+                cols.push(f.as_str());
             }
         }
         cols
+    }
+
+    /// SQL expression that evaluates to true when the entity is soft-deleted.
+    /// Only meaningful when `tombstone_field` is set.
+    pub fn tombstone_detection_expr(&self) -> Option<String> {
+        self.tombstone_field.as_ref().map(|f| {
+            let field = qi(f);
+            match &self.alive {
+                AliveValue::Null => format!("{field} IS NOT NULL"),
+                other => format!("{field} IS DISTINCT FROM {}", other.to_sql()),
+            }
+        })
     }
 }
 
@@ -464,63 +477,7 @@ impl LinkField {
     }
 }
 
-// ── Tombstone (soft-delete detection) ─────────────────────────────────
-
-/// Soft-delete configuration — a source column that signals deletion.
-///
-/// String shorthand: `tombstone: deleted_at` (alive = null).
-/// Object form: `tombstone: { field: is_deleted, alive: false }`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(from = "TombstoneRaw")]
-pub struct Tombstone {
-    /// Source column that carries the deletion signal.
-    pub field: String,
-    /// The value that means "alive" (not deleted).
-    /// When the column differs from this value, the entity is soft-deleted.
-    pub alive: AliveValue,
-}
-
-/// Raw deserialization target for `tombstone: field_name | { field, alive }`.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum TombstoneRaw {
-    /// `tombstone: deleted_at` — field name, alive defaults to null
-    Field(String),
-    /// `tombstone: { field: ..., alive: ... }`
-    Config {
-        field: String,
-        #[serde(default)]
-        alive: AliveValue,
-    },
-}
-
-impl From<TombstoneRaw> for Tombstone {
-    fn from(raw: TombstoneRaw) -> Self {
-        match raw {
-            TombstoneRaw::Field(field) => Tombstone {
-                field,
-                alive: AliveValue::Null,
-            },
-            TombstoneRaw::Config { field, alive } => Tombstone { field, alive },
-        }
-    }
-}
-
-impl Tombstone {
-    /// The source column name.
-    pub fn field(&self) -> &str {
-        &self.field
-    }
-
-    /// SQL expression that evaluates to true when the entity is soft-deleted.
-    pub fn detection_expr(&self) -> String {
-        let field = qi(&self.field);
-        match &self.alive {
-            AliveValue::Null => format!("{field} IS NOT NULL"),
-            other => format!("{field} IS DISTINCT FROM {}", other.to_sql()),
-        }
-    }
-}
+// ── AliveValue (soft-delete alive marker) ─────────────────────────────
 
 /// The "alive" value for a tombstone field — the value that means "not deleted."
 #[derive(Debug, Clone, Default, PartialEq)]
