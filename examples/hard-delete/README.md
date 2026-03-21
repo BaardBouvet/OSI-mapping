@@ -11,15 +11,15 @@ maintains a `cluster_members` feedback table that records which
 entities were synced to which source.
 
 Between sync cycles, a user deletes Alice from ERP (hard delete — the row
-is gone). Without detection, the engine sees `_src_id IS NULL` for Alice in
-ERP's delta and emits `'insert'` — re-inserting her into the system that
-just removed her. This creates a re-insertion loop.
+is gone). Without detection, the engine treats Alice as a new entity and
+re-inserts her into the system that just removed her. This creates a
+re-insertion loop.
 
 With `derive_tombstones: is_deleted`, the engine detects Alice's absence
 (present in `cluster_members` but not in the source table) and synthesizes
-`is_deleted = TRUE` in the forward view. Resolution combines the signal via
-`bool_or`, and CRM's `reverse_filter` triggers `action = 'delete'` —
-propagating the deletion across systems.
+`is_deleted = TRUE`. Resolution combines the signal via `bool_or`, and
+CRM's `reverse_filter` triggers `action = 'delete'` — propagating the
+deletion across systems.
 
 ## Key features
 
@@ -36,15 +36,15 @@ propagating the deletion across systems.
 
 1. ERP previously synced Alice (entry in `_cluster_members_erp_customers`).
 2. Alice's row is hard-deleted from ERP (gone from the source table).
-3. The forward view's UNION ALL detects the absence and emits a synthetic
-   row: `is_deleted = TRUE`, all other fields NULL.
+3. The engine detects the absence and synthesizes a row with
+   `is_deleted = TRUE`, all other fields NULL.
 4. Resolution combines: `bool_or(TRUE)` → `is_deleted = TRUE`.
 5. CRM's `reverse_filter` evaluates `is_deleted IS NOT TRUE` → FALSE →
    `action = 'delete'`.
 6. The ETL connector for CRM handles the physical deletion.
 
-If Alice reappears in ERP later, her source row returns, the synthetic UNION
-ALL no longer includes her, `is_deleted` reverts to NULL/FALSE, and the
+If Alice reappears in ERP later, her source row returns, the synthetic
+row is no longer needed, `is_deleted` reverts to NULL/FALSE, and the
 entity naturally resurfaces.
 
 ## When to use

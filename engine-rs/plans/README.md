@@ -35,6 +35,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [CRDT-ORDERING-PLAN.md](CRDT-ORDERING-PLAN.md) | Done | CRDT ordering for array elements: `order: true` + optional `order_prev`/`order_next` linked-list merge. |
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
 | [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Done | Element-level deletion for array targets — `_element_delta_{child}` views via parent `written_state`. |
+| [ELEMENT-TOMBSTONES-AS-FIELD-PLAN.md](ELEMENT-TOMBSTONES-AS-FIELD-PLAN.md) | Planned | Unify `derive_tombstones` across entities and elements — remove `derive_element_tombstones`, use one property at both levels. |
 | [HARD-DELETE-PROPAGATION-PLAN.md](HARD-DELETE-PROPAGATION-PLAN.md) | Design | Hard-delete propagation via ETL-layer provenance tracking — prevents re-insertion loops. |
 | [HUBSPOT-DELAYED-ENRICHMENT-PLAN.md](HUBSPOT-DELAYED-ENRICHMENT-PLAN.md) | Design | Delayed enrichment from external providers: group NULL-bleed, cluster-merge, dangling-FK failure modes and split-mapping pattern. |
 | [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Done (Phase 1) | ETL-maintained state as engine input — `written_state` table + `written_noop` opt-in for target-centric noop detection. |

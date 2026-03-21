@@ -75,10 +75,9 @@ sources:
     primary_key: [order_id, line_no]
 ```
 
-The primary key is used throughout the pipeline:
-- **Forward view:** `_src_id = pk::text` (single) or `_src_id = jsonb_build_object(...)::text` (composite)
-- **Reverse view:** Restores original PK columns from `_src_id`
-- **Identity view:** Deterministic `_entity_id = md5(mapping || ':' || _src_id)`
+The primary key identifies each source row throughout the pipeline:
+- Single-column PKs use the column value directly; composite PKs are serialized as a JSON object
+- Used for entity identity, change detection, and reconstructing source PKs in the output
 
 **Examples:** Every example with `sources:` declared. See [composite-keys](../examples/composite-keys/) for composite PKs, [references](../examples/references/) for multiple sources.
 
@@ -179,7 +178,7 @@ name: coalesce
 
 Most recently changed value wins. Requires a `last_modified` timestamp on the mapping or field mapping.
 
-When a mapping has no timestamp (both per-field `_ts_{field}` and mapping-level `_last_modified` are NULL), its contribution sorts last — any mapping with an actual timestamp wins. If all contributions have NULL timestamps, the implicit row order (mapping declaration order) determines the winner, behaving like coalesce without priority.
+When a mapping has no timestamp (both per-field timestamps and mapping-level `_last_modified` are NULL), its contribution sorts last — any mapping with an actual timestamp wins. If all contributions have NULL timestamps, the implicit row order (mapping declaration order) determines the winner, behaving like coalesce without priority.
 
 ```yaml
 name: last_modified
@@ -470,7 +469,7 @@ SQL WHERE conditions that control which rows flow through the mapping.
 
 ### `links`
 
-External identity edges from a linking table. Each link references a column in the linking table and a source mapping. The engine generates pairwise edges fed into the identity view's connected-components algorithm.
+External identity edges from a linking table. Each link references a column in the linking table and a source mapping. The engine generates pairwise edges fed into the identity algorithm's connected-components computation.
 
 A mapping with `links` but no `fields` is a "linkage-only" mapping — it contributes identity edges without business data.
 
@@ -487,7 +486,7 @@ A mapping with `links` but no `fields` is a "linkage-only" mapping — it contri
 
 ### `link_key`
 
-Column in the linking table providing a pre-computed cluster ID. Enables the IVM-safe path: the cluster ID is pushed into the forward view via LEFT JOIN, so the source row and its cluster membership arrive atomically.
+Column in the linking table providing a pre-computed cluster ID. Enables the IVM-safe path: the cluster ID and the source row arrive atomically without a separate join step.
 
 ```yaml
   - name: mdm_links
@@ -501,11 +500,11 @@ Column in the linking table providing a pre-computed cluster ID. Enables the IVM
         references: erp
 ```
 
-Without `link_key`, links are processed in the identity layer via pairwise edge SQL (batch-safe but not IVM-safe).
+Without `link_key`, links are processed in the identity layer via pairwise edges (batch-safe but not IVM-safe).
 
 ### `cluster_members`
 
-ETL feedback table for insert tracking. When the delta view produces an insert, the ETL writes the generated ID back to this table so the next run links the new row to its cluster.
+ETL feedback table for insert tracking. When an insert is produced, the ETL writes the generated ID back to this table so the next run links the new row to its cluster.
 
 `true` uses defaults; an object overrides table/column names.
 
@@ -532,7 +531,7 @@ ETL feedback table for insert tracking. When the delta view produces an insert, 
     fields: [...]
 ```
 
-The forward view LEFT JOINs the table: `COALESCE(_cm._cluster_id, md5(...)) AS _cluster_id`. Rows sharing the same `_cluster_id` are linked by the identity algorithm.
+When an entity has an entry in the cluster_members table, its cluster ID is used for identity linking. Otherwise, a default identity is derived. Rows sharing the same cluster ID are linked by the identity algorithm.
 
 **Examples:** [inserts-and-deletes](../examples/inserts-and-deletes/)
 
@@ -548,7 +547,7 @@ Column in the source table holding a pre-populated cluster ID from ETL feedback.
     fields: [...]
 ```
 
-The forward view uses: `COALESCE(entity_cluster_id, md5(...)) AS _cluster_id`. A mapping should declare `cluster_members` or `cluster_field`, not both.
+When the column is populated, its value is used as the cluster ID; otherwise, a default identity is derived. A mapping should declare `cluster_members` or `cluster_field`, not both.
 
 ### `written_state`
 
@@ -582,11 +581,11 @@ ETL-maintained table tracking what was last written to the target system. Enable
     fields: [...]
 ```
 
-The delta view LEFT JOINs the table: when the source-centric `_base` comparison detects a change, a second noop branch compares resolved values against `_written` to avoid redundant writes.
+When source-level change detection sees a change, a second comparison checks whether the resolved values actually differ from what was last written. If not, the change is classified as noop — avoiding redundant writes.
 
 **Table contract:** After each sync cycle, the ETL writes what it actually sent to the target:
-- Insert: add row with `(_cluster_id, _written JSONB)`
-- Update: replace `_written` JSONB with newly written values
+- Insert: add row with the cluster ID and written field values
+- Update: replace the written values with newly written values
 - Delete: remove row
 - Noop: no change
 
@@ -594,9 +593,9 @@ The delta view LEFT JOINs the table: when the source-centric `_base` comparison 
 
 ### `derive_noop`
 
-When `true` (requires `written_state`), the delta CASE adds a target-centric noop branch after the source-centric `_base` check. If the resolved values match the last-written JSONB, the row is classified as noop even though the source changed.
+When `true` (requires `written_state`), enables target-centric noop detection after source-level change detection. If the resolved values match what was last written, the row is classified as noop even though the source changed.
 
-Appropriate when the ETL is the sole writer to the target. If external actors modify the target after the ETL write, `_written` becomes stale and the engine may incorrectly suppress updates.
+Appropriate when the ETL is the sole writer to the target. If external actors modify the target after the ETL write, the written state becomes stale and the engine may incorrectly suppress updates.
 
 ```yaml
   - name: erp
@@ -609,16 +608,16 @@ Appropriate when the ETL is the sole writer to the target. If external actors mo
 
 **Examples:** [derive-noop](../examples/derive-noop/)
 
-### `derive_tombstones`
+### `derive_element_tombstones`
 
-When `true` (requires `written_state`), elements in the previously-written JSONB array that are absent from the current forward view are excluded from all sources' reconstructed arrays. Propagates element-level deletions across sources without explicit soft-delete records.
+When `true` (requires `written_state`), elements previously written but now absent from the source are excluded from all sources' reconstructed arrays. Propagates element-level deletions across sources without explicit soft-delete records.
 
 ```yaml
   - name: blog_cms
     source: blog_cms
     target: recipe
     written_state: true
-    derive_tombstones: true
+    derive_element_tombstones: true
     fields: [...]
 ```
 
@@ -626,7 +625,7 @@ When `true` (requires `written_state`), elements in the previously-written JSONB
 
 ### `derive_timestamps`
 
-When `true` (requires `written_state`), derives per-field `_ts_{field}` timestamps by comparing current source values against `_written` JSONB. Changed fields get the source's own timestamp (falling back to `_written_at`); unchanged fields carry forward their per-field timestamp from `_written_ts`. On bootstrap (no written state), timestamps fall back to the source timestamp or NULL.
+When `true` (requires `written_state`), derives per-field timestamps by comparing current source values against previously written values. Changed fields get the latest write timestamp; unchanged fields carry forward their existing per-field timestamp. On bootstrap (no written state), timestamps fall back to the source timestamp or NULL.
 
 ```yaml
   - name: csv_import
@@ -730,11 +729,10 @@ The `soft_delete` field is auto-included as a passthrough column.
 ### `derive_tombstones`
 
 Target field to synthesize when the source row disappears.  Requires
-`cluster_members`.  The forward view adds a UNION ALL that contributes
-`TRUE` to the named field for absent entities — entities present in
-`cluster_members` but missing from the source table.  Resolution
-propagates the deletion via the target field's strategy (typically
-`bool_or`).
+`cluster_members`.  Absent entities — those present in `cluster_members`
+but missing from the source table — contribute `TRUE` to the named field.
+Resolution propagates the deletion via the target field's strategy
+(typically `bool_or`).
 
 ```yaml
   - name: erp_customers
@@ -748,7 +746,7 @@ propagates the deletion via the target field's strategy (typically
 
 When Entity X disappears from ERP:
 
-1. Forward view: synthetic row with `is_deleted = TRUE`, all other fields NULL
+1. Absence detected: synthetic row with `is_deleted = TRUE`, all other fields NULL
 2. Resolution: `bool_or(TRUE, ...)` → `TRUE`
 3. Each consumer's `reverse_filter` determines the reaction
 
@@ -909,7 +907,7 @@ on source-side recomputation of sort keys for generated-only rows.
 
 ### `references` (field mapping)
 
-Specifies which mapping's source identities to use when translating a target entity reference back to a source FK value in the reverse view.
+Specifies which mapping's source identities to use when translating a target entity reference back to a source FK value.
 
 **When to use:** When a target field has `references:` (on the [TargetFieldDef](#targetfielddef)) declaring it as an entity FK, and your mapping maps a source FK column to that target field.
 
@@ -918,7 +916,7 @@ Specifies which mapping's source identities to use when translating a target ent
 | Location | Purpose | Example |
 |---|---|---|
 | **Target field** (`targets.*.fields.*.references`) | Declares that this target field is an entity reference to another target type | `primary_contact: { strategy: coalesce, references: company }` |
-| **Field mapping** (`mappings.*.fields.*.references`) | Tells the reverse view which mapping to use for translating the reference back to a source FK | `references: crm_company` |
+| **Field mapping** (`mappings.*.fields.*.references`) | Tells the engine which mapping to use for translating the reference back to a source FK | `references: crm_company` |
 
 The target-level one says *what* the reference points to. The field-mapping one says *how* to reverse-resolve it for this particular source system.
 
@@ -950,7 +948,7 @@ mappings:
         references: erp_customer # resolve via ERP company mapping
 ```
 
-Without `references`, the reverse view passes through the raw target-level entity reference value without translating it back to the source namespace.
+Without `references`, the raw target-level entity reference value is passed through without translating it back to the source namespace.
 
 **Examples:** [references](../examples/references/), [reference-preservation](../examples/reference-preservation/), [composite-keys](../examples/composite-keys/), [vocabulary-standard](../examples/vocabulary-standard/), [vocabulary-custom](../examples/vocabulary-custom/)
 
@@ -974,7 +972,7 @@ Overrides the mapping-level timestamp for a specific field. Useful when differen
 
 SQL expression with a `%s` placeholder, applied to both sides of the delta noop comparison. Handles precision loss when a target system has lower fidelity than the golden record — numeric rounding, string truncation, case folding.
 
-The same expression is substituted into both the `_base` (source snapshot) and the reverse-projected value before comparison. If both normalize to the same result, the difference is classified as expected loss (noop) rather than a change.
+The same expression is substituted into both the source snapshot and the reverse-projected value before comparison. If both normalize to the same result, the difference is classified as expected loss (noop) rather than a change.
 
 ```yaml
 # Integer-precision system — truncate before comparing
@@ -1111,7 +1109,7 @@ Omit a key when that category is empty. Rows not listed in any category are impl
 
 ### Matching policy
 
-Expected rows must match the **complete** actual output from the delta view — every column, every value. Partial assertions (listing only a subset of fields) are not allowed; this ensures tests genuinely verify the full pipeline rather than silently ignoring regressions.
+Expected rows must match the **complete** actual output — every column, every value. Partial assertions (listing only a subset of fields) are not allowed; this ensures tests genuinely verify the full pipeline rather than silently ignoring regressions.
 
 - **All source columns** present in the input must appear in the expected row (including unmapped columns like timestamps).
 - **All reverse-mapped fields** must appear with their resolved values (or `null` when resolution produces no value).

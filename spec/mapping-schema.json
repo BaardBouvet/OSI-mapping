@@ -80,7 +80,7 @@
       "properties": {
         "type": {
           "type": "string",
-          "description": "SQL type for this column (e.g., 'integer', 'numeric'). Used to cast PK columns in the reverse view."
+          "description": "SQL type for this column (e.g., 'integer', 'numeric'). Used for typed PK reconstruction in the output."
         }
       }
     },
@@ -142,7 +142,7 @@
         },
         "type": {
           "type": "string",
-          "description": "SQL type for this field (e.g. 'numeric', 'boolean', 'date', 'integer'). When set, forward views cast to this type instead of text, enabling correct aggregation and type-safe expressions. Defaults to 'text' when omitted."
+          "description": "SQL type for this field (e.g. 'numeric', 'boolean', 'date', 'integer'). When set, values are cast to this type instead of text, enabling correct aggregation and type-safe expressions. Defaults to 'text' when omitted."
         },
         "description": { "type": "string" }
       }
@@ -238,20 +238,20 @@
         },
         "derive_noop": {
           "type": "boolean",
-          "description": "When true (requires written_state), adds a target-centric noop branch: compares resolved values against the last-written JSONB instead of only against _base. Appropriate when the ETL is the sole writer to the target."
+          "description": "When true (requires written_state), enables target-centric noop detection: compares resolved values against what was last written to the target instead of only against the source snapshot. Appropriate when the ETL is the sole writer to the target."
         },
         "derive_timestamps": {
           "type": "boolean",
-          "description": "When true (requires written_state), derives per-field _ts_{field} timestamps by comparing current source values against _written JSONB. Changed fields get _written_at; unchanged fields carry forward their timestamp from _written_ts."
+          "description": "When true (requires written_state), derives per-field timestamps by comparing current source values against previously written values. Changed fields get the latest write timestamp; unchanged fields carry forward their existing per-field timestamp."
         },
         "derive_element_tombstones": {
           "type": "boolean",
-          "description": "When true (requires written_state), elements present in the written JSONB array but absent from the current forward view are excluded from all sources' reconstructed arrays. Opt-in because the written JSONB stores merged output, not per-source contributions."
+          "description": "When true (requires written_state), elements previously written but now absent from the source are excluded from all sources' reconstructed arrays. Opt-in because the written state stores merged output, not per-source contributions."
         },
         "passthrough": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Source columns to carry through to delta output without mapping to a target field. Included in _base and reverse/delta views but excluded from noop detection and resolution."
+          "description": "Source columns to carry through to the output without mapping to a target field. Excluded from noop detection and resolution."
         },
         "resurrect": {
           "type": "boolean",
@@ -263,7 +263,7 @@
         },
         "derive_tombstones": {
           "type": "string",
-          "description": "Target field to synthesize when the source row disappears (hard-delete detected via cluster_members). The forward view adds a UNION ALL that contributes TRUE to the named field for absent entities, letting resolution propagate the deletion."
+          "description": "Target field to synthesize when the source row disappears (hard-delete detected via cluster_members). Absent entities contribute TRUE to the named field, letting resolution propagate the deletion."
         }
       },
       "anyOf": [
@@ -398,7 +398,7 @@
         },
         "references": {
           "type": "string",
-          "description": "Name of the mapping whose source identities should be used when translating an entity reference back to a source FK value in the reverse view."
+          "description": "Name of the mapping whose source identities should be used when translating an entity reference back to a source FK value."
         },
         "references_field": {
           "type": "string",
@@ -407,15 +407,15 @@
         "description": { "type": "string" },
         "order": {
           "type": "boolean",
-          "description": "When true on an array mapping field, generates a deterministic sortable position key from the source array index (WITH ORDINALITY + lpad). Used for Tier 1 ordinal ordering of nested array elements."
+          "description": "When true on an array mapping field, generates a deterministic sortable position key from the source array index. Used for ordinal ordering of nested array elements."
         },
         "order_prev": {
           "type": "boolean",
-          "description": "When true, auto-populates with the identity of the previous sibling element using LAG window function. Used for Tier 2 linked-list CRDT ordering."
+          "description": "When true, auto-populates with the identity of the previous sibling element. Used for linked-list CRDT ordering."
         },
         "order_next": {
           "type": "boolean",
-          "description": "When true, auto-populates with the identity of the next sibling element using LEAD window function. Used for Tier 2 linked-list CRDT ordering."
+          "description": "When true, auto-populates with the identity of the next sibling element. Used for linked-list CRDT ordering."
         },
         "normalize": {
           "type": "string",
