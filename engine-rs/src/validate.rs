@@ -311,41 +311,40 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        // resurrect is a pure policy knob — no prerequisites.
-        // Detection comes from cluster_members or written_state.
-        // Without a detection source, the knob is inert (no error, just unused).
         // soft_delete.field is validated as a column name below — no prerequisites.
 
-        // derive_tombstones requires cluster_members for absence detection.
-        if mapping.derive_tombstones.is_some() && mapping.cluster_members.is_none() {
-            result.error(
-                "Schema",
-                format!(
-                    "mapping '{}': 'derive_tombstones' requires 'cluster_members'",
-                    mapping.name
-                ),
-            );
-        }
-
-        // soft_delete.target must reference an existing target field.
-        if let Some(ref sd) = mapping.soft_delete {
-            if let Some(ref tgt) = sd.target {
-                if let Some(target) = doc.targets.get(mapping.target.name()) {
-                    if !target.fields.contains_key(tgt) {
-                        result.error(
-                            "Schema",
-                            format!(
-                                "mapping '{}': soft_delete.target '{}' is not a field on target '{}'",
-                                mapping.name, tgt, mapping.target.name()
-                            ),
-                        );
-                    }
-                }
-            }
-        }
-
-        // derive_tombstones must reference an existing target field.
+        // derive_tombstones validation depends on mapping level:
+        // - Root mapping: requires cluster_members for entity absence detection.
+        // - Child mapping (array): requires parent with written_state for
+        //   element absence detection.
         if let Some(ref dt_field) = mapping.derive_tombstones {
+            if mapping.is_child() {
+                // Child mapping: parent must have written_state.
+                let parent_has_ws = mapping
+                    .parent
+                    .as_ref()
+                    .and_then(|pname| doc.mappings.iter().find(|m| m.name == *pname))
+                    .is_some_and(|p| p.written_state.is_some());
+                if !parent_has_ws {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}': 'derive_tombstones' on a child mapping requires the parent to have 'written_state'",
+                            mapping.name
+                        ),
+                    );
+                }
+            } else if mapping.cluster_members.is_none() {
+                result.error(
+                    "Schema",
+                    format!(
+                        "mapping '{}': 'derive_tombstones' requires 'cluster_members'",
+                        mapping.name
+                    ),
+                );
+            }
+
+            // Named field must exist on the mapping's own target.
             if let Some(target) = doc.targets.get(mapping.target.name()) {
                 if !target.fields.contains_key(dt_field) {
                     result.error(
@@ -355,6 +354,23 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
                             mapping.name, dt_field, mapping.target.name()
                         ),
                     );
+                }
+            }
+        }
+
+        // soft_delete.target must reference an existing target field.
+        if let Some(ref sd) = mapping.soft_delete {
+            if let Some(ref sd_target) = sd.target {
+                if let Some(target) = doc.targets.get(mapping.target.name()) {
+                    if !target.fields.contains_key(sd_target) {
+                        result.error(
+                            "Schema",
+                            format!(
+                                "mapping '{}': soft_delete.target '{}' is not a field on target '{}'",
+                                mapping.name, sd_target, mapping.target.name()
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -1807,7 +1823,7 @@ mappings:
     }
 
     #[test]
-    fn resurrect_false_with_written_state_only_is_valid() {
+    fn derive_tombstones_on_child_requires_parent_written_state() {
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1815,31 +1831,40 @@ sources:
 targets:
   t:
     fields:
-      name: { strategy: coalesce }
+      name: { strategy: identity }
+  child_t:
+    fields:
+      parent_ref: { strategy: identity, link_group: cid }
+      val: { strategy: identity, link_group: cid }
+      is_removed: { strategy: bool_or }
 mappings:
-  - name: s
+  - name: parent_m
     source: s
     target: t
-    written_state: true
-    resurrect: false
     fields:
       - { source: name, target: name }
+  - name: child_m
+    parent: parent_m
+    array: items
+    target: child_t
+    derive_tombstones: is_removed
+    fields:
+      - { source: parent_name, target: parent_ref, references: parent_m }
+      - { source: val, target: val }
 "#;
         let doc = parser::parse_str(yaml).unwrap();
         let result = validate(&doc);
-        let policy_errors: Vec<_> = result
-            .errors()
-            .filter(|d| d.message.contains("resurrect"))
-            .collect();
         assert!(
-            policy_errors.is_empty(),
-            "resurrect: false + written_state should be valid, got: {policy_errors:?}"
+            result
+                .errors()
+                .any(|d| d.message.contains("derive_tombstones")
+                    && d.message.contains("written_state")),
+            "derive_tombstones on child without parent written_state should error"
         );
     }
 
     #[test]
-    fn resurrect_false_alone_is_valid() {
-        // resurrect is a pure policy knob — no prerequisites
+    fn derive_tombstones_on_child_with_parent_written_state_is_valid() {
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1847,56 +1872,37 @@ sources:
 targets:
   t:
     fields:
-      name: { strategy: coalesce }
-mappings:
-  - name: s
-    source: s
-    target: t
-    resurrect: false
+      name: { strategy: identity }
+  child_t:
     fields:
-      - { source: name, target: name }
-"#;
-        let doc = parser::parse_str(yaml).unwrap();
-        let result = validate(&doc);
-        let policy_errors: Vec<_> = result
-            .errors()
-            .filter(|d| d.message.contains("resurrect"))
-            .collect();
-        assert!(
-            policy_errors.is_empty(),
-            "resurrect: false alone should be valid (pure policy), got: {policy_errors:?}"
-        );
-    }
-
-    #[test]
-    fn resurrect_false_with_written_state_is_valid() {
-        let yaml = r#"
-version: "1.0"
-sources:
-  s: { primary_key: id }
-targets:
-  t:
-    fields:
-      name: { strategy: coalesce }
+      parent_ref: { strategy: identity, link_group: cid }
+      val: { strategy: identity, link_group: cid }
+      is_removed: { strategy: bool_or }
 mappings:
-  - name: s
+  - name: parent_m
     source: s
     target: t
     written_state: true
-    derive_element_tombstones: true
-    resurrect: false
     fields:
       - { source: name, target: name }
+  - name: child_m
+    parent: parent_m
+    array: items
+    target: child_t
+    derive_tombstones: is_removed
+    fields:
+      - { source: parent_name, target: parent_ref, references: parent_m }
+      - { source: val, target: val }
 "#;
         let doc = parser::parse_str(yaml).unwrap();
         let result = validate(&doc);
-        let policy_errors: Vec<_> = result
+        let dt_errors: Vec<_> = result
             .errors()
-            .filter(|d| d.message.contains("resurrect"))
+            .filter(|d| d.message.contains("derive_tombstones"))
             .collect();
         assert!(
-            policy_errors.is_empty(),
-            "resurrect: false + written_state should be valid, got: {policy_errors:?}"
+            dt_errors.is_empty(),
+            "derive_tombstones on child with parent written_state should be valid, got: {dt_errors:?}"
         );
     }
 

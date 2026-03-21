@@ -322,15 +322,6 @@ pub struct Mapping {
     /// writer to the target.
     #[serde(default)]
     pub derive_noop: bool,
-    /// When true and `written_state` is declared, elements present in the
-    /// written JSONB array but absent from the current forward view are
-    /// excluded from all sources' reconstructed arrays.
-    ///
-    /// Off by default — opt-in because the written JSONB stores the merged
-    /// output, not per-source contributions, which can cause false
-    /// tombstones when sources contribute different elements.
-    #[serde(default)]
-    pub derive_element_tombstones: bool,
     /// When true and `written_state` is declared, the forward view derives
     /// per-field `_ts_{field}` timestamps by comparing current source values
     /// against `_written` JSONB. Fields that changed get `_written_at`;
@@ -343,25 +334,14 @@ pub struct Mapping {
     /// noop detection and resolution.
     #[serde(default)]
     pub passthrough: Vec<String>,
-    /// Whether to resurrect entities that disappeared from this source.
-    /// When `false` (default) and a detection mechanism is available
-    /// (`cluster_members` or `written_state`), entities
-    /// that were previously synced but are now absent are excluded from the
-    /// delta instead of being re-inserted.  Set to `true` to allow
-    /// re-insertion (opt out of hard-delete detection).
-    ///
-    /// For soft deletes (`soft_delete`), `resurrect: true` enables
-    /// undelete: the delta emits `'update'` with the undelete values, telling
-    /// the ETL to clear the soft-delete marker.
-    #[serde(default)]
-    pub resurrect: bool,
     /// Soft-delete detection configuration.
     #[serde(default)]
     pub soft_delete: Option<SoftDelete>,
-    /// Target field to synthesize when the source row disappears
-    /// (hard-delete detected via `cluster_members`).  The forward view
-    /// adds a UNION ALL that contributes `TRUE` to the named field for
-    /// absent entities, letting resolution propagate the deletion.
+    /// Target field to synthesize for absent entities/elements.
+    /// On root mappings (requires `cluster_members`): detects entity absence.
+    /// On child mappings (requires parent with `written_state`): detects
+    /// element absence.  The forward view synthesizes `TRUE` in the named
+    /// field for absent items, letting resolution propagate the deletion.
     #[serde(default)]
     pub derive_tombstones: Option<String>,
 }
@@ -407,27 +387,6 @@ impl Mapping {
     /// The effective array path (from `array` or `array_path`).
     pub fn effective_array(&self) -> Option<&str> {
         self.array.as_deref().or(self.array_path.as_deref())
-    }
-
-    /// Whether to suppress resurrection of disappeared entities.
-    ///
-    /// Returns `true` when entity-level hard-delete detection is active
-    /// AND `resurrect` is `false` AND `derive_tombstones` is not set.
-    /// When `derive_tombstones` is set, the forward view synthesizes a
-    /// field contribution for absent entities instead of suppressing them.
-    ///
-    /// Detection requires a persistence table:
-    /// - `cluster_members` — ETL feedback table.
-    /// - `written_state` — written-state table.
-    ///
-    /// Note: `soft_delete` does NOT contribute here — soft-delete
-    /// suppression is independent and always active when set.
-    pub fn suppress_resurrect(&self) -> bool {
-        if self.derive_tombstones.is_some() {
-            return false;
-        }
-        let has_detection = self.cluster_members.is_some() || self.written_state.is_some();
-        has_detection && !self.resurrect
     }
 
     /// Effective passthrough columns — explicit passthrough plus columns
@@ -544,13 +503,6 @@ impl SoftDelete {
             SoftDeleteStrategy::DeletedFlag => "FALSE",
             SoftDeleteStrategy::ActiveFlag => "TRUE",
         }
-    }
-
-    /// Column → SQL expression pairs for undelete projection.
-    pub fn undelete_overrides(&self) -> IndexMap<String, String> {
-        let mut result = IndexMap::new();
-        result.insert(self.field.clone(), self.undelete_value().to_string());
-        result
     }
 
     /// Columns that must be auto-included as passthrough.

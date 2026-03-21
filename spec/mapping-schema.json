@@ -244,26 +244,17 @@
           "type": "boolean",
           "description": "When true (requires written_state), derives per-field timestamps by comparing current source values against previously written values. Changed fields get the latest write timestamp; unchanged fields carry forward their existing per-field timestamp."
         },
-        "derive_element_tombstones": {
-          "type": "boolean",
-          "description": "When true (requires written_state), elements previously written but now absent from the source are excluded from all sources' reconstructed arrays. Opt-in because the written state stores merged output, not per-source contributions."
-        },
         "passthrough": {
           "type": "array",
           "items": { "type": "string" },
           "description": "Source columns to carry through to the output without mapping to a target field. Excluded from noop detection and resolution."
-        },
-        "resurrect": {
-          "type": "boolean",
-          "default": false,
-          "description": "Whether to resurrect entities that disappeared from this source. When false (default) and a persistence table is available (cluster_members or written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (soft_delete)."
         },
         "soft_delete": {
           "$ref": "#/$defs/SoftDelete"
         },
         "derive_tombstones": {
           "type": "string",
-          "description": "Target field to synthesize when the source row disappears (hard-delete detected via cluster_members). Absent entities contribute TRUE to the named field, letting resolution propagate the deletion."
+          "description": "Target field to synthesize for absent entities or elements. On root mappings (requires cluster_members): detects entity absence. On child mappings (requires parent with written_state): detects element absence. Absent items contribute TRUE to the named field, letting resolution propagate the deletion."
         }
       },
       "anyOf": [

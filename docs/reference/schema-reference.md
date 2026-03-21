@@ -365,10 +365,8 @@ Maps fields from one source dataset to one target entity.
 | `cluster_field` | string | no | Source column holding a pre-populated cluster ID |
 | `written_state` | boolean / object | no | ETL-maintained table tracking last-written values |
 | `derive_noop` | boolean | no | Target-centric noop detection via written state |
-| `derive_element_tombstones` | boolean | no | Element-level deletion propagation via written state |
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
-| `derive_tombstones` | string | no | Target field to synthesize for absent entities (requires `cluster_members`) |
-| `resurrect` | boolean | no | Whether to resurrect entities that disappeared from this source (default `false`) |
+| `derive_tombstones` | string | no | Target field to synthesize for absent entities or elements |
 | `soft_delete` | string or object | no | Soft-delete detection configuration |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
 
@@ -608,21 +606,6 @@ Appropriate when the ETL is the sole writer to the target. If external actors mo
 
 **Examples:** [derive-noop](../examples/derive-noop/)
 
-### `derive_element_tombstones`
-
-When `true` (requires `written_state`), elements previously written but now absent from the source are excluded from all sources' reconstructed arrays. Propagates element-level deletions across sources without explicit soft-delete records.
-
-```yaml
-  - name: blog_cms
-    source: blog_cms
-    target: recipe
-    written_state: true
-    derive_element_tombstones: true
-    fields: [...]
-```
-
-**Examples:** [derive-tombstones](../examples/derive-tombstones/)
-
 ### `derive_timestamps`
 
 When `true` (requires `written_state`), derives per-field timestamps by comparing current source values against previously written values. Changed fields get the latest write timestamp; unchanged fields carry forward their existing per-field timestamp. On bootstrap (no written state), timestamps fall back to the source timestamp or NULL.
@@ -638,31 +621,6 @@ When `true` (requires `written_state`), derives per-field timestamps by comparin
 ```
 
 **Examples:** [derive-timestamps](../examples/derive-timestamps/)
-
-### `resurrect`
-
-Whether to resurrect entities that disappeared from this source. When `false` (default) and a detection mechanism is available — `cluster_members` (preferred) or `derive_tombstones` + `written_state` — disappeared entities are excluded from the delta instead of being re-inserted. Set to `true` to allow re-insertion (opt out of hard-delete detection).
-
-Without a detection mechanism, the setting is inert (no error, just unused).
-
-```yaml
-  - name: erp
-    source: erp
-    target: customer
-    cluster_members: true          # resurrect defaults to false — detection is active
-    fields: [...]
-```
-
-```yaml
-  - name: erp
-    source: erp
-    target: customer
-    cluster_members: true
-    resurrect: true               # opt out — allow re-insertion even with cluster_members
-    fields: [...]
-```
-
-**Examples:** [hard-delete](../examples/hard-delete/)
 
 ### `soft_delete`
 
@@ -728,11 +686,14 @@ The `soft_delete` field is auto-included as a passthrough column.
 
 ### `derive_tombstones`
 
-Target field to synthesize when the source row disappears.  Requires
-`cluster_members`.  Absent entities — those present in `cluster_members`
-but missing from the source table — contribute `TRUE` to the named field.
-Resolution propagates the deletion via the target field's strategy
-(typically `bool_or`).
+Target field to synthesize for absent entities or elements.  Works at both levels:
+
+- **Root mapping** (requires `cluster_members`): detects entity absence — entities present in `cluster_members` but missing from the source table contribute `TRUE` to the named field.
+- **Child mapping** (requires parent with `written_state`): detects element absence — elements previously written but now absent from the source contribute `TRUE` to the named field.
+
+Resolution propagates the deletion via the target field's strategy (typically `bool_or`).
+
+**Entity-level:**
 
 ```yaml
   - name: erp_customers
@@ -744,13 +705,30 @@ Resolution propagates the deletion via the target field's strategy
     fields: [...]
 ```
 
-When Entity X disappears from ERP:
+**Element-level:**
 
-1. Absence detected: synthetic row with `is_deleted = TRUE`, all other fields NULL
+```yaml
+  - name: blog_cms_recipes
+    source: blog_cms
+    target: recipe
+    written_state: true
+    fields: [...]
+
+  - name: blog_cms_steps
+    parent: blog_cms_recipes
+    array: steps
+    target: recipe_step
+    derive_tombstones: is_removed
+    fields: [...]
+```
+
+When an entity or element disappears from its source:
+
+1. Absence detected: synthetic row with the named field = `TRUE`, all other fields NULL
 2. Resolution: `bool_or(TRUE, ...)` → `TRUE`
 3. Each consumer's `reverse_filter` determines the reaction
 
-**Examples:** [hard-delete](../examples/hard-delete/)
+**Examples:** [hard-delete](../examples/hard-delete/), [element-hard-delete](../examples/element-hard-delete/)
 
 ---
 

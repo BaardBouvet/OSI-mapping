@@ -159,6 +159,7 @@ pub fn render_sql(
                     target,
                     &nested_base_cols,
                     &normalize_fields,
+                    &doc.mappings,
                 )?;
                 if materialize {
                     view_sql = materialize_view_sql(&view_sql);

@@ -29,7 +29,6 @@ mappings:
     source: crm
     target: customer
     cluster_members: true
-    resurrect: true
     reverse_filter: "is_deleted IS NOT TRUE"
     fields:
       - source: email

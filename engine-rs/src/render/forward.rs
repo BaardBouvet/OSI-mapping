@@ -153,6 +153,7 @@ pub fn render_forward_view(
     target: Option<&Target>,
     nested_base_cols: &[String],
     normalize_fields: &HashMap<String, String>,
+    all_mappings: &[Mapping],
 ) -> Result<String> {
     let view_name = qi(&format!("_fwd_{}", mapping.name));
     let body = render_forward_body(
@@ -161,6 +162,7 @@ pub fn render_forward_view(
         target,
         nested_base_cols,
         normalize_fields,
+        all_mappings,
     )?;
     Ok(format!(
         "-- Forward: {name}\nCREATE OR REPLACE VIEW {view_name} AS\n{body};\n",
@@ -177,6 +179,7 @@ pub fn render_forward_body(
     target: Option<&Target>,
     nested_base_cols: &[String],
     normalize_fields: &HashMap<String, String>,
+    all_mappings: &[Mapping],
 ) -> Result<String> {
     let source = qi(source_meta
         .map(|s| s.table_name(&mapping.source.dataset))
@@ -724,6 +727,196 @@ pub fn render_forward_body(
         ));
     }
 
+    // Element-level derive_tombstones: UNION ALL that synthesizes rows for
+    // absent elements.  Elements in the parent's written_state JSONB but no
+    // longer in the current source array get the target field set to TRUE and
+    // identity fields extracted from the written JSONB element.
+    if let (Some(ref dt_field), Some(ref parent_name), Some(source_meta)) =
+        (&mapping.derive_tombstones, &mapping.parent, source_meta)
+    {
+        // Only for child mappings (entity-level handled above).
+        if mapping.cluster_members.is_none() {
+            if let Some(parent) = all_mappings.iter().find(|m| m.name == *parent_name) {
+                if let Some(ref ws) = parent.written_state {
+                    let segment = mapping
+                        .effective_array()
+                        .map(|a| a.split('.').next_back().unwrap_or(a))
+                        .unwrap_or("");
+                    if let Some(target) = target {
+                        if !segment.is_empty() {
+                            // Parent FK alias names (from parent_fields config).
+                            let parent_fk_aliases: std::collections::HashSet<&str> = mapping
+                                .source
+                                .parent_fields
+                                .keys()
+                                .map(|s| s.as_str())
+                                .collect();
+
+                            // Collect identity fields: (target_name, source_name, is_parent_fk).
+                            let identity_info: Vec<(&str, &str, bool)> = target
+                                .fields
+                                .iter()
+                                .filter(|(_, fd)| fd.strategy() == crate::model::Strategy::Identity)
+                                .filter_map(|(tgt, _)| {
+                                    let fm = mapping
+                                        .fields
+                                        .iter()
+                                        .find(|fm| fm.target.as_deref() == Some(tgt.as_str()))?;
+                                    let src = fm.source_name()?;
+                                    let is_pfk = parent_fk_aliases.contains(src);
+                                    Some((tgt.as_str(), src, is_pfk))
+                                })
+                                .collect();
+
+                            // Build parent cluster_id expression for written_state join.
+                            let source_table = qi(source_meta.table_name(&mapping.source.dataset));
+                            let parent_src_id =
+                                source_meta.primary_key.src_id_expr(Some("_dt_src"));
+                            let ws_table = qi(&ws.table_name(&parent.name));
+                            let ws_cluster = qi(&ws.cluster_id);
+                            let wcol = qi(&ws.written);
+
+                            let (parent_cluster_expr, cm_join) = if let Some(ref cm) =
+                                parent.cluster_members
+                            {
+                                let cm_table = qi(&cm.table_name(&parent.name));
+                                let cm_cluster = qi(&cm.cluster_id);
+                                let cm_src_key = qi(&cm.source_key);
+                                (
+                                        format!(
+                                            "COALESCE(_dt_cm.{cm_cluster}, md5('{}' || ':' || {parent_src_id}))",
+                                            parent.name
+                                        ),
+                                        Some(format!(
+                                            "\nLEFT JOIN {cm_table} AS _dt_cm ON _dt_cm.{cm_src_key} = {parent_src_id}"
+                                        )),
+                                    )
+                            } else if let Some(ref cf) = parent.cluster_field {
+                                (
+                                    format!(
+                                        "COALESCE(_dt_src.{}, md5('{}' || ':' || {parent_src_id}))",
+                                        qi(cf),
+                                        parent.name
+                                    ),
+                                    None,
+                                )
+                            } else {
+                                (
+                                    format!("md5('{}' || ':' || {parent_src_id})", parent.name),
+                                    None,
+                                )
+                            };
+
+                            // Child forward view cluster_id uses the child mapping name.
+                            let child_cluster_expr =
+                                format!("md5('{}' || ':' || {parent_src_id})", mapping.name);
+
+                            // Build UNION ALL column list.
+                            let mut dt_cols: Vec<String> = Vec::new();
+                            dt_cols.push(format!("{parent_src_id} AS _src_id"));
+                            dt_cols.push(format!("'{}:tombstone'::text AS _mapping", mapping.name));
+                            dt_cols.push(format!("{child_cluster_expr} AS _cluster_id"));
+                            dt_cols.push("NULL::int AS _priority".into());
+                            dt_cols.push("NULL::text AS _last_modified".into());
+
+                            for (fname, fdef) in &target.fields {
+                                let qfname = qi(fname);
+                                let null_type = fdef.field_type().unwrap_or("text");
+                                let cast_type = fdef.field_type().unwrap_or("text");
+                                if fname == dt_field {
+                                    dt_cols.push(format!("TRUE::{cast_type} AS {qfname}"));
+                                } else if let Some((_, src, is_pfk)) =
+                                    identity_info.iter().find(|(t, _, _)| *t == fname)
+                                {
+                                    if *is_pfk {
+                                        // Parent FK: use parent source column.
+                                        let parent_col =
+                                            mapping.source.parent_fields.get(*src).map(|pref| {
+                                                match pref {
+                                                    crate::model::ParentFieldRef::Simple(c) => {
+                                                        c.as_str()
+                                                    }
+                                                    crate::model::ParentFieldRef::Qualified {
+                                                        field,
+                                                        ..
+                                                    } => field.as_str(),
+                                                }
+                                            });
+                                        let col = parent_col.unwrap_or(*src);
+                                        dt_cols.push(format!(
+                                            "_dt_src.{}::{cast_type} AS {qfname}",
+                                            qi(col)
+                                        ));
+                                    } else {
+                                        // Element identity: extract from written JSONB.
+                                        dt_cols.push(format!(
+                                            "_dt_elem->>'{}' AS {qfname}",
+                                            sql_escape(src)
+                                        ));
+                                    }
+                                } else {
+                                    dt_cols.push(format!("NULL::{null_type} AS {qfname}"));
+                                }
+                                dt_cols.push(format!(
+                                    "NULL::int AS {}",
+                                    qi(&format!("_priority_{fname}"))
+                                ));
+                                dt_cols
+                                    .push(format!("NULL::text AS {}", qi(&format!("_ts_{fname}"))));
+                                if normalize_fields.contains_key(fname) {
+                                    dt_cols.push(format!(
+                                        "NULL::text AS {}",
+                                        qi(&format!("_normalize_{fname}"))
+                                    ));
+                                    dt_cols.push(format!(
+                                        "NULL::boolean AS {}",
+                                        qi(&format!("_has_normalize_{fname}"))
+                                    ));
+                                }
+                            }
+                            dt_cols.push("NULL::jsonb AS _base".into());
+
+                            // FROM clause: source → optional cluster_members → written_state → LATERAL array.
+                            let mut from = format!("{source_table} AS _dt_src");
+                            if let Some(ref join) = cm_join {
+                                from.push_str(join);
+                            }
+                            from.push_str(&format!(
+                                "\nJOIN {ws_table} AS _dt_ws ON _dt_ws.{ws_cluster} = {parent_cluster_expr}"
+                            ));
+                            let written_path = format!("_dt_ws.{wcol}->'{}'", sql_escape(segment));
+                            from.push_str(&format!(
+                                "\nCROSS JOIN LATERAL jsonb_array_elements({written_path}) AS _dt_elem"
+                            ));
+
+                            // Anti-join: element identity fields (excluding parent FK).
+                            let source_array_col = qi(segment);
+                            let anti_join_conds: Vec<String> = identity_info
+                                .iter()
+                                .filter(|(_, _, is_pfk)| !is_pfk)
+                                .map(|(_, src, _)| {
+                                    format!(
+                                        "(_dt_curr.value->>'{}') IS NOT DISTINCT FROM (_dt_elem->>'{}')",
+                                        sql_escape(src),
+                                        sql_escape(src)
+                                    )
+                                })
+                                .collect();
+
+                            if !anti_join_conds.is_empty() {
+                                sql.push_str(&format!(
+                                    "\nUNION ALL\nSELECT\n  {dt_select}\nFROM {from}\nWHERE NOT EXISTS (\n  SELECT 1 FROM jsonb_array_elements(_dt_src.{source_array_col}) AS _dt_curr\n  WHERE {anti_join}\n)",
+                                    dt_select = dt_cols.join(",\n  "),
+                                    anti_join = anti_join_conds.join("\n    AND "),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(sql)
 }
 
@@ -751,7 +944,10 @@ mod tests {
         let sqls: Vec<String> = doc
             .mappings
             .iter()
-            .map(|m| render_forward_body(m, None, Some(target), &[], &HashMap::new()).unwrap())
+            .map(|m| {
+                render_forward_body(m, None, Some(target), &[], &HashMap::new(), &doc.mappings)
+                    .unwrap()
+            })
             .collect();
 
         // Both views must have identical column sets
@@ -808,7 +1004,8 @@ mappings:
         );
         let m = &doc.mappings[1];
         let target = doc.targets.get("line").unwrap();
-        let sql = render_forward_body(m, None, Some(target), &[], &HashMap::new()).unwrap();
+        let sql = render_forward_body(m, None, Some(target), &[], &HashMap::new(), &doc.mappings)
+            .unwrap();
         assert!(
             sql.contains("jsonb_array_elements"),
             "should have LATERAL jsonb_array_elements for nested array"
@@ -850,8 +1047,15 @@ mappings:
 "#,
         );
         let target = doc.targets.get("t").unwrap();
-        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[], &HashMap::new())
-            .unwrap();
+        let sql = render_forward_body(
+            &doc.mappings[0],
+            None,
+            Some(target),
+            &[],
+            &HashMap::new(),
+            &doc.mappings,
+        )
+        .unwrap();
         assert!(
             sql.contains("regexp_replace"),
             "expression should appear in forward SQL"
@@ -877,8 +1081,15 @@ mappings:
 "#,
         );
         let target = doc.targets.get("t").unwrap();
-        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[], &HashMap::new())
-            .unwrap();
+        let sql = render_forward_body(
+            &doc.mappings[0],
+            None,
+            Some(target),
+            &[],
+            &HashMap::new(),
+            &doc.mappings,
+        )
+        .unwrap();
         assert!(
             sql.contains("WHERE status = 'active'"),
             "filter should appear as WHERE clause"
@@ -912,7 +1123,8 @@ mappings:
         );
         let m = &doc.mappings[1];
         let target = doc.targets.get("line").unwrap();
-        let sql = render_forward_body(m, None, Some(target), &[], &HashMap::new()).unwrap();
+        let sql = render_forward_body(m, None, Some(target), &[], &HashMap::new(), &doc.mappings)
+            .unwrap();
         // parent_id is a parent_field alias — should resolve to root column "id"
         assert!(
             sql.contains("\"id\""),
@@ -939,8 +1151,15 @@ mappings:
 "#,
         );
         let target = doc.targets.get("t").unwrap();
-        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[], &HashMap::new())
-            .unwrap();
+        let sql = render_forward_body(
+            &doc.mappings[0],
+            None,
+            Some(target),
+            &[],
+            &HashMap::new(),
+            &doc.mappings,
+        )
+        .unwrap();
         assert!(
             sql.contains("jsonb_build_object(")
                 && sql.contains("'email'")
@@ -982,8 +1201,15 @@ mappings:
 "#,
         );
         let target = doc.targets.get("item").unwrap();
-        let sql = render_forward_body(&doc.mappings[1], None, Some(target), &[], &HashMap::new())
-            .unwrap();
+        let sql = render_forward_body(
+            &doc.mappings[1],
+            None,
+            Some(target),
+            &[],
+            &HashMap::new(),
+            &doc.mappings,
+        )
+        .unwrap();
         assert!(
             sql.contains("WITH ORDINALITY AS item(value, idx)"),
             "should emit WITH ORDINALITY: {sql}"
@@ -1031,8 +1257,15 @@ mappings:
 "#,
         );
         let target = doc.targets.get("step").unwrap();
-        let sql = render_forward_body(&doc.mappings[1], None, Some(target), &[], &HashMap::new())
-            .unwrap();
+        let sql = render_forward_body(
+            &doc.mappings[1],
+            None,
+            Some(target),
+            &[],
+            &HashMap::new(),
+            &doc.mappings,
+        )
+        .unwrap();
         assert!(
             sql.contains("LAG(") && sql.contains("OVER ("),
             "should emit LAG window function: {sql}"
@@ -1066,8 +1299,15 @@ mappings:
 "#,
         );
         let target = doc.targets.get("contact").unwrap();
-        let sql = render_forward_body(&doc.mappings[0], None, Some(target), &[], &HashMap::new())
-            .unwrap();
+        let sql = render_forward_body(
+            &doc.mappings[0],
+            None,
+            Some(target),
+            &[],
+            &HashMap::new(),
+            &doc.mappings,
+        )
+        .unwrap();
 
         // Identity field "email" must NOT be wrapped (entities still link).
         assert!(
@@ -1133,6 +1373,7 @@ mappings:
             Some(target),
             &[],
             &HashMap::new(),
+            &doc.mappings,
         )
         .unwrap();
         // is_deleted should be emitted as the detection expression, not NULL
@@ -1179,6 +1420,7 @@ mappings:
             Some(target),
             &[],
             &HashMap::new(),
+            &doc.mappings,
         )
         .unwrap();
         // Should have UNION ALL for absent entities
