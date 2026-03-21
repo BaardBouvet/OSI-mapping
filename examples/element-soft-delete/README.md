@@ -12,7 +12,7 @@ When one CRM soft-deletes a tag by setting `removed_at`, the child mapping's
 `tombstone` declaration causes the engine to exclude that element from
 **all** sources' reconstructed arrays — not just the source that set the
 marker. This is the explicit-marker counterpart to
-[`derive_tombstones`](../derive-tombstones/) (which detects deletions by
+[`derive_element_tombstones`](../element-hard-delete/) (which detects deletions by
 absence).
 
 The two sources have different primary keys (`"A1"` vs `"B1"`) but share
@@ -27,7 +27,7 @@ an email address used for identity resolution.
 - **No `removed_at` in the target** — the tombstone field is carried via passthrough
   and used only for filtering, keeping the target schema clean
 - **Reuses `DeletionFilter` pipeline** — feeds into the same `_del_{segment}`
-  CTE infrastructure as `derive_tombstones`, so both mechanisms compose
+  CTE infrastructure as `derive_element_tombstones`, so both mechanisms compose
 
 ## How it works
 
@@ -44,9 +44,9 @@ an email address used for identity resolution.
    → both CRM A and CRM B deltas exclude it → both get `'update'` with
    `[{tag: "vip"}]`.
 
-## Comparison with derive_tombstones
+## Comparison with derive_element_tombstones
 
-| | `tombstone:` (this pattern) | `derive_tombstones` |
+| | `tombstone:` (this pattern) | `derive_element_tombstones` |
 |---|---|---|
 | **Signal** | Explicit field (`removed_at`) | Absence from forward view vs. `_written` JSONB |
 | **Requires** | Source sets a marker on the element | `written_state` table maintained by ETL |
@@ -64,7 +64,7 @@ Use this pattern when:
   (deletion-wins)
 - You want to keep the target schema **free of lifecycle metadata**
 
-Use [`derive_tombstones`](../derive-tombstones/) instead when elements
+Use [`derive_element_tombstones`](../element-hard-delete/) instead when elements
 simply disappear from the source array with no explicit marker.
 
 ### Modelling recommendation

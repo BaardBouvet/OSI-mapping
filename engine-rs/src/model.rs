@@ -298,21 +298,15 @@ pub struct Mapping {
     /// writer to the target.
     #[serde(default)]
     pub derive_noop: bool,
-    /// When true and `written_state` is declared, the engine derives
-    /// tombstones by comparing written state against current state.  This
-    /// enriches the source data with deletion information the source
-    /// system doesn't provide natively:
-    /// - **Entity level:** entities in `_written` but absent from the
-    ///   source are treated as hard-deleted (suppressed when `resurrect`
-    ///   is false).
-    /// - **Element level:** elements in the written JSONB array but absent
-    ///   from the forward view are excluded from all sources' arrays.
+    /// When true and `written_state` is declared, elements present in the
+    /// written JSONB array but absent from the current forward view are
+    /// excluded from all sources' reconstructed arrays.
     ///
     /// Off by default — opt-in because the written JSONB stores the merged
     /// output, not per-source contributions, which can cause false
     /// tombstones when sources contribute different elements.
     #[serde(default)]
-    pub derive_tombstones: bool,
+    pub derive_element_tombstones: bool,
     /// When true and `written_state` is declared, the forward view derives
     /// per-field `_ts_{field}` timestamps by comparing current source values
     /// against `_written` JSONB. Fields that changed get `_written_at`;
@@ -327,7 +321,7 @@ pub struct Mapping {
     pub passthrough: Vec<String>,
     /// Whether to resurrect entities that disappeared from this source.
     /// When `false` (default) and a detection mechanism is available
-    /// (`cluster_members` or `derive_tombstones` + `written_state`), entities
+    /// (`cluster_members` or `written_state`), entities
     /// that were previously synced but are now absent are excluded from the
     /// delta instead of being re-inserted.  Set to `true` to allow
     /// re-insertion (opt out of hard-delete detection).
@@ -390,13 +384,12 @@ impl Mapping {
     /// Returns `true` when entity-level hard-delete detection is active
     /// AND `resurrect` is `false`.  Detection requires a persistence table:
     /// - `cluster_members` — ETL feedback table.
-    /// - `derive_tombstones` + `written_state` — written-state table.
+    /// - `written_state` — written-state table.
     ///
     /// Note: `tombstone` does NOT contribute here — tombstone
     /// suppression is independent and always active when set.
     pub fn suppress_resurrect(&self) -> bool {
-        let has_detection = self.cluster_members.is_some()
-            || (self.derive_tombstones && self.written_state.is_some());
+        let has_detection = self.cluster_members.is_some() || self.written_state.is_some();
         has_detection && !self.resurrect
     }
 

@@ -67,7 +67,7 @@ mappings:
     target: recipe
     written_state: true
     derive_noop: true
-    derive_tombstones: true
+    derive_element_tombstones: true
     fields:
       - source: id
         target: name

@@ -4,7 +4,7 @@ description: >
   systems track contact tags as JSONB object arrays.  Each tag carries
   an optional removed_at timestamp.  The child mappings declare
   tombstone on removed_at, and the engine feeds tombstoned elements
-  into the same DeletionFilter pipeline as derive_tombstones —
+  into the same DeletionFilter pipeline as derive_element_tombstones —
   excluding them from ALL sources' reconstructed arrays with
   deletion-wins semantics.  No removed_at in the target schema.
 
@@ -100,7 +100,7 @@ tests:
       CRM B still has the tag without the marker.  The cross-source
       tombstone CTE detects the tombstoned element via the identity
       view and excludes "churned" from BOTH sources' reconstructed
-      arrays — same deletion-wins semantics as derive_tombstones.
+      arrays — same deletion-wins semantics as derive_element_tombstones.
     input:
       crm_a:
         - id: "A1"

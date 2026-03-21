@@ -312,7 +312,7 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
         }
 
         // resurrect is a pure policy knob — no prerequisites.
-        // Detection comes from cluster_members or derive_tombstones+written_state.
+        // Detection comes from cluster_members or written_state.
         // Without a detection source, the knob is inert (no error, just unused).
         // tombstone.field is validated as a column name below — no prerequisites.
     }
@@ -1796,7 +1796,7 @@ mappings:
     }
 
     #[test]
-    fn resurrect_false_without_derive_tombstones_is_valid() {
+    fn resurrect_false_with_written_state_only_is_valid() {
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1822,7 +1822,7 @@ mappings:
             .collect();
         assert!(
             policy_errors.is_empty(),
-            "resurrect: false + written_state (no derive_tombstones) should be valid, got: {policy_errors:?}"
+            "resurrect: false + written_state should be valid, got: {policy_errors:?}"
         );
     }
 
@@ -1858,7 +1858,7 @@ mappings:
     }
 
     #[test]
-    fn resurrect_false_with_derive_tombstones_is_valid() {
+    fn resurrect_false_with_written_state_is_valid() {
         let yaml = r#"
 version: "1.0"
 sources:
@@ -1872,7 +1872,7 @@ mappings:
     source: s
     target: t
     written_state: true
-    derive_tombstones: true
+    derive_element_tombstones: true
     resurrect: false
     fields:
       - { source: name, target: name }
@@ -1885,7 +1885,7 @@ mappings:
             .collect();
         assert!(
             policy_errors.is_empty(),
-            "resurrect: false + derive_tombstones + written_state should be valid, got: {policy_errors:?}"
+            "resurrect: false + written_state should be valid, got: {policy_errors:?}"
         );
     }
 }

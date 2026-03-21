@@ -1,11 +1,11 @@
 version: "1.0"
 description: >
-  Entity-level hard-delete detection via cluster_members.
+  Suppress re-insertion of hard-deleted entities via cluster_members.
   Two systems (CRM and ERP) synchronize customer records through the engine.
   When a customer is hard-deleted from ERP (row gone, no tombstone),
   the engine detects the absence by checking cluster_members — the ETL
   feedback table that records which entities were synced to which source.
-  on_disappear controls what the engine emits for the vanished entity.
+  With resurrect: false (the default), the engine suppresses re-insertion.
 
 sources:
   crm:

@@ -29,7 +29,7 @@ The engine recognizes this as a hard delete and suppresses resurrection.
   hard-deleted entities (exclude from the delta entirely). Set to `true`
   to allow re-insertion (opt out of detection).
 - **Two detection paths** — `cluster_members` (ETL feedback) or
-  `derive_tombstones` + `written_state` (noop/element state table).
+  `written_state` (noop/element state table).
   Either activates entity-level detection.
 
 ## How it works
@@ -57,7 +57,7 @@ The engine recognizes this as a hard delete and suppresses resurrection.
 
 - [propagated-delete](../propagated-delete/README.md) — soft-delete
   propagation using `reverse_filter` (source keeps the row with a flag)
-- [derive-tombstones](../derive-tombstones/README.md) — element-level
-  deletion detection using the same `derive_tombstones` mechanism
+- [element-hard-delete](../element-hard-delete/README.md) — element-level
+  deletion detection using `derive_element_tombstones`
 - [derive-noop](../derive-noop/README.md) — noop detection using the
   same `_written` table

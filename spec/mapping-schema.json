@@ -240,13 +240,13 @@
           "type": "boolean",
           "description": "When true (requires written_state), adds a target-centric noop branch: compares resolved values against the last-written JSONB instead of only against _base. Appropriate when the ETL is the sole writer to the target."
         },
-        "derive_tombstones": {
-          "type": "boolean",
-          "description": "When true (requires written_state), derives tombstones by comparing written state against current state. Entity level: entities in _written but absent from the source are treated as hard-deleted (suppressed when resurrect is false). Element level: elements in the written JSONB array but absent from the forward view are excluded from all sources' reconstructed arrays."
-        },
         "derive_timestamps": {
           "type": "boolean",
           "description": "When true (requires written_state), derives per-field _ts_{field} timestamps by comparing current source values against _written JSONB. Changed fields get _written_at; unchanged fields carry forward their timestamp from _written_ts."
+        },
+        "derive_element_tombstones": {
+          "type": "boolean",
+          "description": "When true (requires written_state), elements present in the written JSONB array but absent from the current forward view are excluded from all sources' reconstructed arrays. Opt-in because the written JSONB stores merged output, not per-source contributions."
         },
         "passthrough": {
           "type": "array",
@@ -256,7 +256,7 @@
         "resurrect": {
           "type": "boolean",
           "default": false,
-          "description": "Whether to resurrect entities that disappeared from this source. When false (default) and a detection mechanism is available (cluster_members or derive_tombstones+written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (tombstone)."
+          "description": "Whether to resurrect entities that disappeared from this source. When false (default) and a persistence table is available (cluster_members or written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (tombstone)."
         },
         "tombstone": {
           "$ref": "#/$defs/Tombstone"

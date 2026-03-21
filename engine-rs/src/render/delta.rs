@@ -197,7 +197,7 @@ struct DeletionFilter {
 /// Entity-level tombstones require a persistence table that outlives the
 /// source row.  Two paths exist:
 /// - `cluster_members` — LEFT JOIN on `_cluster_id`, check `_src_id IS NOT NULL`
-/// - `derive_tombstones` + `written_state` — `_ws._cluster_id IS NOT NULL`
+/// - `written_state` — `_ws._cluster_id IS NOT NULL`
 ///
 /// When `cluster_members` is available, it is preferred because it's the
 /// semantically correct signal ("was this entity synced to this source?").
@@ -241,24 +241,20 @@ fn tombstone_detection(mapping: &Mapping) -> Option<TombstoneDetection> {
             }),
             needs_src_id_qualifier: true,
         })
-    } else if mapping.derive_tombstones {
-        if let Some(ref ws) = mapping.written_state {
-            let ws_table = qi(&ws.table_name(&mapping.name));
-            let ws_cluster = qi(&ws.cluster_id);
-            Some(TombstoneDetection {
-                detection_expr: format!("_ws.{ws_cluster} IS NOT NULL"),
-                // When written_state is present, _ws is already joined for noop.
-                // We still emit the join here; callers dedup if _ws is already present.
-                join_fragment: String::new(),
-                vanished_source: Some(VanishedSource {
-                    table: ws_table,
-                    cluster_col: ws_cluster,
-                }),
-                needs_src_id_qualifier: false,
-            })
-        } else {
-            None
-        }
+    } else if let Some(ref ws) = mapping.written_state {
+        let ws_table = qi(&ws.table_name(&mapping.name));
+        let ws_cluster = qi(&ws.cluster_id);
+        Some(TombstoneDetection {
+            detection_expr: format!("_ws.{ws_cluster} IS NOT NULL"),
+            // When written_state is present, _ws is already joined for noop.
+            // We still emit the join here; callers dedup if _ws is already present.
+            join_fragment: String::new(),
+            vanished_source: Some(VanishedSource {
+                table: ws_table,
+                cluster_col: ws_cluster,
+            }),
+            needs_src_id_qualifier: false,
+        })
     } else {
         None
     }
@@ -1629,12 +1625,12 @@ fn render_delta_with_nested(
         let mut per_source_del_aliases: Vec<String> = Vec::new();
         let mut source_idx = 0;
 
-        // Scan ALL mappings for parent+child pairs with written_state + derive_tombstones.
+        // Scan ALL mappings for parent+child pairs with written_state + derive_element_tombstones.
         for foreign_parent in all_mappings.iter() {
             let Some(ref ws) = foreign_parent.written_state else {
                 continue;
             };
-            if !foreign_parent.derive_tombstones {
+            if !foreign_parent.derive_element_tombstones {
                 continue;
             }
             // Skip child mappings (they have a path/parent).
@@ -1797,7 +1793,7 @@ fn render_delta_with_nested(
         // When ANY child mapping targeting the same (child_target, segment)
         // declares a tombstone with resurrect: false, scan its reverse view
         // for tombstoned elements and add them to the deletion set.
-        // This reuses the same DeletionFilter mechanism as derive_tombstones,
+        // This reuses the same DeletionFilter mechanism as derive_element_tombstones,
         // making explicit tombstones propagate cross-source.
         for foreign_child in all_mappings.iter() {
             // Must be a child mapping targeting the same target + segment.
@@ -2341,8 +2337,8 @@ mappings:
     }
 
     #[test]
-    fn tombstone_suppress_via_derive_tombstones() {
-        // derive_tombstones + written_state + resurrect: false → detection via _written table
+    fn tombstone_suppress_via_written_state() {
+        // written_state + resurrect: false → detection via _written table
         let doc = parse(
             r#"
 version: "1.0"
@@ -2355,7 +2351,6 @@ mappings:
     source: s
     target: t
     written_state: true
-    derive_tombstones: true
     resurrect: false
     fields: [{ source: name, target: name }]
 "#,
@@ -2385,8 +2380,8 @@ mappings:
     }
 
     #[test]
-    fn derive_tombstones_resurrect_true_opts_out() {
-        // derive_tombstones + written_state + resurrect: true → no entity-level detection
+    fn written_state_resurrect_true_opts_out() {
+        // written_state + resurrect: true → no entity-level detection
         let doc = parse(
             r#"
 version: "1.0"
@@ -2399,7 +2394,6 @@ mappings:
     source: s
     target: t
     written_state: true
-    derive_tombstones: true
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2493,7 +2487,7 @@ mappings:
 
     #[test]
     fn tombstone_cluster_members_preferred_over_written_state() {
-        // When both cluster_members and derive_tombstones+written_state exist,
+        // When both cluster_members and written_state exist,
         // cluster_members is preferred for detection.
         let doc = parse(
             r#"
@@ -2508,7 +2502,6 @@ mappings:
     target: t
     cluster_members: true
     written_state: true
-    derive_tombstones: true
     resurrect: false
     fields: [{ source: name, target: name }]
 "#,
@@ -2539,7 +2532,6 @@ mappings:
     source: s
     target: t1
     written_state: true
-    derive_tombstones: true
     resurrect: false
     fields: [{ source: name, target: name }]
   - name: s_t2
@@ -2566,7 +2558,7 @@ mappings:
 
     #[test]
     fn no_detection_without_persistence() {
-        // No cluster_members, no derive_tombstones — no detection
+        // No cluster_members, no written_state — no detection
         let doc = parse(
             r#"
 version: "1.0"
@@ -2632,8 +2624,8 @@ mappings:
     }
 
     #[test]
-    fn written_state_without_derive_tombstones_no_hard_delete() {
-        // written_state alone (e.g. for derive_noop) should NOT add hard-delete branches
+    fn written_state_with_resurrect_true_no_hard_delete() {
+        // written_state + resurrect: true → no hard-delete branches
         let doc = parse(
             r#"
 version: "1.0"
@@ -2647,6 +2639,7 @@ mappings:
     target: t
     written_state: true
     derive_noop: true
+    resurrect: true
     fields: [{ source: name, target: name }]
 "#,
         );
