@@ -154,6 +154,30 @@ impl PrimaryKey {
                 .join(" AND ")
         }
     }
+
+    /// Generate a SQL WHERE condition that matches a source table row's PK
+    /// against a text `_src_id` value stored in `cluster_members`.
+    pub fn src_id_match_expr(&self, source_alias: &str, src_id_ref: &str) -> String {
+        match self {
+            PrimaryKey::Single(col) => {
+                format!("{source_alias}.{}::text = {src_id_ref}", crate::qi(col))
+            }
+            PrimaryKey::Composite(cols) => {
+                let mut sorted: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
+                sorted.sort();
+                sorted
+                    .iter()
+                    .map(|col| {
+                        format!(
+                            "{source_alias}.{}::text = ({src_id_ref}::jsonb->>'{col}')",
+                            crate::qi(col)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" AND ")
+            }
+        }
+    }
 }
 
 impl Source {
@@ -334,6 +358,12 @@ pub struct Mapping {
     /// Soft-delete detection configuration.
     #[serde(default)]
     pub soft_delete: Option<SoftDelete>,
+    /// Target field to synthesize when the source row disappears
+    /// (hard-delete detected via `cluster_members`).  The forward view
+    /// adds a UNION ALL that contributes `TRUE` to the named field for
+    /// absent entities, letting resolution propagate the deletion.
+    #[serde(default)]
+    pub derive_tombstones: Option<String>,
 }
 
 impl Mapping {
@@ -382,13 +412,20 @@ impl Mapping {
     /// Whether to suppress resurrection of disappeared entities.
     ///
     /// Returns `true` when entity-level hard-delete detection is active
-    /// AND `resurrect` is `false`.  Detection requires a persistence table:
+    /// AND `resurrect` is `false` AND `derive_tombstones` is not set.
+    /// When `derive_tombstones` is set, the forward view synthesizes a
+    /// field contribution for absent entities instead of suppressing them.
+    ///
+    /// Detection requires a persistence table:
     /// - `cluster_members` — ETL feedback table.
     /// - `written_state` — written-state table.
     ///
     /// Note: `soft_delete` does NOT contribute here — soft-delete
     /// suppression is independent and always active when set.
     pub fn suppress_resurrect(&self) -> bool {
+        if self.derive_tombstones.is_some() {
+            return false;
+        }
         let has_detection = self.cluster_members.is_some() || self.written_state.is_some();
         has_detection && !self.resurrect
     }
@@ -474,6 +511,9 @@ pub struct SoftDelete {
     pub field: String,
     /// Detection strategy (defaults to `timestamp`).
     pub strategy: SoftDeleteStrategy,
+    /// When set, the detection result is routed into this target field
+    /// instead of suppressing the row from the delta.
+    pub target: Option<String>,
 }
 
 impl SoftDelete {
@@ -525,11 +565,13 @@ impl SoftDelete {
 enum SoftDeleteRaw {
     /// `soft_delete: deleted_at` → field + timestamp strategy.
     Short(String),
-    /// `soft_delete: { field: ..., strategy: ... }`.
+    /// `soft_delete: { field: ..., strategy: ..., target: ... }`.
     Full {
         field: String,
         #[serde(default)]
         strategy: Option<SoftDeleteStrategy>,
+        #[serde(default)]
+        target: Option<String>,
     },
 }
 
@@ -539,10 +581,16 @@ impl From<SoftDeleteRaw> for SoftDelete {
             SoftDeleteRaw::Short(f) => SoftDelete {
                 field: f,
                 strategy: SoftDeleteStrategy::Timestamp,
+                target: None,
             },
-            SoftDeleteRaw::Full { field, strategy } => SoftDelete {
+            SoftDeleteRaw::Full {
+                field,
+                strategy,
+                target,
+            } => SoftDelete {
                 field,
                 strategy: strategy.unwrap_or(SoftDeleteStrategy::Timestamp),
+                target,
             },
         }
     }

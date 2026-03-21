@@ -485,8 +485,22 @@ pub fn render_forward_body(
                     }
                 }
             } else {
-                // Not mapped by this mapping — emit NULL placeholders
-                cols.push(format!("NULL::{null_type} AS {qfname}"));
+                // Not mapped by this mapping — emit NULL placeholders.
+                // Exception: soft_delete.target auto-injects the detection
+                // expression as if an implicit field mapping existed.
+                let sd_target_match = mapping
+                    .soft_delete
+                    .as_ref()
+                    .and_then(|sd| sd.target.as_deref())
+                    .is_some_and(|t| t == fname);
+                if sd_target_match {
+                    let detect = soft_delete_detect
+                        .as_deref()
+                        .expect("soft_delete.target requires soft_delete detection");
+                    cols.push(format!("({detect})::{cast_type} AS {qfname}"));
+                } else {
+                    cols.push(format!("NULL::{null_type} AS {qfname}"));
+                }
                 cols.push(format!(
                     "NULL::int AS {}",
                     qi(&format!("_priority_{fname}"))
@@ -642,6 +656,72 @@ pub fn render_forward_body(
 
     if let Some(ref filter) = mapping.filter {
         sql.push_str(&format!("\nWHERE {filter}"));
+    }
+
+    // derive_tombstones: UNION ALL that synthesizes rows for absent entities.
+    // Entities in cluster_members but not in the source get the target field
+    // set to TRUE and all other fields NULL, so resolution propagates the
+    // deletion via bool_or.
+    if let (Some(ref dt_field), Some(ref cm), Some(source_meta)) = (
+        &mapping.derive_tombstones,
+        &mapping.cluster_members,
+        source_meta,
+    ) {
+        let cm_table = qi(&cm.table_name(&mapping.name));
+        let cm_src_key = qi(&cm.source_key);
+        let cm_cluster = qi(&cm.cluster_id);
+        let source_table = qi(source_meta.table_name(&mapping.source.dataset));
+
+        // Build column list matching the main SELECT for UNION ALL compatibility.
+        // Use a suffixed _mapping so the synthetic row contributes to resolution
+        // but does NOT appear in this mapping's reverse view (which filters on
+        // _mapping = 'name').  This prevents the delta from sending a redundant
+        // delete back to the source that already hard-deleted the entity.
+        let mut dt_cols: Vec<String> = Vec::new();
+        dt_cols.push(format!("_dt_cm.{cm_src_key} AS _src_id"));
+        dt_cols.push(format!("'{}:tombstone'::text AS _mapping", mapping.name));
+        dt_cols.push(format!("_dt_cm.{cm_cluster} AS _cluster_id"));
+        dt_cols.push("NULL::int AS _priority".into());
+        dt_cols.push("NULL::text AS _last_modified".into());
+
+        if let Some(target) = target {
+            for (fname, fdef) in &target.fields {
+                let qfname = qi(fname);
+                let null_type = fdef.field_type().unwrap_or("text");
+                let cast_type = fdef.field_type().unwrap_or("text");
+                if fname == dt_field {
+                    dt_cols.push(format!("TRUE::{cast_type} AS {qfname}"));
+                } else {
+                    dt_cols.push(format!("NULL::{null_type} AS {qfname}"));
+                }
+                dt_cols.push(format!(
+                    "NULL::int AS {}",
+                    qi(&format!("_priority_{fname}"))
+                ));
+                dt_cols.push(format!("NULL::text AS {}", qi(&format!("_ts_{fname}"))));
+                if normalize_fields.contains_key(fname) {
+                    dt_cols.push(format!(
+                        "NULL::text AS {}",
+                        qi(&format!("_normalize_{fname}"))
+                    ));
+                    dt_cols.push(format!(
+                        "NULL::boolean AS {}",
+                        qi(&format!("_has_normalize_{fname}"))
+                    ));
+                }
+            }
+        }
+        dt_cols.push("NULL::jsonb AS _base".into());
+
+        let pk_match = source_meta
+            .primary_key
+            .src_id_match_expr("_dt_src", &format!("_dt_cm.{cm_src_key}"));
+
+        sql.push_str(&format!(
+            "\nUNION ALL\nSELECT\n  {dt_select}\nFROM {cm_table} AS _dt_cm\nLEFT JOIN {source_table} AS _dt_src ON {pk_match}\nWHERE {absent}",
+            dt_select = dt_cols.join(",\n  "),
+            absent = source_meta.primary_key.src_missing_predicate(Some("_dt_src")),
+        ));
     }
 
     Ok(sql)
@@ -1017,6 +1097,114 @@ mappings:
         assert!(
             sql.contains("NULL::int AS \"_priority_email\""),
             "identity priority should not be wrapped: {sql}"
+        );
+    }
+
+    #[test]
+    fn soft_delete_target_emits_detection_as_field() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  crm: { primary_key: id }
+targets:
+  customer:
+    fields:
+      email: { strategy: identity }
+      name: { strategy: coalesce }
+      is_deleted: { strategy: bool_or, type: boolean }
+mappings:
+  - name: crm_customers
+    source: crm
+    target: customer
+    soft_delete:
+      field: deleted_at
+      target: is_deleted
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("customer").unwrap();
+        let source = doc.sources.get("crm").unwrap();
+        let sql = render_forward_body(
+            &doc.mappings[0],
+            Some(source),
+            Some(target),
+            &[],
+            &HashMap::new(),
+        )
+        .unwrap();
+        // is_deleted should be emitted as the detection expression, not NULL
+        assert!(
+            sql.contains("(\"deleted_at\" IS NOT NULL)::boolean AS \"is_deleted\""),
+            "soft_delete.target should inject detection expression:\n{sql}"
+        );
+        // Non-identity fields should still be NULLed on soft-delete
+        assert!(
+            sql.contains("CASE WHEN (\"deleted_at\" IS NOT NULL) THEN NULL::text ELSE"),
+            "non-identity fields should be NULLed on soft-delete:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn derive_tombstones_emits_union_all() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  erp: { primary_key: cust_id }
+targets:
+  customer:
+    fields:
+      email: { strategy: identity }
+      name: { strategy: coalesce }
+      is_deleted: { strategy: bool_or, type: boolean }
+mappings:
+  - name: erp_customers
+    source: erp
+    target: customer
+    cluster_members: true
+    derive_tombstones: is_deleted
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+"#,
+        );
+        let target = doc.targets.get("customer").unwrap();
+        let source = doc.sources.get("erp").unwrap();
+        let sql = render_forward_body(
+            &doc.mappings[0],
+            Some(source),
+            Some(target),
+            &[],
+            &HashMap::new(),
+        )
+        .unwrap();
+        // Should have UNION ALL for absent entities
+        assert!(
+            sql.contains("UNION ALL"),
+            "derive_tombstones should add UNION ALL:\n{sql}"
+        );
+        // Synthetic rows contribute TRUE for the target field
+        assert!(
+            sql.contains("TRUE::boolean AS \"is_deleted\""),
+            "synthetic row should have TRUE for target field:\n{sql}"
+        );
+        // Other fields should be NULL
+        assert!(
+            sql.contains("NULL::text AS \"email\""),
+            "synthetic row identity field should be NULL:\n{sql}"
+        );
+        // Should use cluster_members table
+        assert!(
+            sql.contains("_cluster_members_erp_customers"),
+            "should reference cluster_members table:\n{sql}"
+        );
+        // Should detect absent entities
+        assert!(
+            sql.contains("_dt_src.\"cust_id\" IS NULL"),
+            "should detect absent entities:\n{sql}"
         );
     }
 }

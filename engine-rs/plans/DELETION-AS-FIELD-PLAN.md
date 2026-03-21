@@ -1,6 +1,6 @@
 # Deletion as a target field — anti-corruption layer design
 
-**Status:** Proposed
+**Status:** Done
 
 Unify entity and element deletion handling by treating deletion as a
 **regular target field** synthesized via anti-corruption adapters, not as
@@ -58,15 +58,15 @@ Detection adapters:            Resolution:                    Reaction:
 
 | Building block | Type | Status | What it does |
 |---|---|---|---|
-| `tombstone` | Detection | **Done** | Detects source soft-delete marker, excludes row from delta |
-| `soft_delete` | Detection | **Planned** (SOFT-DELETE-REFACTOR) | Replaces `tombstone` with 3-strategy API (timestamp/flag/active_flag) |
-| `soft_delete.target` | Detection → field | **Planned** (this plan) | Routes detection into a target field instead of excluding |
-| Auto-nullification | Forward view | **Planned** (this plan) | When detection fires, NULLs all non-identity fields automatically |
+| ~~`tombstone`~~ | Detection | **Superseded** | Replaced by `soft_delete` (SOFT-DELETE-REFACTOR) |
+| `soft_delete` | Detection | **Done** (SOFT-DELETE-REFACTOR) | 3-strategy API (timestamp/deleted_flag/active_flag) |
+| `soft_delete.target` | Detection → field | **Done** (this plan) | Routes detection into a target field instead of excluding |
+| Auto-nullification | Forward view | **Done** (this plan) | When detection fires, NULLs all non-identity fields automatically |
 | `reverse_filter` | Reaction | **Done** | Per-consumer entity exclusion (`action = 'delete'`) |
-| `derive_tombstones` | Synthesis | **Planned** (this plan) | Hard-delete → synthesize target field from absence |
+| `derive_tombstones` | Synthesis | **Done** (this plan) | Hard-delete → synthesize target field from absence |
 | `cluster_members` | ETL feedback | **Done** | Tracks which entities were synced (insert dedup + resurrection) |
 | `written_state` | ETL feedback | **Done** | Tracks written entity state (noop + hard-delete detection) |
-| `resurrect` | Policy | **Done** | Controls whether disappeared entities can reappear |
+| ~~`resurrect`~~ | Policy | **Superseded** | Replaced by `derive_tombstones` + `soft_delete.target` |
 | `derive_noop` | Synthesis | **Done** | Synthesizes noop from `_written` diff |
 | `derive_timestamps` | Synthesis | **Done** | Synthesizes `_updated_at` from ETL clock |
 
@@ -85,8 +85,8 @@ derive_tombstones ───▶ is_deleted (bool_or) ──▶ same path
                           │
    other sources ─────────┘ is_deleted = false (still alive there)
 
-   resurrect: true ──▶ entity reappears ──▶ undelete value written back
-                                            (NULL / FALSE / TRUE per strategy)
+   entity reappears ──▶ source row returns ──▶ is_deleted = false
+                                               (natural, no special logic)
 ```
 
 ### Element lifecycle — building blocks

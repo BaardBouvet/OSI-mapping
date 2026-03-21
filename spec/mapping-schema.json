@@ -260,6 +260,10 @@
         },
         "soft_delete": {
           "$ref": "#/$defs/SoftDelete"
+        },
+        "derive_tombstones": {
+          "type": "string",
+          "description": "Target field to synthesize when the source row disappears (hard-delete detected via cluster_members). The forward view adds a UNION ALL that contributes TRUE to the named field for absent entities, letting resolution propagate the deletion."
         }
       },
       "anyOf": [
@@ -445,6 +449,10 @@
               "enum": ["timestamp", "deleted_flag", "active_flag"],
               "default": "timestamp",
               "description": "Detection strategy: timestamp (IS NOT NULL, undelete NULL), deleted_flag (IS NOT FALSE, undelete FALSE), active_flag (IS NOT TRUE, undelete TRUE)."
+            },
+            "target": {
+              "type": "string",
+              "description": "Target field name. When set, the detection result is routed into this resolved field instead of suppressing the row from the delta. Auto-nullifies non-identity fields so the source yields the floor in resolution."
             }
           }
         }

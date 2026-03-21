@@ -58,6 +58,7 @@ without changing the schema surface locked in Phase 1.
 | ELEMENT-DELETION-PLAN | ~~Design~~ **Done** | Cross-source deletion-wins: when any source removes a nested array element (detected via `written_state`), the removal propagates to all deltas — no new views. |
 | HARD-DELETE-PROPAGATION-PLAN | Planned | Stateful hard-delete detection to prevent re-insertion loops when source rows disappear. |
 | SOFT-DELETE-REFACTOR-PLAN | ~~Proposed~~ **Done** | Rename `tombstone:` → `soft_delete:` with strategy-based API (`timestamp`/`deleted_flag`/`active_flag`). Soft-deleted rows excluded from field resolution. String shorthand supported. |
+| DELETION-AS-FIELD-PLAN | ~~Proposed~~ **Done** | `soft_delete.target` routes detection into a resolved field; `derive_tombstones` synthesizes `TRUE` for absent entities via `cluster_members` UNION ALL in forward view. |
 
 **Exit criteria:** New examples for each feature. Noop suppression correct for
 normalized fields. Ordered arrays round-trip through reverse views.

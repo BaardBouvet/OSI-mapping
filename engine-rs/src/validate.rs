@@ -315,6 +315,49 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
         // Detection comes from cluster_members or written_state.
         // Without a detection source, the knob is inert (no error, just unused).
         // soft_delete.field is validated as a column name below — no prerequisites.
+
+        // derive_tombstones requires cluster_members for absence detection.
+        if mapping.derive_tombstones.is_some() && mapping.cluster_members.is_none() {
+            result.error(
+                "Schema",
+                format!(
+                    "mapping '{}': 'derive_tombstones' requires 'cluster_members'",
+                    mapping.name
+                ),
+            );
+        }
+
+        // soft_delete.target must reference an existing target field.
+        if let Some(ref sd) = mapping.soft_delete {
+            if let Some(ref tgt) = sd.target {
+                if let Some(target) = doc.targets.get(mapping.target.name()) {
+                    if !target.fields.contains_key(tgt) {
+                        result.error(
+                            "Schema",
+                            format!(
+                                "mapping '{}': soft_delete.target '{}' is not a field on target '{}'",
+                                mapping.name, tgt, mapping.target.name()
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+
+        // derive_tombstones must reference an existing target field.
+        if let Some(ref dt_field) = mapping.derive_tombstones {
+            if let Some(target) = doc.targets.get(mapping.target.name()) {
+                if !target.fields.contains_key(dt_field) {
+                    result.error(
+                        "Schema",
+                        format!(
+                            "mapping '{}': derive_tombstones target '{}' is not a field on target '{}'",
+                            mapping.name, dt_field, mapping.target.name()
+                        ),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1854,6 +1897,128 @@ mappings:
         assert!(
             policy_errors.is_empty(),
             "resurrect: false + written_state should be valid, got: {policy_errors:?}"
+        );
+    }
+
+    #[test]
+    fn derive_tombstones_requires_cluster_members() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: identity }
+      is_deleted: { strategy: bool_or }
+mappings:
+  - name: s
+    source: s
+    target: t
+    derive_tombstones: is_deleted
+    fields:
+      - { source: name, target: name }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            result
+                .errors()
+                .any(|d| d.message.contains("derive_tombstones")
+                    && d.message.contains("cluster_members")),
+            "derive_tombstones without cluster_members should error"
+        );
+    }
+
+    #[test]
+    fn derive_tombstones_with_cluster_members_is_valid() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: identity }
+      is_deleted: { strategy: bool_or }
+mappings:
+  - name: s
+    source: s
+    target: t
+    cluster_members: true
+    derive_tombstones: is_deleted
+    fields:
+      - { source: name, target: name }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        let dt_errors: Vec<_> = result
+            .errors()
+            .filter(|d| d.message.contains("derive_tombstones"))
+            .collect();
+        assert!(
+            dt_errors.is_empty(),
+            "derive_tombstones + cluster_members should be valid, got: {dt_errors:?}"
+        );
+    }
+
+    #[test]
+    fn derive_tombstones_unknown_target_field_errors() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: identity }
+mappings:
+  - name: s
+    source: s
+    target: t
+    cluster_members: true
+    derive_tombstones: is_deleted
+    fields:
+      - { source: name, target: name }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            result.errors().any(
+                |d| d.message.contains("derive_tombstones") && d.message.contains("is_deleted")
+            ),
+            "derive_tombstones referencing non-existent field should error"
+        );
+    }
+
+    #[test]
+    fn soft_delete_target_unknown_field_errors() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: identity }
+mappings:
+  - name: s
+    source: s
+    target: t
+    soft_delete:
+      field: deleted_at
+      target: is_deleted
+    fields:
+      - { source: name, target: name }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            result
+                .errors()
+                .any(|d| d.message.contains("soft_delete.target")
+                    && d.message.contains("is_deleted")),
+            "soft_delete.target referencing non-existent field should error"
         );
     }
 }

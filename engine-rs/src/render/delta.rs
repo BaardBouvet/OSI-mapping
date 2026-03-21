@@ -327,16 +327,20 @@ fn action_case(
         branches.push(format!("WHEN {src_id} IS NULL THEN NULL"));
     } else {
         // Soft-delete: source row exists but soft_delete field signals deletion.
+        // When soft_delete.target is set, the detection becomes a field value
+        // that flows through resolution — no suppression needed here.
         if let Some(ref sd) = mapping.soft_delete {
-            let det = sd.detection_expr();
-            if mapping.resurrect {
-                // Undelete: emit 'update' so the ETL writes the undelete values back
-                branches.push(format!(
-                    "WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"
-                ));
-            } else {
-                // Suppress: exclude soft-deleted row from delta
-                branches.push(format!("WHEN {src_id} IS NOT NULL AND ({det}) THEN NULL"));
+            if sd.target.is_none() {
+                let det = sd.detection_expr();
+                if mapping.resurrect {
+                    // Undelete: emit 'update' so the ETL writes the undelete values back
+                    branches.push(format!(
+                        "WHEN {src_id} IS NOT NULL AND ({det}) THEN 'update'"
+                    ));
+                } else {
+                    // Suppress: exclude soft-deleted row from delta
+                    branches.push(format!("WHEN {src_id} IS NOT NULL AND ({det}) THEN NULL"));
+                }
             }
         }
         // Suppress resurrection: entity was previously synced but source
@@ -519,15 +523,17 @@ pub fn render_delta_view(
                 out_exprs[pos] = format!("{rev_view}.{qi_cluster}");
             }
         }
-        // When resurrect: true + soft_delete, override columns with undelete values.
+        // When resurrect: true + soft_delete (without target), override columns with undelete values.
         if mapping.resurrect {
             if let Some(ref sd) = mapping.soft_delete {
-                let det = sd.detection_expr();
-                for (col, expr) in sd.undelete_overrides() {
-                    let qcol = qi(&col);
-                    if let Some(pos) = out_exprs.iter().position(|e| e == &qcol) {
-                        out_exprs[pos] =
-                            format!("CASE WHEN ({det}) THEN {expr} ELSE {qcol} END AS {qcol}");
+                if sd.target.is_none() {
+                    let det = sd.detection_expr();
+                    for (col, expr) in sd.undelete_overrides() {
+                        let qcol = qi(&col);
+                        if let Some(pos) = out_exprs.iter().position(|e| e == &qcol) {
+                            out_exprs[pos] =
+                                format!("CASE WHEN ({det}) THEN {expr} ELSE {qcol} END AS {qcol}");
+                        }
                     }
                 }
             }
@@ -686,11 +692,13 @@ fn merged_action_case(
 
     // Soft-delete: source row exists but soft_delete field signals deletion.
     // Uses the primary mapping's soft_delete config (shared source).
-    if let Some(det) = primary_mappings
+    // When soft_delete.target is set, detection becomes a field — no suppression.
+    if let Some(sd) = primary_mappings
         .first()
         .and_then(|m| m.soft_delete.as_ref())
-        .map(|sd| sd.detection_expr())
+        .filter(|sd| sd.target.is_none())
     {
+        let det = sd.detection_expr();
         let resurrect = primary_mappings.first().is_some_and(|m| m.resurrect);
         if resurrect {
             branches.push(format!(
@@ -1000,16 +1008,18 @@ fn render_delta_with_children(
             out_exprs[pos] = format!("_merged.{qi_cluster}");
         }
     }
-    // When resurrect: true + soft_delete, override columns with undelete values.
+    // When resurrect: true + soft_delete (without target), override columns with undelete values.
     if let Some(m) = primary_mappings.first() {
         if m.resurrect {
             if let Some(ref sd) = m.soft_delete {
-                let det = sd.detection_expr();
-                for (col, expr) in sd.undelete_overrides() {
-                    let qcol = qi(&col);
-                    if let Some(pos) = out_exprs.iter().position(|e| e == &qcol) {
-                        out_exprs[pos] =
-                            format!("CASE WHEN ({det}) THEN {expr} ELSE {qcol} END AS {qcol}");
+                if sd.target.is_none() {
+                    let det = sd.detection_expr();
+                    for (col, expr) in sd.undelete_overrides() {
+                        let qcol = qi(&col);
+                        if let Some(pos) = out_exprs.iter().position(|e| e == &qcol) {
+                            out_exprs[pos] =
+                                format!("CASE WHEN ({det}) THEN {expr} ELSE {qcol} END AS {qcol}");
+                        }
                     }
                 }
             }
@@ -1118,10 +1128,11 @@ fn render_delta_union_all(
             let m_passthrough: std::collections::HashSet<&str> =
                 m.effective_passthrough().into_iter().collect();
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
-            // When resurrect: true + soft_delete, compute override expressions.
+            // When resurrect: true + soft_delete (without target), compute override expressions.
             let sd_overrides: IndexMap<String, String> = if m.resurrect {
                 m.soft_delete
                     .as_ref()
+                    .filter(|sd| sd.target.is_none())
                     .map(|sd| {
                         let det = sd.detection_expr();
                         sd.undelete_overrides()
@@ -2965,5 +2976,89 @@ mappings:
         assert_eq!(sd.strategy, crate::model::SoftDeleteStrategy::Timestamp);
         assert_eq!(sd.detection_expr(), r#""deleted_at" IS NOT NULL"#);
         assert_eq!(sd.undelete_value(), "NULL");
+    }
+
+    #[test]
+    fn soft_delete_target_skips_suppression() {
+        // When soft_delete.target is set, the detection becomes a field
+        // value — the delta should NOT suppress the row.
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  crm: { primary_key: id }
+targets:
+  customer:
+    fields:
+      email: { strategy: identity }
+      is_deleted: { strategy: bool_or, type: boolean }
+mappings:
+  - name: crm_customers
+    source: crm
+    target: customer
+    soft_delete:
+      field: deleted_at
+      target: is_deleted
+    fields:
+      - { source: email, target: email }
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("crm");
+        let sql = render_delta_view(
+            "crm_customers",
+            &mappings,
+            source_meta,
+            &doc.targets,
+            &doc.mappings,
+        )
+        .unwrap();
+        // Should NOT have the soft-delete suppress branch
+        assert!(
+            !sql.contains(r#"IS NOT NULL) THEN NULL"#),
+            "soft_delete.target should not suppress:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn derive_tombstones_skips_hard_delete_suppress() {
+        // When derive_tombstones is set, the forward view handles absence
+        // detection — the delta should NOT suppress absent entities.
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  erp: { primary_key: id }
+targets:
+  customer:
+    fields:
+      email: { strategy: identity }
+      is_deleted: { strategy: bool_or, type: boolean }
+mappings:
+  - name: erp_customers
+    source: erp
+    target: customer
+    cluster_members: true
+    derive_tombstones: is_deleted
+    fields:
+      - { source: email, target: email }
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("erp");
+        let sql = render_delta_view(
+            "erp_customers",
+            &mappings,
+            source_meta,
+            &doc.targets,
+            &doc.mappings,
+        )
+        .unwrap();
+        // With derive_tombstones, suppress_resurrect() returns false,
+        // so the hard-delete detection branch should NOT appear.
+        assert!(
+            !sql.contains("_cm_hd"),
+            "derive_tombstones should skip hard-delete suppress:\n{sql}"
+        );
     }
 }

@@ -366,8 +366,9 @@ Maps fields from one source dataset to one target entity.
 | `cluster_field` | string | no | Source column holding a pre-populated cluster ID |
 | `written_state` | boolean / object | no | ETL-maintained table tracking last-written values |
 | `derive_noop` | boolean | no | Target-centric noop detection via written state |
-| `derive_tombstones` | boolean | no | Element-level deletion propagation via written state |
+| `derive_element_tombstones` | boolean | no | Element-level deletion propagation via written state |
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
+| `derive_tombstones` | string | no | Target field to synthesize for absent entities (requires `cluster_members`) |
 | `resurrect` | boolean | no | Whether to resurrect entities that disappeared from this source (default `false`) |
 | `soft_delete` | string or object | no | Soft-delete detection configuration |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
@@ -668,12 +669,13 @@ Without a detection mechanism, the setting is inert (no error, just unused).
 
 Soft-delete detection.  Declares a source column that signals deletion.  The `strategy` fully determines detection and undelete values — no overrides needed.
 
-Accepts a string shorthand (field name, defaults to `timestamp` strategy) or an object with `field` and optional `strategy`.
+Accepts a string shorthand (field name, defaults to `timestamp` strategy) or an object with `field` and optional `strategy` and `target`.
 
 | Property | Type | Required | Description |
 |---|---|---|---|
 | `field` | string | **yes** | Source column carrying the deletion signal |
 | `strategy` | enum | no | `timestamp` (default), `deleted_flag`, or `active_flag` |
+| `target` | string | no | Target field name. Routes detection into a resolved field instead of suppressing |
 
 Strategy table:
 
@@ -683,17 +685,17 @@ Strategy table:
 | `deleted_flag` | `"field" IS NOT FALSE` | `FALSE` | `is_deleted`, `deleted` |
 | `active_flag` | `"field" IS NOT TRUE` | `TRUE` | `is_active`, `active` |
 
-Behavior depends on `resurrect`:
+Behavior depends on `target`:
 
-| `resurrect` | Effect |
+| `target` | Effect |
 |---|---|
-| `false` (default) | Suppress — row excluded from delta |
-| `true` | Undelete — delta emits `'update'` with undelete values |
+| not set | Suppress — row excluded from delta (local handling) |
+| set | Detection result routed to named target field. Non-identity fields auto-nullified so the source yields the floor in resolution. Consumers use `reverse_filter` to react. |
 
 The `soft_delete` field is auto-included as a passthrough column.
 
 ```yaml
-  # deleted_at IS NOT NULL → soft-deleted (string shorthand)
+  # Suppress locally (no target — current default)
   - name: crm
     source: crm
     target: customer
@@ -702,26 +704,55 @@ The `soft_delete` field is auto-included as a passthrough column.
 ```
 
 ```yaml
-  # is_deleted != false → soft-deleted
-  # resurrect: true → undelete (emit is_deleted = false)
+  # Route detection into a resolved target field (propagated)
   - name: crm
     source: crm
     target: customer
-    soft_delete: { field: is_deleted, strategy: deleted_flag }
-    resurrect: true
+    soft_delete: { field: deleted_at, target: is_deleted }
+    reverse_filter: "is_deleted IS NOT TRUE"
     fields: [...]
 ```
 
 ```yaml
-  # is_active != true → soft-deleted
+  # Active flag with propagation
   - name: crm
     source: crm
     target: customer
-    soft_delete: { field: is_active, strategy: active_flag }
+    soft_delete: { field: is_active, strategy: active_flag, target: is_deleted }
+    reverse_filter: "is_deleted IS NOT TRUE"
     fields: [...]
 ```
 
 **Examples:** [soft-delete](../examples/soft-delete/)
+
+---
+
+### `derive_tombstones`
+
+Target field to synthesize when the source row disappears.  Requires
+`cluster_members`.  The forward view adds a UNION ALL that contributes
+`TRUE` to the named field for absent entities — entities present in
+`cluster_members` but missing from the source table.  Resolution
+propagates the deletion via the target field's strategy (typically
+`bool_or`).
+
+```yaml
+  - name: erp_customers
+    source: erp
+    target: customer
+    cluster_members: true
+    derive_tombstones: is_deleted
+    reverse_filter: "is_deleted IS NOT TRUE"
+    fields: [...]
+```
+
+When Entity X disappears from ERP:
+
+1. Forward view: synthetic row with `is_deleted = TRUE`, all other fields NULL
+2. Resolution: `bool_or(TRUE, ...)` → `TRUE`
+3. Each consumer's `reverse_filter` determines the reaction
+
+**Examples:** [hard-delete](../examples/hard-delete/)
 
 ---
 

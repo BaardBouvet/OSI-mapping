@@ -1,14 +1,13 @@
 # Hard-delete detection
 
-Detect hard-deleted entities (source row gone, no tombstone) using
-persisted sync state to distinguish "never synced" from "was synced,
-now gone."
+Propagate hard-deleted entities (source row gone, no tombstone) using
+`derive_tombstones` to synthesize a deletion field that flows through
+resolution and enables per-consumer reaction via `reverse_filter`.
 
 ## Scenario
 
-Two systems (CRM and ERP) synchronize customer records. The ETL pushes
-changes bidirectionally: CRM inserts flow to ERP, and vice versa. The
-ETL maintains a `cluster_members` feedback table that records which
+Two systems (CRM and ERP) synchronize customer records. The ETL
+maintains a `cluster_members` feedback table that records which
 entities were synced to which source.
 
 Between sync cycles, a user deletes Alice from ERP (hard delete — the row
@@ -16,48 +15,48 @@ is gone). Without detection, the engine sees `_src_id IS NULL` for Alice in
 ERP's delta and emits `'insert'` — re-inserting her into the system that
 just removed her. This creates a re-insertion loop.
 
-With `cluster_members` declared and `resurrect: false`, the engine LEFT JOINs
-the feedback table into the delta view. Alice's entry exists in
-`cluster_members` (she was previously synced) but her source row is gone.
-The engine recognizes this as a hard delete and suppresses resurrection.
+With `derive_tombstones: is_deleted`, the engine detects Alice's absence
+(present in `cluster_members` but not in the source table) and synthesizes
+`is_deleted = TRUE` in the forward view. Resolution combines the signal via
+`bool_or`, and CRM's `reverse_filter` triggers `action = 'delete'` —
+propagating the deletion across systems.
 
 ## Key features
 
-- **`cluster_members: true`** — the ETL feedback table records which
-  entities were synced; persists when the source row disappears
-- **`resurrect`** — defaults to `false`, which suppresses resurrection of
-  hard-deleted entities (exclude from the delta entirely). Set to `true`
-  to allow re-insertion (opt out of detection).
-- **Two detection paths** — `cluster_members` (ETL feedback) or
-  `written_state` (noop/element state table).
-  Either activates entity-level detection.
+- **`derive_tombstones: is_deleted`** — synthesizes a boolean target field
+  for entities that were previously synced but are now absent from the source
+- **`is_deleted: { strategy: bool_or }`** — any source signaling deletion
+  makes the entity deleted everywhere
+- **`reverse_filter: "is_deleted IS NOT TRUE"`** — each consumer decides
+  how to react; here both CRM and ERP exclude deleted entities
+- **`cluster_members: true`** — the ETL feedback table that persists when
+  the source row disappears
 
 ## How it works
 
-1. The ERP mapping declares `cluster_members: true` (resurrect defaults
-   to `false`, so detection is active).
-2. The engine LEFT JOINs `_cluster_members_erp_customers` into the delta.
-3. For each entity where `_src_id IS NULL` (no source row) but
-   `_cm_hd._src_id IS NOT NULL` (previously synced), the engine emits
-   `NULL` — the row is excluded from the delta entirely.
-4. Entities absent from both the source AND `cluster_members` get the
-   normal `'insert'` action — they are genuinely new.
-5. Entities in `cluster_members` but absent from the resolved view
-   entirely (gone from ALL sources) produce `'delete'` — cleaning up
-   entities that vanished completely.
+1. ERP previously synced Alice (entry in `_cluster_members_erp_customers`).
+2. Alice's row is hard-deleted from ERP (gone from the source table).
+3. The forward view's UNION ALL detects the absence and emits a synthetic
+   row: `is_deleted = TRUE`, all other fields NULL.
+4. Resolution combines: `bool_or(TRUE)` → `is_deleted = TRUE`.
+5. CRM's `reverse_filter` evaluates `is_deleted IS NOT TRUE` → FALSE →
+   `action = 'delete'`.
+6. The ETL connector for CRM handles the physical deletion.
+
+If Alice reappears in ERP later, her source row returns, the synthetic UNION
+ALL no longer includes her, `is_deleted` reverts to NULL/FALSE, and the
+entity naturally resurfaces.
 
 ## When to use
 
 - Sources hard-delete records (row removed, no soft-delete marker).
-- You want to prevent the re-insertion loop where deleted entities keep
-  coming back.
+- You want deletion to propagate through resolution to other consumers.
 - The ETL already maintains `cluster_members` for insert feedback.
 
 ## See also
 
 - [propagated-delete](../propagated-delete/README.md) — soft-delete
-  propagation using `reverse_filter` (source keeps the row with a flag)
+  propagation using expression mapping + `reverse_filter`
 - [element-hard-delete](../element-hard-delete/README.md) — element-level
   deletion detection using `derive_element_tombstones`
-- [derive-noop](../derive-noop/README.md) — noop detection using the
-  same `_written` table
+- [soft-delete](../soft-delete/README.md) — local soft-delete detection
