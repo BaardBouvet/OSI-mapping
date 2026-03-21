@@ -1,6 +1,6 @@
 # Target arrays
 
-**Status:** Maybe
+**Status:** Proposed
 
 Support array-typed fields directly on a target, so that a one-to-many
 relationship can live on the parent target instead of requiring a separate
@@ -141,6 +141,110 @@ The forward view extracts and collects:
 (SELECT array_agg(el->>'number') FROM jsonb_array_elements("phones") el) AS "phones"
 ```
 
+### FK table → array target (first-class child mapping)
+
+When a source stores elements in a **separate table** with a foreign key
+to the parent, the user shouldn't have to write raw subquery SQL. The
+engine can generate the aggregation using an `array_field` child mapping:
+
+```yaml
+targets:
+  project:
+    fields:
+      name: { strategy: identity }
+      tasks:
+        type: jsonb[]
+        element_identity: [title]
+        strategy: coalesce
+
+mappings:
+  # PM tool: tasks embedded in source JSONB — direct mapping
+  - name: pm_projects
+    source: pm_tool
+    target: project
+    priority: 1
+    fields:
+      - source: name
+        target: name
+      - source: tasks
+        target: tasks
+
+  # Dev tracker: tasks in a separate FK table
+  - name: dev_projects
+    source: dev_tracker
+    target: project
+    priority: 2
+    fields:
+      - source: name
+        target: name
+
+  # Child mapping: aggregates FK rows into parent's array field
+  - name: dev_tasks
+    source: dev_task_table             # separate source table
+    parent: dev_projects
+    array_field: tasks                 # ← targets parent's array FIELD
+    parent_fields:
+      project_id: id                   # FK join: dev_tasks.project_id = dev_tracker.id
+    fields:
+      - source: title
+      - source: estimate
+```
+
+`array_field: tasks` (as opposed to `array: tasks` which means JSONB
+array path within the same source) tells the engine: "aggregate these
+FK rows into the parent mapping's `tasks` array field." The engine
+auto-generates the subquery aggregation in the parent's forward view:
+
+```sql
+-- Auto-generated: aggregate dev_task_table rows into tasks array
+(SELECT jsonb_agg(jsonb_build_object(
+    'title', _child."title",
+    'estimate', _child."estimate"
+  ) ORDER BY _child."title")
+ FROM "dev_task_table" AS _child
+ WHERE _child."project_id" = "dev_tracker"."id"
+) AS "tasks"
+```
+
+This is the same `jsonb_agg(jsonb_build_object(...))` pattern the engine
+already generates for nested array reconstruction in the delta pipeline.
+The difference is it runs in the **forward** view instead of the delta.
+
+#### Why `array_field` vs `array`
+
+| Property | Meaning | Source shape |
+|----------|---------|-------------|
+| `array: tasks` | JSONB path within same source row | Embedded: `{tasks: [{...}]}` |
+| `array_field: tasks` | Aggregate FK rows into parent's array field | Separate table with FK |
+
+Both use `parent:` and `parent_fields:` to define the parent-child
+relationship. The difference is where the child data lives.
+
+#### What the engine generates
+
+The `array_field` child mapping doesn't generate its own full view
+pipeline. Instead, it contributes a subquery to the parent mapping's
+forward view. The parent's forward view includes the aggregation as a
+column expression.
+
+The child mapping's `fields` list defines which columns from the FK
+table appear in the JSONB objects. The `parent_fields` defines the
+join condition. The `element_identity` on the target field defines
+the ORDER BY (for deterministic aggregation).
+
+#### Symmetry with embedded sources
+
+From the target's perspective, both sources contribute the same thing:
+a JSONB array. Resolution doesn't care whether PM tool's array came
+from an embedded JSONB column or dev tracker's came from an aggregated
+FK table. The `strategy: coalesce` picks the highest-priority array;
+`strategy: collect` merges elements by `element_identity`.
+
+This means the "structural mismatch" problem from ARRAY-RESOLUTION-PLAN
+vanishes — both embedded and FK sources produce the same shape, just
+via different forward-view mechanisms. The engine generates the
+aggregation for FK sources automatically.
+
 ## Resolution view: merging arrays
 
 The resolution view needs to merge arrays from multiple forward views.
@@ -268,13 +372,17 @@ The `collect` strategy merges them. CRM's reverse gets `phones[1]` back.
 ### Model
 - `model.rs`: Add array detection to `FieldType` (parse `text[]` → base
   type `text`, is_array = true). Add `element_identity` to `TargetFieldDef`.
+  Add `array_field` as alternative to `array` on child mappings.
 - `mapping-schema.json`: Allow `type: "text[]"` pattern, add
-  `element_identity` property.
+  `element_identity` property. Add `array_field` property to mappings.
 
 ### Forward view
 - `forward.rs`: When source is scalar and target is array, wrap in
   `ARRAY[...]`. When source is JSONB array, convert via
   `jsonb_array_elements_text`.
+- When a mapping has `array_field` child mappings, generate
+  `jsonb_agg(jsonb_build_object(...))` subqueries for each child and
+  include them as column expressions in the parent's forward view.
 
 ### Resolution view
 - `resolution.rs`: For `collect` on array fields, generate
@@ -285,6 +393,8 @@ The `collect` strategy merges them. CRM's reverse gets `phones[1]` back.
 - `reverse.rs`: When reversing array → scalar, generate `field[1]` (or
   custom `reverse_expression`). When reversing array → JSONB array,
   generate `to_jsonb(field)`.
+- `array_field` child mappings: reverse decomposes the resolved array
+  back into individual rows for the FK table.
 
 ### Delta view
 - `delta.rs`: Array noop comparison using sorted normalization.
@@ -293,6 +403,8 @@ The `collect` strategy merges them. CRM's reverse gets `phones[1]` back.
 ### Validation
 - `validate.rs`: Validate `element_identity` fields exist or are `[value]`.
   Validate `strategy: identity` on array fields requires sorted comparison.
+  Validate `array_field` targets an array-typed field on the parent's target.
+  Validate `array_field` child mapping's fields match element sub-properties.
 
 ## Open questions
 
@@ -331,11 +443,257 @@ The `collect` strategy merges them. CRM's reverse gets `phones[1]` back.
 - Scalar ↔ array forward/reverse wrapping
 - Array noop comparison
 
-### Phase 2 — Object array fields (future)
+### Phase 2 — Object array fields + `array_field` child mappings
+
+> **Re-evaluation note:** Phase 2 was originally motivated by the "atomic
+> array" problem. This is now solved by `elements:` on child targets —
+> see "Atomic element resolution" below. Phase 2 remains useful for
+> reducing target model bloat (inlining simple object arrays into the
+> parent target), but is **not required** for element set authority.
+
 - `type: jsonb[]`
 - `element_identity: [field1, field2]`
 - Per-element field decomposition in forward/reverse
+- `array_field` child mappings for FK table → array aggregation
 - Essentially inlines child target behavior into the parent
+- Subsumes ARRAY-RESOLUTION-PLAN Options 1-3
+
+## Atomic element resolution
+
+The "atomic array" problem: PM tool says tasks are [A, B, C], dev tracker
+says [A, D]. With current child targets, both contribute to a `task`
+child target and the resolved set is the union [A, B, C, D]. Element D
+(only from dev tracker) leaks into PM tool's array.
+
+The root cause: element **set membership** is resolved as a union today.
+The `elements` property on a child target controls how element set
+membership is resolved — reusing the same vocabulary as field strategies.
+
+### The `elements` property
+
+```yaml
+task:
+  elements: collect         # union of all sources' elements (default)
+  elements: coalesce        # highest-priority source's set wins per parent
+  elements: last_modified   # most recently modified source's set wins per parent
+```
+
+| `elements` value | Winner signal | Resolved set |
+|---|---|---|
+| `collect` (default) | No winner — union | All elements from all sources |
+| `coalesce` | Child mapping `priority:` | Highest-priority source's elements per parent |
+| `last_modified` | `MAX(last_modified field)` per parent per mapping | Most recently active source's elements per parent |
+
+### `elements: coalesce` — priority wins
+
+```yaml
+targets:
+  project:
+    fields:
+      name: { strategy: identity }
+  task:
+    elements: coalesce
+    fields:
+      project_ref: { strategy: identity, references: project }
+      title:       { strategy: identity }
+      estimate:    { strategy: coalesce }
+
+mappings:
+  - name: pm_tasks
+    target: task
+    priority: 1                      # ← wins element set
+    parent: pm_projects
+    array: tasks
+    fields:
+      - source: title
+        target: title
+      - source: estimate
+        target: estimate
+
+  - name: dev_tasks
+    target: task
+    priority: 2                      # ← falls back if PM has no elements
+    parent: dev_projects
+    array: tasks
+    fields:
+      - source: title
+        target: title
+      - source: hours
+        target: estimate
+```
+
+Per parent entity, the engine picks the highest-priority child mapping
+that contributed at least one element. Only that mapping's elements
+survive in the resolved view:
+
+```sql
+-- Per parent, pick highest-priority mapping with elements
+_element_winner AS (
+  SELECT DISTINCT ON (parent_ref_resolved)
+    parent_ref_resolved, _mapping
+  FROM (
+    SELECT parent_ref_resolved, _mapping, _priority
+    FROM _id_task
+    GROUP BY parent_ref_resolved, _mapping, _priority
+  ) sub
+  ORDER BY parent_ref_resolved, _priority
+)
+
+-- Only entities contributed by the winning mapping survive
+_surviving_elements AS (
+  SELECT id._entity_id_resolved
+  FROM _id_task id
+  JOIN _element_winner w
+    ON w.parent_ref_resolved = id.parent_ref_resolved
+    AND w._mapping = id._mapping
+)
+```
+
+| Element | Contributed by | Survives? | Why |
+|---|---|---|---|
+| Task A | PM (1), Dev (2) | ✓ | PM contributed it, PM wins |
+| Task B | PM (1) | ✓ | PM contributed it |
+| Task C | PM (1) | ✓ | PM contributed it |
+| Task D | Dev (2) | ✗ | PM has elements for this parent, so PM wins; D is not in PM's set |
+
+Field values within surviving elements still resolve normally —
+Task A's `estimate` comes from PM (coalesce, priority 1) even though
+dev tracker also contributed it. Atomic resolution controls **which
+entities exist**, not how their fields resolve.
+
+If PM has zero tasks for a parent but dev tracker has some, dev tracker's
+set wins for that parent — same fallthrough as scalar coalesce.
+
+### `elements: last_modified` — timestamp wins
+
+The child target must have a field with `strategy: last_modified`. The
+engine uses it to pick the winner: per parent, compute
+`MAX(timestamp)` across each mapping's elements, highest wins.
+
+```yaml
+targets:
+  task:
+    elements: last_modified
+    fields:
+      project_ref: { strategy: identity, references: project }
+      title:       { strategy: identity }
+      updated_at:  { strategy: last_modified }   # ← drives winner
+      estimate:    { strategy: coalesce }
+```
+
+Each source maps its native timestamp to this field:
+
+```yaml
+  - name: pm_tasks
+    target: task
+    parent: pm_projects
+    array: tasks
+    fields:
+      - source: modified_at           # PM's native timestamp
+        target: updated_at
+
+  - name: dev_tasks
+    target: task
+    parent: dev_projects
+    array: tasks
+    fields:
+      - source: last_changed          # Dev tracker's native timestamp
+        target: updated_at
+```
+
+```sql
+-- Per parent, pick mapping with most recent element activity
+_element_winner AS (
+  SELECT DISTINCT ON (parent_ref_resolved)
+    parent_ref_resolved, _mapping
+  FROM (
+    SELECT parent_ref_resolved, _mapping,
+           MAX(updated_at) AS last_touch
+    FROM _id_task
+    GROUP BY parent_ref_resolved, _mapping
+  ) sub
+  ORDER BY parent_ref_resolved, last_touch DESC NULLS LAST
+)
+```
+
+Where the timestamp **value** comes from is an ordinary mapping
+concern — element-native or propagated from the parent via
+`parent_fields`. The winner query is the same either way.
+
+#### Parent-level timestamp via `parent_fields`
+
+When the source only tracks modification at the parent level (common
+for embedded elements), propagate it with `parent_fields`:
+
+```yaml
+mappings:
+  - name: pm_tasks
+    parent: pm_projects
+    array: tasks
+    parent_fields:
+      project_id: id
+      parent_updated: updated_at     # ← propagate parent source column
+    target: task
+    fields:
+      - source: title
+        target: title
+      - source: parent_updated        # ← maps to child target field
+        target: updated_at
+      - source: estimate
+        target: estimate
+```
+
+All elements from the same parent source row get the same timestamp,
+so `MAX(updated_at)` degenerates to a scalar lookup — but the SQL is
+identical. The engine doesn't need to distinguish the two cases.
+
+Sources without native timestamps use `derive_timestamps` (which
+reads from `written_state`) — same anti-corruption pattern as scalar
+`last_modified` strategy.
+
+Validation: `elements: last_modified` requires at least one field on the
+child target with `strategy: last_modified`. Otherwise it's a validation
+error.
+
+### Resolution vs. reverse cleanup
+
+Atomic element resolution operates at the **resolution** layer. The
+`_resolved_task` view itself only contains surviving elements. This
+means:
+
+- **Analytics queries** on `_resolved_task` see the authoritative set
+- **Reverse views** only produce rows for surviving elements
+- **Delta views** detect elements that previously survived but no longer
+  do (because the winner changed) and emit deletes — using the existing
+  deletion detection CTEs that compare written state against current
+
+No special reverse-layer filtering needed. The resolved view is the
+single source of truth; reverse and delta consume it naturally.
+
+### Implementation
+
+```rust
+// model.rs
+pub struct TargetDef {
+    pub fields: IndexMap<String, TargetFieldDef>,
+    pub elements: Option<ElementStrategy>,
+    // ...
+}
+
+/// How element set membership is resolved for child targets.
+/// Reuses strategy vocabulary: collect (union), coalesce (priority),
+/// last_modified (timestamp).
+pub enum ElementStrategy {
+    Collect,       // union of all sources' elements (default)
+    Coalesce,      // highest-priority mapping's set wins per parent
+    LastModified,  // most recently active mapping's set wins per parent
+}
+```
+
+In `resolution.rs`, when the child target has `elements: coalesce` or
+`elements: last_modified`, generate the `_element_winner` and
+`_surviving_elements` CTEs. The main resolution query adds
+`WHERE _entity_id_resolved IN (SELECT * FROM _surviving_elements)`.
 
 ## Interaction with other plans
 
@@ -345,3 +703,12 @@ The `collect` strategy merges them. CRM's reverse gets `phones[1]` back.
   snippets — no change to validation rules.
 - **PRECISION-LOSS-PLAN**: `normalize` applies per-element when comparing
   arrays.
+- **DELETION-AS-FIELD-PLAN**: `reverse_filter` on child mappings composes
+  with `elements:` — `elements:` determines which entities survive
+  resolution, `reverse_filter` further controls which appear in each
+  source's reconstructed array.  `derive_element_tombstones` can
+  synthesize deletion markers into elements.
+- **ARRAY-RESOLUTION-PLAN**: The `elements:` property on child targets
+  solves element set authority without Phase 2 or sentinel fields. Phase 2
+  remains useful for target model reduction (inlining simple object arrays)
+  but is no longer the critical path for authority semantics.

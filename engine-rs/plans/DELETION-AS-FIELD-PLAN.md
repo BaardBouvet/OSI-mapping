@@ -6,6 +6,219 @@ Unify entity and element deletion handling by treating deletion as a
 **regular target field** synthesized via anti-corruption adapters, not as
 engine-internal side-channel exclusions.
 
+## Lifecycle building blocks — complete picture
+
+This section summarizes every building block for entity and element
+lifecycles: what exists today, what's planned, and how they compose.
+
+### The anti-corruption adapter pattern
+
+The engine assumes an ideal source model (soft-delete markers, CRDT
+ordering, change timestamps) and provides adapters for imperfect
+sources. Each adapter synthesizes what the source can't provide:
+
+| Ideal source has        | Adapter                        | Synthesizes                  | Status       |
+|-------------------------|--------------------------------|------------------------------|--------------|
+| Change timestamps       | `derive_timestamps`            | `_updated_at` from ETL clock | **Done**     |
+| Change detection        | `derive_noop`                  | Noop action from written diff| **Done**     |
+| Element ordering        | CRDT ordering (`order: true`)  | Deterministic position       | **Done**     |
+| Soft-delete markers     | `soft_delete.target`           | Deletion signal as field     | **Planned**  |
+| Soft-delete markers (elements) | `tombstone.target`      | Element deletion as field    | **Planned**  |
+| Hard-delete detection   | `derive_tombstones`            | Absence → field synthesis    | **Planned**  |
+| Element hard-delete     | `derive_element_tombstones`    | Absence → field synthesis    | **Planned** (currently: exclusion only) |
+
+### Entity lifecycle — building blocks
+
+```
+SOURCE SIDE                    TARGET MODEL                   CONSUMER SIDE
+─────────────                  ────────────                   ─────────────
+
+Detection adapters:            Resolution:                    Reaction:
+
+┌─────────────────┐            ┌───────────┐                 ┌───────────────┐
+│ Source has row   │──field────▶│           │                 │               │
+│ with soft-delete │  mapping   │ is_deleted│──reverse_filter─▶│ action=delete │
+│ marker           │           │           │                 │ (ETL handles) │
+│                  │           │ strategy: │                 │               │
+│ soft_delete:     │──target──▶│ bool_or   │                 │ OR:           │
+│   field: del_at  │  (auto)   │           │  no filter ────▶│ sees field,   │
+│   target: is_del │           │           │                 │ renders as    │
+│                  │           │           │                 │ archived      │
+└─────────────────┘            └───────────┘                 └───────────────┘
+
+┌─────────────────┐                 ▲
+│ Source hard-     │                 │
+│ deletes row      │                 │
+│ (row gone)       │──synthesize────┘
+│                  │  is_deleted
+│ derive_tombstones│  = TRUE
+│  : is_deleted    │  (+ auto-null
+└─────────────────┘   other fields)
+```
+
+| Building block | Type | Status | What it does |
+|---|---|---|---|
+| `tombstone` | Detection | **Done** | Detects source soft-delete marker, excludes row from delta |
+| `soft_delete` | Detection | **Planned** (SOFT-DELETE-REFACTOR) | Replaces `tombstone` with 3-strategy API (timestamp/flag/active_flag) |
+| `soft_delete.target` | Detection → field | **Planned** (this plan) | Routes detection into a target field instead of excluding |
+| Auto-nullification | Forward view | **Planned** (this plan) | When detection fires, NULLs all non-identity fields automatically |
+| `reverse_filter` | Reaction | **Done** | Per-consumer entity exclusion (`action = 'delete'`) |
+| `derive_tombstones` | Synthesis | **Planned** (this plan) | Hard-delete → synthesize target field from absence |
+| `cluster_members` | ETL feedback | **Done** | Tracks which entities were synced (insert dedup + resurrection) |
+| `written_state` | ETL feedback | **Done** | Tracks written entity state (noop + hard-delete detection) |
+| `resurrect` | Policy | **Done** | Controls whether disappeared entities can reappear |
+| `derive_noop` | Synthesis | **Done** | Synthesizes noop from `_written` diff |
+| `derive_timestamps` | Synthesis | **Done** | Synthesizes `_updated_at` from ETL clock |
+
+**How they compose (entity):**
+
+```
+soft_delete.target ──▶ is_deleted (bool_or) ──▶ reverse_filter ──▶ delete
+          │                                           │
+          │ (auto-null fields)                        │ (no filter)
+          ▼                                           ▼
+   source yields floor                        consumer keeps record,
+   in resolution                              sees is_deleted = true
+
+derive_tombstones ───▶ is_deleted (bool_or) ──▶ same path
+   (hard-delete)          ▲
+                          │
+   other sources ─────────┘ is_deleted = false (still alive there)
+
+   resurrect: true ──▶ entity reappears ──▶ undelete value written back
+                                            (NULL / FALSE / TRUE per strategy)
+```
+
+### Element lifecycle — building blocks
+
+```
+SOURCE SIDE                    TARGET MODEL                   CONSUMER SIDE
+─────────────                  ────────────                   ─────────────
+
+┌─────────────────┐            ┌───────────┐                 ┌───────────────┐
+│ Source has       │            │           │                 │               │
+│ element with     │──target──▶│is_removed │──reverse_filter──▶│ excluded from │
+│ soft-delete      │  (auto)   │           │                 │ this source's │
+│ marker           │           │ strategy: │                 │ array         │
+│                  │           │ bool_or   │                 │               │
+│ tombstone:       │           │           │  no filter ────▶│ kept in array │
+│   field: rm_at   │           │           │                 │ with marker   │
+│   target: is_rm  │           │           │                 │               │
+└─────────────────┘            └───────────┘                 └───────────────┘
+
+┌─────────────────┐                 ▲
+│ Source removes   │                 │
+│ element from     │──synthesize────┘
+│ array (gone)     │  is_removed
+│                  │  = TRUE
+│ derive_element_  │
+│  tombstones:     │
+│  is_removed      │
+└─────────────────┘
+```
+
+| Building block | Type | Status | What it does |
+|---|---|---|---|
+| `tombstone` (child) | Detection | **Done** | Detects element soft-delete marker, excludes from array |
+| `tombstone.target` | Detection → field | **Planned** (this plan) | Routes detection into target field instead of excluding |
+| `reverse_filter` (child) | Reaction | **Planned** (this plan, extend existing) | Per-consumer element exclusion in `jsonb_agg` FILTER |
+| `derive_element_tombstones` | Synthesis (current) | **Done** | Detects absent elements via `_written` diff, excludes from all arrays |
+| `derive_element_tombstones` | Synthesis (planned) | **Planned** (this plan) | Detects absent elements, synthesizes target field instead |
+| CRDT ordering | Ordering | **Done** | `order: true` provides deterministic element positions |
+| `written_state` (parent) | ETL feedback | **Done** | Parent's `_written` JSONB stores arrays for element diff |
+
+**How they compose (element):**
+
+```
+tombstone.target ──▶ is_removed (bool_or) ──▶ reverse_filter ──▶ excluded
+         │                                          │
+         │ (auto-null fields)                       │ (no filter)
+         ▼                                          ▼
+  element yields floor                       kept in array with
+  in resolution                              is_removed = true
+
+derive_element_tombstones ──▶ is_removed (bool_or) ──▶ same path
+   (hard-delete)                   ▲
+                                   │
+   other sources ──────────────────┘ is_removed = false
+```
+
+### TARGET-ARRAYS-PLAN: structural unification
+
+The current system requires separate child targets for element
+entities. TARGET-ARRAYS-PLAN (Proposed) adds array-typed fields
+directly on targets:
+
+| Building block | Status | What it does |
+|---|---|---|
+| Array field (`type: jsonb[]`) | **Planned** | Array as a first-class target field |
+| `element_identity` | **Planned** | Declares which sub-fields identify unique elements |
+| `strategy: coalesce` on arrays | **Planned** | Highest-priority source's element set wins |
+| `strategy: collect` on arrays | **Planned** | Merge elements from all sources (deduplicated) |
+| `array_field` child mapping | **Planned** | Auto-generates FK→array aggregation in forward view |
+
+This subsumes the element set authority problem: `coalesce` on an
+array field means the highest-priority source owns which elements
+exist. No new concepts — reuses existing resolution strategies.
+
+### Full composition table
+
+| Scenario | Detection | Target field | Strategy | Consumer reaction | Status |
+|----------|-----------|-------------|----------|-------------------|--------|
+| Entity soft-delete (local) | `tombstone`/`soft_delete` | — | — | Excluded from delta | **Done** |
+| Entity soft-delete (propagated) | Expression mapping | `is_deleted` | `bool_or` | `reverse_filter` | **Done** |
+| Entity soft-delete (propagated, ergonomic) | `soft_delete.target` | `is_deleted` | `bool_or` | `reverse_filter` | **Planned** |
+| Entity hard-delete (local) | Implicit from `written_state` | — | — | Suppressed | **Done** |
+| Entity hard-delete (propagated) | `derive_tombstones` | `is_deleted` | `bool_or` | `reverse_filter` | **Planned** |
+| Element soft-delete (local) | `tombstone` on child | — | — | Excluded from all arrays | **Done** |
+| Element soft-delete (propagated) | `tombstone.target` | `is_removed` | `bool_or` | `reverse_filter` (child) | **Planned** |
+| Element hard-delete (local) | `derive_element_tombstones` | — | — | Excluded from all arrays | **Done** |
+| Element hard-delete (propagated) | `derive_element_tombstones` | `is_removed` | `bool_or` | `reverse_filter` (child) | **Planned** |
+| Element set authority | `strategy: coalesce` on array field | — | `coalesce` | Priority-based | **Planned** (TARGET-ARRAYS) |
+| Resurrect (entity) | Source reappears | — | — | Undelete value written back | **Done** |
+
+### Reverse direction summary
+
+| Event | Engine output | ETL connector responsibility |
+|---|---|---|
+| Entity deleted | `action = 'delete'` (via `reverse_filter`) | Connector issues source-native delete/archive |
+| Entity resurrected | `action = 'update'` + undelete value | Connector writes the undelete value |
+| Element excluded | Absent from reconstructed array | Connector writes updated array |
+| Element included | Present in reconstructed array | Connector writes updated array |
+| Entity noop | `action = 'noop'` | Connector skips |
+
+The engine never writes non-deterministic values (no `NOW()` in views).
+All reverse values are stable: undelete values are constants derived
+from `soft_delete` strategy (`NULL`/`FALSE`/`TRUE`).
+
+### Implementation phases
+
+| Phase | Plan | Delivers | Depends on |
+|---|---|---|---|
+| 1 | DELETION-AS-FIELD | `reverse_filter` on array child mappings | — |
+| 2 | SOFT-DELETE-REFACTOR | `soft_delete` replaces `tombstone` | — |
+| 3 | DELETION-AS-FIELD | `soft_delete.target` + auto-nullification | Phase 2 |
+| 4 | DELETION-AS-FIELD | `derive_tombstones: field_name` (entity) | Phase 3 |
+| 5 | DELETION-AS-FIELD | `derive_element_tombstones` refactor (element) | Phase 3 |
+| 6 | TARGET-ARRAYS | Scalar array fields (`text[]`, `collect`, `coalesce`) | — |
+| 7 | TARGET-ARRAYS | Object array fields (`jsonb[]`, `element_identity`, `array_field`) | Phase 6 |
+
+Phases 1-5 and 6-7 are independent tracks that can progress in parallel.
+
+### Existing examples
+
+| Example | Lifecycle | Level | Status |
+|---|---|---|---|
+| `soft-delete/` | Entity soft-delete (local) | Entity | Done |
+| `hard-delete/` | Entity hard-delete (local) | Entity | Done |
+| `propagated-delete/` | Entity soft-delete (propagated) | Entity | Done |
+| `element-soft-delete/` | Element soft-delete (cross-source) | Element | Done |
+| `element-hard-delete/` | Element hard-delete (cross-source) | Element | Done |
+| `derive-noop/` | Change detection synthesis | Entity | Done |
+| `derive-timestamps/` | Timestamp synthesis | Entity | Done |
+
+---
+
 ## The insight
 
 The engine already has three anti-corruption adapters that synthesize what
@@ -120,7 +333,7 @@ Detection              →  Adapter synthesizes  →  Resolution   →  Per-cons
                           a target field                          reaction
 ────────────────────────────────────────────────────────────────────────────────
 Source has soft-delete     (no adapter needed,     bool_or /       reverse_filter
-  marker                   just map the field)     coalesce        element_filter
+  marker                   just map the field)     coalesce        reverse_filter
 
 Source hard-deletes        derive_tombstones:       ↑               ↑
   entity (row gone,        synthesize is_deleted
@@ -292,7 +505,7 @@ mappings:
     parent: report_projects
     array: tasks
     target: task
-    element_filter: "is_removed IS NOT TRUE"
+    reverse_filter: "is_removed IS NOT TRUE"
     fields: [...]
 ```
 
@@ -473,49 +686,61 @@ The resurrect write-back is deterministic (constant values, no `NOW()`)
 and already implemented via the current `undelete_value` mechanism. The
 `soft_delete` strategy just makes it implicit.
 
-### Element filter: `element_filter`
+### `reverse_filter` on array child mappings
 
-A new property on child mappings, analogous to `reverse_filter` on root
-mappings:
+`reverse_filter` already exists on root mappings and controls entity
+inclusion via the delta action CASE. The same property on array child
+mappings would control **element** inclusion during array reconstruction.
+No new property needed — just extend `reverse_filter` to work in the
+nested CTE pipeline.
 
 ```yaml
 - name: dev_tasks
   parent: dev_projects
   array: tasks
   target: task
-  element_filter: "is_removed IS NOT TRUE"
+  reverse_filter: "is_removed IS NOT TRUE"
   fields: [...]
 ```
 
-The `element_filter` would apply inside the `jsonb_agg`:
+In the nested CTE pipeline, `reverse_filter` applies as a WHERE
+condition on the leaf CTE that feeds `jsonb_agg`:
 
 ```sql
--- Without element_filter (all elements)
-jsonb_agg(jsonb_build_object(...) ORDER BY ...)
+-- Without reverse_filter
+SELECT n._parent_key,
+  jsonb_agg(obj ORDER BY ...) AS tasks
+FROM _rev_dev_tasks AS n
+WHERE n._parent_key IS NOT NULL
+GROUP BY n._parent_key
 
--- With element_filter (exclude filtered elements)
-jsonb_agg(jsonb_build_object(...) ORDER BY ...)
-  FILTER (WHERE is_removed IS NOT TRUE)
+-- With reverse_filter: "is_removed IS NOT TRUE"
+SELECT n._parent_key,
+  jsonb_agg(obj ORDER BY ...) AS tasks
+FROM _rev_dev_tasks AS n
+WHERE n._parent_key IS NOT NULL
+  AND (is_removed IS NOT TRUE)          -- ← injected from reverse_filter
+GROUP BY n._parent_key
 ```
 
-This is the per-consumer control mechanism for elements, mirroring
-`reverse_filter` for entities.
+This reuses the existing property with consistent semantics: on root
+mappings, `reverse_filter` controls entity inclusion; on array child
+mappings, it controls element inclusion.
 
 ## Implementation phases
 
-### Phase 1: `element_filter` on child mappings
+### Phase 1: `reverse_filter` on array child mappings
 
-Add `element_filter` as a SQL expression property on child mappings that
-controls which elements are included in the reconstructed JSONB array.
-This is the consumption-side mechanism that enables per-source control.
+Extend `reverse_filter` to work in the nested CTE pipeline for child
+mappings with `array:`. When present, the filter expression is added
+as a WHERE condition on the leaf CTE that feeds `jsonb_agg()`.
 
-Applies a `FILTER (WHERE ...)` clause on the `jsonb_agg()` in the nested
-CTE pipeline. Validated against target fields the same way `reverse_filter`
-is today.
+Validation: same rules as `reverse_filter` on root mappings — the
+expression must reference target field names.
 
 This can be shipped independently — even without the synthesis adapters,
 users with soft-delete sources can map markers to target fields and use
-`element_filter` to control per-source inclusion.
+`reverse_filter` on child mappings to control per-source inclusion.
 
 ### Phase 2: `tombstone.target` — detection as a field + auto-nullification
 
@@ -587,7 +812,7 @@ _del_tasks AS (
 
 The resolved element set then includes both live elements
 (`is_removed = NULL/FALSE`) and synthesized-absent elements
-(`is_removed = TRUE`). Each consumer's `element_filter` decides
+(`is_removed = TRUE`). Each consumer's `reverse_filter` decides
 whether to include or exclude them in its reconstructed array.
 
 ## Interaction with existing features
@@ -639,12 +864,12 @@ propagation works today (you explicitly map `deleted_at IS NOT NULL` to
   action) → becomes `derive_tombstones` synthesizing a field
 - **`derive_element_tombstones: true`** (current: detect absence →
   exclude from all arrays) → becomes `derive_element_tombstones: field_name`
-  synthesizing a field + `element_filter` per consumer
+  synthesizing a field + `reverse_filter` per consumer
 - **`tombstone` detect-and-exclude** (for propagation scenarios) →
   becomes `tombstone.target` producing a field
 
 The current behaviors remain available as defaults (no `target`, no
-`element_filter` → same exclusion semantics). The new properties extend
+`reverse_filter` → same exclusion semantics). The new properties extend
 the model for users who need per-consumer control.
 
 ## Example: mixed element deletion (the motivating scenario)
@@ -707,7 +932,7 @@ mappings:
     parent: dev_projects
     array: tasks
     target: task
-    element_filter: "is_removed IS NOT TRUE"  # ← dev tracker wants clean arrays
+    reverse_filter: "is_removed IS NOT TRUE"  # ← dev tracker wants clean arrays
     fields:
       - source: parent_name
         target: project_ref
@@ -717,7 +942,7 @@ mappings:
       - target: task_order
         order: true
 
-  # PM tool child: keeps removed tasks visible (no element_filter)
+  # PM tool child: keeps removed tasks visible (no reverse_filter)
   # PM tool sees is_removed = true and renders with strikethrough
 ```
 
@@ -726,9 +951,9 @@ mappings:
 1. PM tool cancels "Write docs" → `cancelled_at` set →
    `tombstone.target` maps to `is_removed = TRUE`
 2. Resolution: `is_removed` via `bool_or` → TRUE (PM tool says removed)
-3. Dev tracker's `element_filter` excludes it → "Write docs" removed
+3. Dev tracker's `reverse_filter` excludes it → "Write docs" removed
    from dev tracker's array
-4. PM tool has no `element_filter` → "Write docs" stays in PM tool's
+4. PM tool has no `reverse_filter` → "Write docs" stays in PM tool's
    array, with `is_removed = TRUE` available if the ETL wants to render
    it differently
 
@@ -737,7 +962,7 @@ And symmetrically:
 1. Dev tracker removes "Fix bug" from array → `derive_element_tombstones`
    synthesizes `is_removed = TRUE` for that element
 2. Resolution: `bool_or` → TRUE
-3. Dev tracker's `element_filter` excludes it
+3. Dev tracker's `reverse_filter` excludes it
 4. PM tool keeps it, sees `is_removed = TRUE`
 
 Each consumer independently decides its reaction. Deletion is data, not
@@ -745,29 +970,26 @@ an engine side effect.
 
 ## Open questions
 
-1. **Should `element_filter` live on the child mapping or the parent?**
-   The parent's `reverse_filter` controls entity inclusion. The child's
-   `element_filter` would control element inclusion within the parent's
-   array. Putting it on the child mapping feels right since it's
-   per-array, not per-entity.
+1. ~~**Should `reverse_filter` live on the child mapping or the parent?**~~
+   Resolved: it's just `reverse_filter` on the child mapping. Same
+   property, same semantics — on root mappings it controls entity
+   inclusion, on array child mappings it controls element inclusion.
+   No new property needed.
 
-2. **How does `derive_tombstones` (entity-level) interact with
-   `cluster_members`?** Currently `cluster_members` is used for insert
-   feedback. If the entity disappears from the forward view but is still
-   in `cluster_members`, we synthesize `is_deleted = TRUE`. But the
-   entity might have been removed from `cluster_members` too (the ETL
-   cleaned up). Need to define the exact detection semantics.
+2. ~~**How does `derive_tombstones` (entity-level) interact with
+   `cluster_members`?**~~ Resolved: `derive_tombstones` requires
+   `cluster_members` (or `written_state`) to detect absence. If neither
+   is configured, the engine has no record of what was previously present
+   and cannot detect disappearance — `derive_tombstones` is a validation
+   error without a presence-tracking mechanism.
 
-3. **Default field name.** Should `derive_tombstones` / `derive_element_
-   tombstones` require an explicit field name (as proposed), or default
-   to a conventional name like `_is_deleted` / `_is_removed`? Explicit
-   is clearer but verbose. Given the pre-1.0 simplicity principle,
-   requiring explicit is better.
+3. ~~**Default field name.**~~ Resolved: explicit field name required.
+   No conventional default — keeps configs self-documenting.
 
-4. **Phase 1 standalone value.** `element_filter` is useful even without
-   the synthesis adapters — users with soft-delete sources can already
-   map markers to fields and filter per consumer. This argues for
-   shipping Phase 1 first.
+4. **Phase 1 standalone value.** `reverse_filter` on child mappings is
+   useful even without the synthesis adapters — users with soft-delete
+   sources can already map markers to fields and filter per consumer.
+   This argues for shipping Phase 1 first.
 
 5. **Interaction with `soft_delete` refactor.** If SOFT-DELETE-REFACTOR-
    PLAN proceeds (renaming `tombstone` to `soft_delete`), the `target`
