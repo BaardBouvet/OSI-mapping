@@ -1,6 +1,6 @@
 # Unify derive_tombstones across entities and elements
 
-**Status:** Planned
+**Status:** Done
 
 Three changes, all following from "deletion is data, not a side-channel":
 

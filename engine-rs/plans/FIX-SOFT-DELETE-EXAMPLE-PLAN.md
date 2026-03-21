@@ -1,6 +1,6 @@
 # Fix soft-delete example
 
-**Status:** Implementing
+**Status:** Done
 
 ## Problem
 

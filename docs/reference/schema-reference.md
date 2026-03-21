@@ -208,7 +208,7 @@ tags: collect
 
 #### `bool_or`
 
-Resolves to `true` if **any** contributing source has a truthy value . Useful for boolean flags that propagate across sources — e.g., a deletion flag where any system marking the record deleted makes the resolved value `true`.
+Resolves to `true` if **any** contributing source has a truthy value. Useful for boolean flags that propagate across sources — e.g., a deletion flag where any system marking the record deleted makes the resolved value `true`.
 
 ```yaml
 is_deleted:
@@ -882,6 +882,23 @@ Consumers should process reverse ETL arrays in emitted order instead of relying
 on source-side recomputation of sort keys for generated-only rows.
 
 **Examples:** [crdt-ordering](../examples/crdt-ordering/), [crdt-ordering-native](../examples/crdt-ordering-native/)
+
+### Scalar array values: `scalar`
+
+Use `scalar: true` on a child array mapping field to extract the bare value
+directly from each JSONB array element, instead of a named key.
+
+```yaml
+- target: tag
+  scalar: true
+```
+
+This is designed for source arrays that contain bare scalars (e.g.
+`["vip", "churned"]`) rather than objects.  The scalar field's target value
+doubles as the element identity.  The delta view reconstructs the nested array
+as a scalar list instead of an object list.
+
+**Examples:** [scalar-array-deletion](../examples/scalar-array-deletion/)
 
 ### `references` (field mapping)
 

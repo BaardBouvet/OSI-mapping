@@ -164,6 +164,9 @@ struct NestingNode<'a> {
     /// Target field name of the `order: true` field, if any.
     /// When present, `jsonb_agg` uses this for ORDER BY instead of first item_field.
     order_field: Option<String>,
+    /// Target field name of the `scalar: true` field, if any.
+    /// When present, `jsonb_agg` emits bare scalar values instead of objects.
+    scalar_field: Option<String>,
     /// Child nesting levels (deeper arrays within this one).
     children: Vec<NestingNode<'a>>,
 }
@@ -946,6 +949,7 @@ fn build_nesting_tree<'a>(
         parent_fk_field: Option<String>,
         parent_source_col: Option<String>,
         order_field: Option<String>,
+        scalar_field: Option<String>,
     }
 
     let mut all_nested: Vec<FlatNested<'a>> = Vec::new();
@@ -963,6 +967,14 @@ fn build_nesting_tree<'a>(
             // Include order/order_prev/order_next target names (no source_name)
             for fm in &m.fields {
                 if (fm.order || fm.order_prev || fm.order_next) && fm.is_reverse() {
+                    if let Some(ref tgt) = fm.target {
+                        if !item_fields.contains(tgt) {
+                            item_fields.push(tgt.clone());
+                        }
+                    }
+                }
+                // Scalar field: value comes from target name (no source).
+                if fm.scalar && fm.is_reverse() {
                     if let Some(ref tgt) = fm.target {
                         if !item_fields.contains(tgt) {
                             item_fields.push(tgt.clone());
@@ -1018,6 +1030,7 @@ fn build_nesting_tree<'a>(
                 .iter()
                 .find(|fm| fm.order)
                 .and_then(|fm| fm.target.clone());
+            let scalar_field = m.scalar_field().map(|s| s.to_string());
             let segments: Vec<String> = path.split('.').map(|s| s.to_string()).collect();
             all_nested.push(FlatNested {
                 segments,
@@ -1026,6 +1039,7 @@ fn build_nesting_tree<'a>(
                 parent_fk_field,
                 parent_source_col,
                 order_field,
+                scalar_field,
             });
         }
     }
@@ -1046,6 +1060,7 @@ fn build_nesting_tree<'a>(
                 parent_fk_field: flat.parent_fk_field,
                 parent_source_col: flat.parent_source_col,
                 order_field: flat.order_field,
+                scalar_field: flat.scalar_field,
                 children: Vec::new(),
             });
         } else {
@@ -1060,6 +1075,7 @@ fn build_nesting_tree<'a>(
                     parent_fk_field: flat.parent_fk_field,
                     parent_source_col: flat.parent_source_col,
                     order_field: flat.order_field,
+                    scalar_field: flat.scalar_field,
                     children: Vec::new(),
                 });
             }
@@ -1123,24 +1139,31 @@ fn build_nested_ctes(
         .filter_map(|fm| fm.target.as_deref())
         .collect();
     let table_alias = "n.";
-    let mut obj_parts: Vec<String> = node
-        .item_fields
-        .iter()
-        .filter(|f| !order_targets.contains(f.as_str()))
-        .map(|f| format!("'{f}', {table_alias}{}", qi(f)))
-        .collect();
 
-    // Add child array columns to the object.
-    for cr in &child_results {
-        obj_parts.push(format!(
-            "'{seg}', COALESCE({alias}.{qcol}, '[]'::jsonb)",
-            seg = cr.column,
-            alias = cr.alias,
-            qcol = qi(&cr.column),
-        ));
-    }
+    // When the node has a scalar_field, the array aggregation should produce
+    // bare scalar values (e.g. ["vip", "churned"]) instead of objects.
+    let obj_expr = if let Some(ref sf) = node.scalar_field {
+        format!("to_jsonb({table_alias}{})", qi(sf))
+    } else {
+        let mut obj_parts: Vec<String> = node
+            .item_fields
+            .iter()
+            .filter(|f| !order_targets.contains(f.as_str()))
+            .map(|f| format!("'{f}', {table_alias}{}", qi(f)))
+            .collect();
 
-    let obj_expr = format!("jsonb_build_object({})", obj_parts.join(", "));
+        // Add child array columns to the object.
+        for cr in &child_results {
+            obj_parts.push(format!(
+                "'{seg}', COALESCE({alias}.{qcol}, '[]'::jsonb)",
+                seg = cr.column,
+                alias = cr.alias,
+                qcol = qi(&cr.column),
+            ));
+        }
+
+        format!("jsonb_build_object({})", obj_parts.join(", "))
+    };
     let qgroup = qi(group_col);
     let qsegment = qi(&node.segment);
 
@@ -1301,6 +1324,8 @@ fn render_delta_with_nested(
             .collect();
 
         // Current source's identity: (source_name, target_name) pairs.
+        // For scalar fields (no source), use the target name as the column
+        // name since the reverse view exposes it under that name.
         let current_identity_pairs: Vec<(String, String)> = node
             .mapping
             .fields
@@ -1313,7 +1338,11 @@ fn render_delta_with_nested(
                     && fm.references.is_none()
             })
             .filter_map(|fm| {
-                let src = fm.source_name()?.to_string();
+                let src = if fm.scalar {
+                    fm.target.as_ref()?.clone()
+                } else {
+                    fm.source_name()?.to_string()
+                };
                 let tgt = fm.target.as_ref()?.clone();
                 Some((src, tgt))
             })
@@ -1368,31 +1397,34 @@ fn render_delta_with_nested(
             }
 
             // Map identity fields across the two child mappings:
-            // (written_jsonb_key, fwd_column, output_alias)
+            // (written_jsonb_key, fwd_column, output_alias, is_scalar)
             // written_jsonb_key = foreign child's source name (key in written JSONB)
+            //                     — for scalar fields, this is the target name
             // fwd_column       = target field name (column in forward view)
             // output_alias     = current source's source name (for the join)
-            let field_mapping: Vec<(String, String, String)> = identity_target_fields
+            //                     — for scalar fields, this is the target name
+            // is_scalar        = whether this field is a scalar array value
+            let field_mapping: Vec<(String, String, String, bool)> = identity_target_fields
                 .iter()
                 .filter_map(|&tgt_name| {
-                    let foreign_src = foreign_child
-                        .fields
-                        .iter()
-                        .find(|fm| {
-                            fm.target.as_deref() == Some(tgt_name) && fm.references.is_none()
-                        })
-                        .and_then(|fm| fm.source_name())
-                        .map(|s| s.to_string())?;
-                    let current_src = node
-                        .mapping
-                        .fields
-                        .iter()
-                        .find(|fm| {
-                            fm.target.as_deref() == Some(tgt_name) && fm.references.is_none()
-                        })
-                        .and_then(|fm| fm.source_name())
-                        .map(|s| s.to_string())?;
-                    Some((foreign_src, tgt_name.to_string(), current_src))
+                    let foreign_fm = foreign_child.fields.iter().find(|fm| {
+                        fm.target.as_deref() == Some(tgt_name) && fm.references.is_none()
+                    })?;
+                    let foreign_src = if foreign_fm.scalar {
+                        tgt_name.to_string()
+                    } else {
+                        foreign_fm.source_name()?.to_string()
+                    };
+                    let current_fm = node.mapping.fields.iter().find(|fm| {
+                        fm.target.as_deref() == Some(tgt_name) && fm.references.is_none()
+                    })?;
+                    let current_src = if current_fm.scalar {
+                        tgt_name.to_string()
+                    } else {
+                        current_fm.source_name()?.to_string()
+                    };
+                    let is_scalar = foreign_fm.scalar;
+                    Some((foreign_src, tgt_name.to_string(), current_src, is_scalar))
                 })
                 .collect();
 
@@ -1445,8 +1477,13 @@ fn render_delta_with_nested(
             let prev_alias = format!("_del_prev_{segment}_{source_idx}");
             let prev_id_cols: Vec<String> = field_mapping
                 .iter()
-                .map(|(foreign_src, _, current_src)| {
-                    format!("elem->>'{foreign_src}' AS {}", qi(current_src))
+                .map(|(foreign_src, _, current_src, is_scalar)| {
+                    if *is_scalar {
+                        // Scalar array: written JSONB stores bare values.
+                        format!("(elem #>> array[]::text[]) AS {}", qi(current_src))
+                    } else {
+                        format!("elem->>'{foreign_src}' AS {}", qi(current_src))
+                    }
                 })
                 .collect();
             all_ctes.push(format!(
@@ -1464,7 +1501,9 @@ fn render_delta_with_nested(
             let curr_alias = format!("_del_curr_{segment}_{source_idx}");
             let curr_id_cols: Vec<String> = field_mapping
                 .iter()
-                .map(|(_, tgt, current_src)| format!("f.{}::text AS {}", qi(tgt), qi(current_src)))
+                .map(|(_, tgt, current_src, _)| {
+                    format!("f.{}::text AS {}", qi(tgt), qi(current_src))
+                })
                 .collect();
             all_ctes.push(format!(
                 "{curr_alias} AS (\n\

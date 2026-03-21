@@ -341,6 +341,9 @@ pub fn render_forward_body(
                         format!("PARTITION BY {} ", partition_cols.join(", "))
                     };
                     format!("{window_fn}({value_expr}) OVER ({partition}ORDER BY item.idx)")
+                } else if fm.scalar && has_path {
+                    // Bare scalar array element: extract value directly.
+                    "(item.value #>> array[]::text[])".to_string()
                 } else if let Some(ref e) = fm.expression {
                     e.clone()
                 } else if let Some(ref sp) = fm.source_path {
@@ -849,10 +852,22 @@ pub fn render_forward_body(
                                         ));
                                     } else {
                                         // Element identity: extract from written JSONB.
-                                        dt_cols.push(format!(
-                                            "_dt_elem->>'{}' AS {qfname}",
-                                            sql_escape(src)
-                                        ));
+                                        let fm_for_field = mapping
+                                            .fields
+                                            .iter()
+                                            .find(|fm| fm.target.as_deref() == Some(fname));
+                                        let is_scalar = fm_for_field.is_some_and(|fm| fm.scalar);
+                                        if is_scalar {
+                                            // Scalar array: written JSONB stores bare values.
+                                            dt_cols.push(format!(
+                                                "(_dt_elem #>> array[]::text[]) AS {qfname}"
+                                            ));
+                                        } else {
+                                            dt_cols.push(format!(
+                                                "_dt_elem->>'{}' AS {qfname}",
+                                                sql_escape(src)
+                                            ));
+                                        }
                                     }
                                 } else {
                                     dt_cols.push(format!("NULL::{null_type} AS {qfname}"));
@@ -890,16 +905,22 @@ pub fn render_forward_body(
                             ));
 
                             // Anti-join: element identity fields (excluding parent FK).
+                            let has_scalar = mapping.scalar_field().is_some();
                             let source_array_col = qi(segment);
                             let anti_join_conds: Vec<String> = identity_info
                                 .iter()
                                 .filter(|(_, _, is_pfk)| !is_pfk)
                                 .map(|(_, src, _)| {
-                                    format!(
-                                        "(_dt_curr.value->>'{}') IS NOT DISTINCT FROM (_dt_elem->>'{}')",
-                                        sql_escape(src),
-                                        sql_escape(src)
-                                    )
+                                    if has_scalar {
+                                        // Scalar array: compare bare values.
+                                        "(_dt_curr.value #>> array[]::text[]) IS NOT DISTINCT FROM (_dt_elem #>> array[]::text[])".to_string()
+                                    } else {
+                                        format!(
+                                            "(_dt_curr.value->>'{}') IS NOT DISTINCT FROM (_dt_elem->>'{}')",
+                                            sql_escape(src),
+                                            sql_escape(src)
+                                        )
+                                    }
                                 })
                                 .collect();
 

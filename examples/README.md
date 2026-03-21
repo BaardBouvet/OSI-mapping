@@ -61,6 +61,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`route-combined`](route-combined/README.md) | Combined routing logic |
 | [`route-embedded`](route-embedded/README.md) | Routing within embedded objects |
 | [`route-multiple`](route-multiple/README.md) | Multiple routing rules |
+| [`scalar-array-deletion`](scalar-array-deletion/README.md) | Scalar array element deletion via `scalar: true` and `derive_tombstones` |
 | [`soft-delete`](soft-delete/README.md) | Soft-delete detection via `soft_delete` |
 | [`types`](types/README.md) | Type conversion and coercion |
 | [`value-conversions`](value-conversions/README.md) | Value mapping / vocabulary conversion |

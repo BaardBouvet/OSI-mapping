@@ -102,50 +102,59 @@
     },
 
     "TargetField": {
-      "type": "object",
-      "description": "Full target field definition with strategy and optional configuration.",
-      "required": ["strategy"],
-      "additionalProperties": false,
-      "properties": {
-        "strategy": {
+      "description": "Resolution rule for a target field. Either a strategy string shorthand or a full object with strategy and optional configuration.",
+      "oneOf": [
+        {
           "type": "string",
           "enum": ["identity", "collect", "coalesce", "last_modified", "expression", "bool_or"],
-          "description": "Resolution strategy. 'identity' = collect values + entity linking (transitive closure). 'collect' = aggregate all values. 'coalesce' = priority-based pick. 'last_modified' = recency-based pick. 'expression' = custom SQL aggregation. 'bool_or' = true if any source is true."
+          "description": "Strategy string shorthand. Equivalent to { strategy: <value> }."
         },
-        "expression": {
-          "$ref": "#/$defs/Expression",
-          "description": "SQL aggregation expression. Required when strategy is 'expression'. References the target field name as the column (e.g. \"max(price)\" for a field named 'price')."
-        },
-        "references": {
-          "type": "string",
-          "description": "Foreign key: name of another target entity this field references. Enables FK resolution during entity linking."
-        },
-        "default": {
-          "description": "Static fallback value when no source provides data for this field.",
-          "oneOf": [
-            { "type": "string" },
-            { "type": "number" },
-            { "type": "boolean" }
-          ]
-        },
-        "default_expression": {
-          "$ref": "#/$defs/Expression",
-          "description": "Computed fallback when no source provides data. SQL expression that can reference other target fields."
-        },
-        "group": {
-          "type": "string",
-          "description": "Atomic resolution group name. All fields sharing the same group resolve from the same winning source (the source with the most recent timestamp across any field in the group). Typically paired with 'last_modified' strategy."
-        },
-        "link_group": {
-          "type": "string",
-          "description": "Composite identity group name. Records from different sources are linked only when ALL fields sharing the same link_group match as a tuple. Paired with 'identity' strategy."
-        },
-        "type": {
-          "type": "string",
-          "description": "SQL type for this field (e.g. 'numeric', 'boolean', 'date', 'integer'). When set, values are cast to this type instead of text, enabling correct aggregation and type-safe expressions. Defaults to 'text' when omitted."
-        },
-        "description": { "type": "string" }
-      }
+        {
+          "type": "object",
+          "required": ["strategy"],
+          "additionalProperties": false,
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "enum": ["identity", "collect", "coalesce", "last_modified", "expression", "bool_or"],
+              "description": "Resolution strategy. 'identity' = collect values + entity linking (transitive closure). 'collect' = aggregate all values. 'coalesce' = priority-based pick. 'last_modified' = recency-based pick. 'expression' = custom SQL aggregation. 'bool_or' = true if any source is true."
+            },
+            "expression": {
+              "$ref": "#/$defs/Expression",
+              "description": "SQL aggregation expression. Required when strategy is 'expression'. References the target field name as the column (e.g. \"max(price)\" for a field named 'price')."
+            },
+            "references": {
+              "type": "string",
+              "description": "Foreign key: name of another target entity this field references. Enables FK resolution during entity linking."
+            },
+            "default": {
+              "description": "Static fallback value when no source provides data for this field.",
+              "oneOf": [
+                { "type": "string" },
+                { "type": "number" },
+                { "type": "boolean" }
+              ]
+            },
+            "default_expression": {
+              "$ref": "#/$defs/Expression",
+              "description": "Computed fallback when no source provides data. SQL expression that can reference other target fields."
+            },
+            "group": {
+              "type": "string",
+              "description": "Atomic resolution group name. All fields sharing the same group resolve from the same winning source (the source with the most recent timestamp across any field in the group). Typically paired with 'last_modified' strategy."
+            },
+            "link_group": {
+              "type": "string",
+              "description": "Composite identity group name. Records from different sources are linked only when ALL fields sharing the same link_group match as a tuple. Paired with 'identity' strategy."
+            },
+            "type": {
+              "type": "string",
+              "description": "SQL type for this field (e.g. 'numeric', 'boolean', 'date', 'integer'). When set, values are cast to this type instead of text, enabling correct aggregation and type-safe expressions. Defaults to 'text' when omitted."
+            },
+            "description": { "type": "string" }
+          }
+        }
+      ]
     },
 
 
@@ -407,6 +416,10 @@
         "order_next": {
           "type": "boolean",
           "description": "When true, auto-populates with the identity of the next sibling element. Used for linked-list CRDT ordering."
+        },
+        "scalar": {
+          "type": "boolean",
+          "description": "When true on a child array mapping field, the value is extracted directly from the bare JSONB array element instead of a named key. Enables mapping scalar arrays like [\"vip\", \"churned\"] to a target field."
         },
         "normalize": {
           "type": "string",

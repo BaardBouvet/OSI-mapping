@@ -196,26 +196,85 @@ pub struct Target {
 }
 
 /// Target field definition.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// Deserializes from either a strategy string shorthand (`"identity"`) or
+/// a full object (`{ strategy: identity, references: other_target }`).
+#[derive(Debug)]
 pub struct TargetFieldDef {
     pub strategy: Strategy,
-    #[serde(default)]
     pub expression: Option<String>,
-    #[serde(default)]
     pub references: Option<String>,
-    #[serde(default)]
     pub default: Option<serde_yaml::Value>,
-    #[serde(default)]
     pub default_expression: Option<String>,
-    #[serde(default)]
     pub group: Option<String>,
-    #[serde(default)]
     pub link_group: Option<String>,
-    #[serde(default)]
     pub description: Option<String>,
-    #[serde(default, rename = "type")]
     pub field_type: Option<String>,
+}
+
+/// Raw deserialization target — normalized into `TargetFieldDef` via `From`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TargetFieldRaw {
+    Short(Strategy),
+    Full(Box<TargetFieldFull>),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetFieldFull {
+    strategy: Strategy,
+    #[serde(default)]
+    expression: Option<String>,
+    #[serde(default)]
+    references: Option<String>,
+    #[serde(default)]
+    default: Option<serde_yaml::Value>,
+    #[serde(default)]
+    default_expression: Option<String>,
+    #[serde(default)]
+    group: Option<String>,
+    #[serde(default)]
+    link_group: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default, rename = "type")]
+    field_type: Option<String>,
+}
+
+impl From<TargetFieldRaw> for TargetFieldDef {
+    fn from(raw: TargetFieldRaw) -> Self {
+        match raw {
+            TargetFieldRaw::Short(strategy) => TargetFieldDef {
+                strategy,
+                expression: None,
+                references: None,
+                default: None,
+                default_expression: None,
+                group: None,
+                link_group: None,
+                description: None,
+                field_type: None,
+            },
+            TargetFieldRaw::Full(full) => TargetFieldDef {
+                strategy: full.strategy,
+                expression: full.expression,
+                references: full.references,
+                default: full.default,
+                default_expression: full.default_expression,
+                group: full.group,
+                link_group: full.link_group,
+                description: full.description,
+                field_type: full.field_type,
+            },
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TargetFieldDef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        TargetFieldRaw::deserialize(deserializer).map(TargetFieldDef::from)
+    }
 }
 
 impl TargetFieldDef {
@@ -387,6 +446,14 @@ impl Mapping {
     /// The effective array path (from `array` or `array_path`).
     pub fn effective_array(&self) -> Option<&str> {
         self.array.as_deref().or(self.array_path.as_deref())
+    }
+
+    /// Returns the target field name of the `scalar: true` field, if any.
+    pub fn scalar_field(&self) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|fm| fm.scalar)
+            .and_then(|fm| fm.target.as_deref())
     }
 
     /// Effective passthrough columns — explicit passthrough plus columns
@@ -817,6 +884,13 @@ pub struct FieldMapping {
     /// are not flagged as changes.
     #[serde(default)]
     pub normalize: Option<String>,
+    /// When true on an array child mapping field, the field's value is the
+    /// bare scalar array element itself (e.g. `["vip", "churned"]` → each
+    /// element extracted via `item.value #>> '{}'`).  The delta
+    /// reconstructs a scalar array (`jsonb_agg(to_jsonb(value))`) instead
+    /// of an object array (`jsonb_agg(jsonb_build_object(...))`).
+    #[serde(default)]
+    pub scalar: bool,
 }
 
 impl FieldMapping {
@@ -830,6 +904,7 @@ impl FieldMapping {
                 || self.order_next
                 || self.source.is_some()
                 || self.source_path.is_some()
+                || self.scalar
             {
                 Direction::Bidirectional
             } else {

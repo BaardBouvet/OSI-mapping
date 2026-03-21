@@ -154,6 +154,15 @@ pub fn render_reverse_view(
                     }
                     continue;
                 }
+                // Scalar array element: value extracted directly from the
+                // JSONB array element in the forward view; reverse it
+                // using the target name.
+                if fm.scalar {
+                    if let Some(ref tgt) = fm.target {
+                        select_exprs.push(format!("r.{}", qi(tgt)));
+                    }
+                    continue;
+                }
                 if let Some(ref rev_expr) = fm.reverse_expression {
                     select_exprs.push(format!("{rev_expr} AS _rev_computed"));
                 }
