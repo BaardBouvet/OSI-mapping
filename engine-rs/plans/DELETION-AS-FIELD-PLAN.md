@@ -214,12 +214,22 @@ mappings:
     source: dev_tracker
     target: customer
     written_state: true
-    derive_tombstones: is_deleted      # ← field to synthesize
+    derive_tombstones: is_deleted      # ← field to synthesize (value: TRUE)
     fields:
       - source: email
         target: email
       - source: name
         target: name
+
+  # Or with a custom value (string shorthand defaults to TRUE):
+  - name: dev_tracker_customers
+    source: dev_tracker
+    target: customer
+    written_state: true
+    derive_tombstones:
+      target: deleted_by
+      expression: "'dev_tracker'"      # ← custom literal value
+    fields: [...]
 
   # ERP opts in to deletion propagation
   - name: erp_customers
@@ -234,10 +244,21 @@ mappings:
 
 When the engine detects that a dev_tracker entity disappeared (was in
 `cluster_members` or `_written` but is no longer in the forward view),
-it synthesizes `is_deleted = true` for that source's contribution to
-the target field. Resolution combines it via `bool_or` (or whatever
-strategy `is_deleted` uses). Each consumer's `reverse_filter` then
-determines what to do.
+it synthesizes the value into the named target field. For the string
+shorthand (`derive_tombstones: is_deleted`), the value is `TRUE`. For
+the object form, the `expression` is used.
+
+Note: the `_written` JSONB does contain the entity's previous field
+values, so the expression *could* technically reference them via
+`_ws._written->>'field'`. However this is intentionally not exposed —
+the written schema uses target field names (not source), depends on
+prior resolution, and is NULL on first sync. Literal values (`TRUE`,
+`'erp'`) cover the real use cases cleanly. Users needing previous-state
+access can use a regular expression field mapping against the written
+state table directly.
+
+Resolution combines it via the target field's strategy. Each consumer's
+`reverse_filter` then determines what to do.
 
 ### Element-level: `derive_element_tombstones`
 
@@ -275,10 +296,10 @@ mappings:
     fields: [...]
 ```
 
-### Tombstone config: `target` property
+### Tombstone config: `target` + `expression`
 
 The existing `tombstone` config currently detects-and-excludes. To fit
-the new model, it would gain a `target` property:
+the new model, it gains `target` and optionally `expression`:
 
 ```yaml
 # Current: detect and exclude (backwards compatible)
@@ -286,16 +307,51 @@ tombstone:
   field: cancelled_at
   undelete_value: null
 
-# New: detect and produce a target field
+# New: detect and produce a boolean target field (default expression: TRUE)
 tombstone:
   field: cancelled_at
-  target: is_removed        # ← maps detection into a target field
+  target: is_removed
+
+# New: detect and produce a custom value
+tombstone:
+  field: cancelled_at
+  target: deleted_by
+  expression: "'pm_tool'"
+
+# New: propagate the original timestamp
+tombstone:
+  field: cancelled_at
+  target: deleted_at_resolved
+  expression: "cancelled_at"
 ```
 
-When `target` is set, the tombstone detection expression feeds into the
-target field as a boolean value rather than producing an exclusion NULL.
-This makes `tombstone` composable with resolution — the detection becomes
-data, not a side effect.
+When `target` is set, the tombstone detection injects a value into the
+named target field instead of producing an exclusion NULL. The injected
+value is `expression` if provided, otherwise `TRUE`. All non-identity
+fields are auto-nullified (see above).
+
+This makes `tombstone` composable with any resolution strategy:
+
+| Target field         | Strategy        | Expression       | Semantics                         |
+|----------------------|-----------------|------------------|-----------------------------------|
+| `is_deleted`         | `bool_or`       | (default: TRUE)  | Deleted if any source says so     |
+| `deleted_by`         | `collect`       | `'erp'`          | Which systems flagged deletion    |
+| `deleted_at`         | `last_modified` | `cancelled_at`   | Most recent deletion timestamp    |
+| `deletion_source`    | `coalesce`      | `'pm_tool'`      | Highest-priority deleter wins     |
+
+Generated SQL:
+
+```sql
+-- Default (no expression)
+CASE WHEN cancelled_at IS NOT NULL THEN TRUE ELSE NULL END AS is_removed
+
+-- With expression
+CASE WHEN cancelled_at IS NOT NULL THEN 'pm_tool' ELSE NULL END AS deleted_by
+```
+
+The detection becomes data, not a side effect. The `expression` is
+evaluated in the same SQL context as the forward view, so it can
+reference any source column.
 
 If `SOFT-DELETE-REFACTOR-PLAN` proceeds, this would be:
 
@@ -303,7 +359,119 @@ If `SOFT-DELETE-REFACTOR-PLAN` proceeds, this would be:
 soft_delete:
   field: cancelled_at
   target: is_removed
+  expression: "'pm_tool'"    # optional
 ```
+
+### Reverse direction: delete action, not field write-back
+
+The forward direction maps source markers into a resolved target field.
+The reverse direction is simpler than you'd expect: **it just emits a
+delete action.**
+
+The engine doesn't need to know how each source physically represents
+deletion. When `reverse_filter: "is_deleted IS NOT TRUE"` evaluates to
+false, the delta emits `action = 'delete'`. The ETL connector for each
+source then handles the physical representation:
+
+- Connector for a system with `deleted_at`: writes `deleted_at = NOW()`
+- Connector for a system with `is_active`: writes `is_active = FALSE`
+- Connector for a system with hard-delete: issues a DELETE
+- Connector for a system with an API: calls the archive/delete endpoint
+
+This is the anti-corruption layer at the ETL connector level — not in
+the SQL views. The engine's responsibility ends at `action = 'delete'`.
+
+On the next sync cycle, the source's input reflects the deletion however
+that source represents it (soft-delete marker, missing row, etc.), and
+the `soft_delete` config on the forward side detects it normally.
+
+```yaml
+targets:
+  customer:
+    fields:
+      email: { strategy: identity }
+      is_deleted: { strategy: bool_or }
+
+mappings:
+  # CRM: soft-deletes via deleted_at
+  - name: crm_customers
+    source: crm
+    target: customer
+    reverse_filter: "is_deleted IS NOT TRUE"
+    soft_delete:
+      field: deleted_at
+      target: is_deleted
+    fields:
+      - source: email
+        target: email
+
+  # ERP: soft-deletes via is_active flag
+  - name: erp_customers
+    source: erp
+    target: customer
+    reverse_filter: "is_deleted IS NOT TRUE"
+    soft_delete:
+      field: is_active
+      strategy: active_flag
+      target: is_deleted
+    fields:
+      - source: email
+        target: email
+```
+
+When CRM sets `deleted_at = '2026-03-15'`:
+1. Forward: `is_deleted = TRUE` (CRM's contribution)
+2. Resolution: `bool_or → TRUE`
+3. Reverse to CRM: `reverse_filter` → `action = 'delete'` → CRM connector
+   handles it (already deleted, noop or re-confirms)
+4. Reverse to ERP: `reverse_filter` → `action = 'delete'` → ERP connector
+   sets `is_active = FALSE` (or calls archive API, etc.)
+5. Next sync: ERP's `is_active = FALSE` → `soft_delete` detects it →
+   `is_deleted = TRUE` from ERP too → stable
+
+This eliminates:
+- `reverse_expression` on `soft_delete` (not needed)
+- Auto-derived boolean write-back logic (not needed)
+- IVM/`NOW()` problem (nothing non-deterministic in the view)
+- Strategy-specific reverse logic (the engine doesn't care how sources
+  represent deletion physically)
+
+The `reverse_filter` + `action = 'delete'` pattern already exists and
+works today (see `propagated-delete` example). The only new piece is
+`soft_delete.target` on the forward side to feed the deletion signal
+into resolution.
+
+### Resurrect: the one reverse write-back
+
+Resurrect is the exception: when a deleted entity comes back (source
+row reappears or soft-delete marker is cleared by the source), the
+engine needs to clear the soft-delete marker so it doesn't immediately
+re-trigger deletion on the next sync.
+
+The `soft_delete` strategy fully determines the undelete value:
+
+| Strategy      | Undelete value |
+|---------------|----------------|
+| `timestamp`   | `NULL`         |
+| `flag`        | `FALSE`        |
+| `active_flag` | `TRUE`         |
+
+This is what the current `undelete_value` does, but derived
+automatically from the strategy — no user config needed.
+
+The flow for resurrect:
+
+1. CRM sets `deleted_at = '2026-03-15'` → `is_deleted = TRUE` → propagates
+2. Later, CRM clears `deleted_at` → `is_deleted = FALSE` from CRM
+3. Resolution: `bool_or → FALSE` (no source says deleted anymore)
+4. `reverse_filter` passes → entity re-included in delta
+5. Delta: `action = 'update'`, writes undelete value to soft-delete
+   column (`deleted_at = NULL` for CRM, `is_active = TRUE` for ERP)
+6. Stable — entity is alive everywhere again
+
+The resurrect write-back is deterministic (constant values, no `NOW()`)
+and already implemented via the current `undelete_value` mechanism. The
+`soft_delete` strategy just makes it implicit.
 
 ### Element filter: `element_filter`
 
