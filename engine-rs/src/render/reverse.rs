@@ -369,23 +369,59 @@ pub fn render_reverse_view(
         }
     }
     let qi_id_view = qi(&id_view);
-    let id_subquery = format!(
-        "(SELECT {cols} FROM {qi_id_view}) AS id",
-        cols = id_cols.join(", "),
-    );
+
+    // When the target uses element-set filtering (coalesce/last_modified),
+    // source rows whose entity was excluded need to appear so the delta can
+    // emit a 'delete'.  A FULL JOIN (instead of LEFT) brings in identity
+    // rows that have no matching resolved entity.
+    let has_element_filter = target.is_some_and(|t| {
+        matches!(
+            t.elements,
+            Some(
+                crate::model::ElementStrategy::Coalesce
+                    | crate::model::ElementStrategy::LastModified
+            )
+        )
+    });
+
+    // For FULL JOIN the _mapping filter must be inside the subquery (not the
+    // ON clause) so that only this mapping's rows can produce right-only rows.
+    let (id_subquery, join_kind, on_mapping_clause) = if has_element_filter {
+        (
+            format!(
+                "(SELECT {cols} FROM {qi_id_view} WHERE _mapping = '{mapping_name}') AS id",
+                cols = id_cols.join(", "),
+                mapping_name = mapping.name,
+            ),
+            "FULL JOIN",
+            String::new(),
+        )
+    } else {
+        (
+            format!(
+                "(SELECT {cols} FROM {qi_id_view}) AS id",
+                cols = id_cols.join(", "),
+            ),
+            "LEFT JOIN",
+            format!("\n    AND id._mapping = '{}'", mapping.name),
+        )
+    };
+
+    if has_element_filter {
+        select_exprs
+            .push("(r._entity_id IS NULL AND id._src_id IS NOT NULL) AS _element_excluded".into());
+    }
 
     let sql = format!(
         "-- Reverse: {name} ({target_name} → {source})\n\
          CREATE OR REPLACE VIEW {view_name} AS\n\
          SELECT\n  {columns}\n\
          FROM {resolved_view} AS r\n\
-         LEFT JOIN {id_subquery}\n  \
-           ON id._entity_id_resolved = r._entity_id\n  \
-           AND id._mapping = '{mapping_name}';\n",
+         {join_kind} {id_subquery}\n  \
+           ON id._entity_id_resolved = r._entity_id{on_mapping_clause};\n",
         name = mapping.name,
         source = mapping.source.dataset,
         columns = select_exprs.join(",\n  "),
-        mapping_name = mapping.name,
     );
 
     Ok(sql)

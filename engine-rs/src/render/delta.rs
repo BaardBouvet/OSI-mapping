@@ -204,6 +204,7 @@ fn action_case(
     mapping: &Mapping,
     pk_columns: &std::collections::HashSet<&str>,
     written_col: Option<&str>,
+    has_element_filter: bool,
 ) -> String {
     let src_id = "_src_id";
     // Delete conditions from reverse_required + reverse_filter.
@@ -243,6 +244,12 @@ fn action_case(
         .collect();
 
     let mut branches = Vec::new();
+
+    // Element-set filtering: source rows whose entity was excluded by
+    // elements: coalesce/last_modified need to produce 'delete'.
+    if has_element_filter {
+        branches.push("WHEN _element_excluded THEN 'delete'".to_string());
+    }
 
     if mapping.is_child() && !mapping.is_nested() {
         // Child mappings extract data from a shared source table.
@@ -412,7 +419,16 @@ pub fn render_delta_view(
             None
         };
         let rev_view = qi(&format!("_rev_{}", mapping.name));
-        let action_expr = action_case(mapping, &pk_columns, written_col);
+        let has_element_filter = targets.get(mapping.target.name()).is_some_and(|t| {
+            matches!(
+                t.elements,
+                Some(
+                    crate::model::ElementStrategy::Coalesce
+                        | crate::model::ElementStrategy::LastModified
+                )
+            )
+        });
+        let action_expr = action_case(mapping, &pk_columns, written_col, has_element_filter);
         let mut cols: Vec<String> = vec![format!("{action_expr} AS _action")];
         let mut out_exprs = delta_output_exprs(&out_cols, mappings);
         // Qualify _cluster_id to avoid ambiguity with LEFT JOINed tables.
@@ -880,7 +896,7 @@ fn render_delta_union_all(
                 None
             };
             let rev_view = qi(&format!("_rev_{}", m.name));
-            let case_expr = action_case(m, pk_columns, written_col);
+            let case_expr = action_case(m, pk_columns, written_col, false);
             let m_fields: std::collections::HashSet<&str> = m
                 .fields
                 .iter()

@@ -142,6 +142,20 @@ tests:
     expected:
       # Single source — deep nesting round-trips unchanged
       source: {}
+      flat_parents:
+        inserts:
+          - { name: "Parent A", parent_id: "P1" }
+      flat_children:
+        inserts:
+          - { child_id: "1", value: "Child 1" }
+          - { child_id: "2", value: "Child 2" }
+      flat_grandchildren:
+        inserts:
+          - { grandchild_id: "11", data: "GC 1.1" }
+          - { grandchild_id: "12", data: "GC 1.2" }
+          - { grandchild_id: "21", data: "GC 2.1" }
+          - { grandchild_id: "22", data: "GC 2.2" }
+          - { grandchild_id: "23", data: "GC 2.3" }
 
   - description: "Flat source overrides grandchild data via priority"
     input:
@@ -169,3 +183,9 @@ tests:
                 value: "Updated Child"
                 grandchildren:
                   - { grandchild_id: "11", data: "NEW" }
+      flat_children:
+        updates:
+          - { cid: "FC1", child_id: "1", parent_id: "FP1", value: "Updated Child" }
+      flat_grandchildren:
+        updates:
+          - { gid: "FG1", grandchild_id: "11", child_id: "FC1", data: "NEW" }

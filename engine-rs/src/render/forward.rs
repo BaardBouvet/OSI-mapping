@@ -274,7 +274,8 @@ pub fn render_forward_body(
     cols.push(match &mapping.last_modified {
         Some(ts) => {
             if let Some(field) = ts.field_name() {
-                format!("{} AS _last_modified", qi(field))
+                let col = resolve_nested_source(field, &parent_field_exprs, has_path);
+                format!("{col} AS _last_modified")
             } else if let Some(expr) = ts.expression() {
                 format!("({expr}) AS _last_modified")
             } else {

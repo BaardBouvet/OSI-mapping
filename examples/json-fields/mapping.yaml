@@ -82,6 +82,11 @@ tests:
       erp: []
     expected:
       crm: {}
+      erp:
+        inserts:
+          - email: "alice@example.com"
+            city: "Oslo"
+            tier: "gold"
 
   - description: "ERP overrides tier and city via priority — CRM gets updated"
     input:

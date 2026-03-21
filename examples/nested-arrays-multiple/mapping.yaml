@@ -219,6 +219,15 @@ tests:
     expected:
       # Single source — all nested branches round-trip unchanged
       source: {}
+      hr_departments:
+        inserts:
+          - { budget: 500000, dept_id: "d1", dept_name: "Engineering", org_id: "org1" }
+          - { budget: 300000, dept_id: "d2", dept_name: "Sales", org_id: "org1" }
+      hr_employees:
+        inserts:
+          - { emp_id: "e1", emp_name: "Alice", salary: 90000 }
+          - { emp_id: "e2", emp_name: "Bob", salary: 85000 }
+          - { emp_id: "e3", emp_name: "Carol", salary: 75000 }
 
   - description: "HR system corrects salary via priority — nested source gets updated"
     input:
@@ -250,3 +259,6 @@ tests:
                 employees:
                   - { emp_id: "e1", emp_name: "Alice", salary: 120000 }
             projects: null
+      hr_employees:
+        updates:
+          - { eid: "HE1", emp_id: "e1", dept_id: "HD1", emp_name: "Alice", salary: 120000 }

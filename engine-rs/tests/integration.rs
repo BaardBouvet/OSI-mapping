@@ -528,10 +528,13 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                     })
                     .unwrap_or_default();
                 let expects_base = expected_inserts.iter().any(|obj| obj.contains_key("_base"));
+                let any_expected_has_cluster = expected_inserts
+                    .iter()
+                    .any(|obj| obj.contains_key("_cluster_id"));
                 let actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> = insert_rows
                     .iter()
                     .map(|row| {
-                        let mut m = delta_row_to_map(row, expects_base, true);
+                        let mut m = delta_row_to_map(row, expects_base, any_expected_has_cluster);
                         for pk in &pk_cols {
                             m.remove(pk);
                         }
@@ -609,6 +612,20 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                     "{dataset}: {count} inserts match ✓",
                     count = actual_inserts.len()
                 );
+            } else {
+                let insert_rows = client
+                    .query(
+                        &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'insert'"),
+                        &[],
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("query {delta_view} inserts: {e}"));
+                assert_eq!(
+                    insert_rows.len(),
+                    0,
+                    "{dataset}: expected 0 inserts but got {}",
+                    insert_rows.len()
+                );
             }
 
             // ── Delete verification ────────────────────────────────
@@ -676,6 +693,20 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                 eprintln!(
                     "{dataset}: {count} deletes match ✓",
                     count = actual_deletes.len()
+                );
+            } else {
+                let delete_rows = client
+                    .query(
+                        &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'delete'"),
+                        &[],
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("query {delta_view} deletes: {e}"));
+                assert_eq!(
+                    delete_rows.len(),
+                    0,
+                    "{dataset}: expected 0 deletes but got {}",
+                    delete_rows.len()
                 );
             }
 
@@ -968,6 +999,20 @@ async fn verify_test_expected(
                     }
                 }
             }
+        } else {
+            let insert_rows = client
+                .query(
+                    &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'insert'"),
+                    &[],
+                )
+                .await
+                .map_err(|e| format!("{dataset} query inserts: {e}"))?;
+            if !insert_rows.is_empty() {
+                return Err(format!(
+                    "{dataset}: expected 0 inserts but got {}",
+                    insert_rows.len()
+                ));
+            }
         }
 
         // ── Verify deletes ─────────────────────────
@@ -991,6 +1036,20 @@ async fn verify_test_expected(
                     "{dataset}: delete count mismatch: got {} expected {}",
                     delete_rows.len(),
                     expected_deletes.len()
+                ));
+            }
+        } else {
+            let delete_rows = client
+                .query(
+                    &format!("SELECT row_to_json(d.*) AS _json FROM {delta_view} d WHERE d._action = 'delete'"),
+                    &[],
+                )
+                .await
+                .map_err(|e| format!("{dataset} query deletes: {e}"))?;
+            if !delete_rows.is_empty() {
+                return Err(format!(
+                    "{dataset}: expected 0 deletes but got {}",
+                    delete_rows.len()
                 ));
             }
         }
@@ -1094,6 +1153,54 @@ async fn verify_test_expected(
                 }
             }
         }
+    }
+
+    // ── Verify unlisted sources are empty ──────────
+    // Any source with a delta view that wasn't listed in `test.expected`
+    // must produce only noop / NULL rows (no inserts, updates, or deletes).
+    let listed: std::collections::HashSet<&str> =
+        test.expected.keys().map(|k| k.as_str()).collect();
+    let mut checked_datasets: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut unlisted_errors: Vec<String> = Vec::new();
+    for m in &doc.mappings {
+        if !m.needs_sync() || m.source.path.is_some() {
+            continue;
+        }
+        let ds = &m.source.dataset;
+        if listed.contains(ds.as_str()) || !checked_datasets.insert(ds.clone()) {
+            continue;
+        }
+        let delta_view = format!("_delta_{ds}");
+        let action_rows = client
+            .query(
+                &format!(
+                    "SELECT d._action::text, count(*) AS cnt \
+                     FROM {delta_view} d \
+                     WHERE d._action IS NOT NULL AND d._action <> 'noop' \
+                     GROUP BY d._action"
+                ),
+                &[],
+            )
+            .await
+            .map_err(|e| format!("{ds} (unlisted) query actions: {e}"))?;
+        if !action_rows.is_empty() {
+            let summary: Vec<String> = action_rows
+                .iter()
+                .map(|r| {
+                    let action: String = r.get(0);
+                    let cnt: i64 = r.get(1);
+                    format!("{cnt} {action}(s)")
+                })
+                .collect();
+            unlisted_errors.push(format!(
+                "{ds}: not in expected but has non-noop rows: {}",
+                summary.join(", ")
+            ));
+        }
+    }
+
+    if !unlisted_errors.is_empty() {
+        return Err(unlisted_errors.join("\n"));
     }
 
     Ok(())

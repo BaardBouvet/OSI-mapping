@@ -117,8 +117,15 @@ tests:
       crm:
         updates:
           - { id: "C1", email: "bob@example.com", name: "Bob", phone: "555-3000" }
+      contact_center:
+        updates:
+          - cid: "CC2"
+            email: "bob@example.com"
+            phones:
+              - { number: "555-3000" }
+              - { number: null }
 
-  - description: "No overlap — different emails, both noop"
+  - description: "No overlap — different emails, CRM gets insert for CC-only contact"
     input:
       crm:
         - { id: "C1", email: "carol@example.com", name: "Carol", phone: "555-4000" }
@@ -128,4 +135,10 @@ tests:
           phones:
             - { number: "555-9000" }
     expected:
-      crm: {}
+      crm:
+        inserts:
+          - email: "dave@other.com"
+            phone: "555-9000"
+      contact_center:
+        inserts:
+          - email: "carol@example.com"

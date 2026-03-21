@@ -72,3 +72,6 @@ tests:
       # full_name resolves from CRM ("Alice Jones"), first/last from HR ("Alice"/"Smith").
       # default_expression only fills missing fields — CRM's full_name is not missing.
       hr: {}
+      crm:
+        updates:
+          - { contact_id: "C1", contact_email: "alice@example.com", contact_name: "Alice Smith" }

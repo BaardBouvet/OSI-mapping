@@ -186,6 +186,21 @@ impl Source {
     }
 }
 
+/// How element set membership is resolved for child targets.
+///
+/// Controls which source's elements survive when multiple sources
+/// contribute child entities to the same parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ElementStrategy {
+    /// Union of all sources' elements (default behavior).
+    Collect,
+    /// Highest-priority mapping's set wins per parent.
+    Coalesce,
+    /// Most recently active mapping's set wins per parent.
+    LastModified,
+}
+
 /// A target entity definition.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -193,6 +208,9 @@ pub struct Target {
     #[serde(default)]
     pub description: Option<String>,
     pub fields: IndexMap<String, TargetFieldDef>,
+    /// Element set membership strategy for child targets.
+    #[serde(default)]
+    pub elements: Option<ElementStrategy>,
 }
 
 /// Target field definition.

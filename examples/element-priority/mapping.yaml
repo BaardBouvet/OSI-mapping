@@ -1,34 +1,35 @@
 version: "1.0"
 description: >
-  One-to-many from nested (shop) and normalized (warehouse) sources mapping to
-  the same target entities. Shows source.path for nested array extraction with
-  parent_fields to import ancestor data.
+  Two sources contribute line items to the same order.  The child target
+  declares elements: coalesce so the highest-priority source's entire
+  set of elements wins per parent — elements from losing sources are
+  excluded, not merged.
 
 sources:
   shop:
     primary_key: order_id
+  warehouse_orders:
+    primary_key: order_number
   warehouse_lines:
     primary_key: line_id
-  warehouse_orders:
-    primary_key: id
 
 targets:
   purchase_order:
     fields:
       order_ref:
         strategy: identity
-      total:
-        strategy: coalesce
-        type: numeric
 
   order_line:
+    elements: coalesce
     fields:
       order_ref:
-        strategy: coalesce
+        strategy: identity
         references: purchase_order
+        link_group: line_id
       line_number:
         strategy: identity
         type: numeric
+        link_group: line_id
       product:
         strategy: coalesce
       quantity:
@@ -36,23 +37,20 @@ targets:
         type: numeric
 
 mappings:
-  # Shop: parent order
   - name: shop_orders
     source: shop
     target: purchase_order
     fields:
       - source: order_id
         target: order_ref
-      - source: total
-        target: total
 
-  # Shop: nested line items extracted from JSONB array
   - name: shop_lines
     parent: shop_orders
     array: lines
     parent_fields:
       parent_order_id: order_id
     target: order_line
+    priority: 2
     fields:
       - source: parent_order_id
         target: order_ref
@@ -64,21 +62,17 @@ mappings:
       - source: qty
         target: quantity
 
-  # Warehouse: normalized order table
   - name: warehouse_orders
     source: warehouse_orders
     target: purchase_order
     fields:
       - source: order_number
         target: order_ref
-      - source: total_amount
-        target: total
-        priority: 1
 
-  # Warehouse: normalized line items table
   - name: warehouse_lines
     source: warehouse_lines
     target: order_line
+    priority: 1
     fields:
       - source: order_number
         target: order_ref
@@ -91,44 +85,29 @@ mappings:
         target: quantity
 
 tests:
-  - description: "Nested shop lines round-trip — single source, no merge"
+  - description: >
+      The shop has lines [1: Widget, 2: Gadget].  The warehouse has
+      lines [1: Industrial Widget, 3: Sprocket].  With elements: coalesce
+      the warehouse (priority 1) wins the entire element set — only
+      warehouse lines survive.  The shop's delta receives only the
+      warehouse lines; the shop's line 2 (Gadget) is excluded.
     input:
       shop:
         - order_id: "ORD-001"
-          total: 150.00
           lines:
             - { line_num: 1, item: "Widget", qty: 2 }
             - { line_num: 2, item: "Gadget", qty: 1 }
-      warehouse_orders: []
-      warehouse_lines: []
-    expected:
-      shop: {}
       warehouse_orders:
-        inserts:
-          - { order_number: "ORD-001", total_amount: 150 }
+        - { order_number: "ORD-001" }
       warehouse_lines:
-        inserts:
-          - { line_number: 1, product_name: "Widget", qty: 2 }
-          - { line_number: 2, product_name: "Gadget", qty: 1 }
-
-  - description: "Both sources share an order — warehouse total wins via priority"
-    input:
-      shop:
-        - order_id: "ORD-001"
-          total: 100.00
-          lines:
-            - { line_num: 1, item: "Widget", qty: 2 }
-      warehouse_orders:
-        - { id: "W1", order_number: "ORD-001", total_amount: 999.00 }
-      warehouse_lines: []
+        - { line_id: "WL1", order_number: "ORD-001", line_number: 1, product_name: "Industrial Widget", qty: 3 }
+        - { line_id: "WL3", order_number: "ORD-001", line_number: 3, product_name: "Sprocket", qty: 10 }
     expected:
       shop:
         updates:
           - order_id: "ORD-001"
-            total: 999
             lines:
-              - { line_num: 1, item: "Widget", qty: 2 }
-      warehouse_lines:
-        inserts:
-          - { order_number: "W1", line_number: 1, product_name: "Widget", qty: 2 }
-
+              - { line_num: 1, item: "Industrial Widget", qty: 3 }
+              - { line_num: 3, item: "Sprocket", qty: 10 }
+      warehouse_orders: {}
+      warehouse_lines: {}

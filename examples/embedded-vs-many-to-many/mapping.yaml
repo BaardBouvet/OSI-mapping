@@ -117,3 +117,6 @@ tests:
       crm_customers:
         updates:
           - { id: "C1", domain: "acme.com", contact_name: "Charlie Johnson", contact_email: "charlie@acme.com" }
+      erp_customer_contacts:
+        inserts:
+          - { customer_id: "100", relation_type: "primary" }

@@ -92,6 +92,11 @@
       "additionalProperties": false,
       "properties": {
         "description": { "type": "string" },
+        "elements": {
+          "type": "string",
+          "enum": ["collect", "coalesce", "last_modified"],
+          "description": "Element-set resolution strategy for child targets.  collect (default): union of all sources' elements.  coalesce: the highest-priority source's entire element set wins per parent.  last_modified: the most recently modified source's entire element set wins per parent."
+        },
         "fields": {
           "type": "object",
           "description": "Target field definitions with resolution strategies. Keys are field names.",

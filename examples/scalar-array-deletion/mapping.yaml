@@ -116,3 +116,11 @@ tests:
             tags:
               - "newsletter"
               - "vip"
+      crm_a:
+        updates:
+          - id: "A1"
+            email: "alice@example.com"
+            name: "Alice"
+            tags:
+              - "newsletter"
+              - "vip"

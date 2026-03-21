@@ -65,3 +65,6 @@ tests:
       crm_companies:
         updates:
           - { company_id: "100", domain: "acme.com", name: "ACME Corporation" }
+      crm_contacts:
+        updates:
+          - { contact_id: "C1", company_id: "200" }

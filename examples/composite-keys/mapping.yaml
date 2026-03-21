@@ -133,3 +133,10 @@ tests:
             product_name: "Widget B"
             quantity: 3
             price: 15.75
+      crm_orders:
+        updates:
+          - order_number: "CRM-500"
+            external_ref: "PO-2024-001"
+            order_date: "2024-01-15"
+            customer_name: "Acme Corp"
+            status: "shipped"

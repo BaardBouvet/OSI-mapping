@@ -96,3 +96,6 @@ tests:
       crm:
         deletes:
           - { id: "C2" }
+      registry:
+        inserts:
+          - { org_number: "NO-789", name: "Valid AS", country_code: "NO" }

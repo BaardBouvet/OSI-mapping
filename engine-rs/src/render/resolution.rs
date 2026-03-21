@@ -304,6 +304,67 @@ pub fn render_resolution_view(
     }
 
     // ── Assemble SQL ────────────────────────────────────────────────
+
+    // ── Element set membership filtering ────────────────────────────
+    // When the target declares `elements: coalesce` or `elements: last_modified`,
+    // only elements from the winning mapping (per parent) survive.
+    let element_where = if let Some(ref elem_strategy) = target.elements {
+        // Find the parent reference field: an identity field with `references:`.
+        let parent_ref_field = target
+            .fields
+            .iter()
+            .find(|(_, fdef)| fdef.strategy() == Strategy::Identity && fdef.references().is_some())
+            .map(|(fname, _)| fname.as_str());
+
+        if let Some(parent_ref) = parent_ref_field {
+            let q_parent_ref = qi(parent_ref);
+            let order_expr = match elem_strategy {
+                crate::model::ElementStrategy::Coalesce => {
+                    "sub._priority ASC NULLS LAST".to_string()
+                }
+                crate::model::ElementStrategy::LastModified => {
+                    "sub.last_touch DESC NULLS LAST".to_string()
+                }
+                crate::model::ElementStrategy::Collect => String::new(),
+            };
+
+            if !order_expr.is_empty() {
+                let agg_col = match elem_strategy {
+                    crate::model::ElementStrategy::LastModified => {
+                        "MAX(_last_modified) AS last_touch, MIN(_priority) AS _priority".to_string()
+                    }
+                    _ => "MIN(_priority) AS _priority, NULL::text AS last_touch".to_string(),
+                };
+
+                group_ctes.push(format!(
+                    "\"_element_winner\" AS (\n    \
+                     SELECT DISTINCT ON (sub.{q_parent_ref})\n      \
+                     sub.{q_parent_ref}, sub._mapping\n    \
+                     FROM (\n      \
+                     SELECT {q_parent_ref}, _mapping, {agg_col}\n      \
+                     FROM {src_view}\n      \
+                     WHERE {q_parent_ref} IS NOT NULL\n      \
+                     GROUP BY {q_parent_ref}, _mapping\n    \
+                     ) sub\n    \
+                     ORDER BY sub.{q_parent_ref}, {order_expr}\n  )"
+                ));
+
+                Some(format!(
+                    "EXISTS (\n    \
+                     SELECT 1 FROM \"_element_winner\" _ew\n    \
+                     WHERE _ew.{q_parent_ref} = {src_view}.{q_parent_ref}\n      \
+                     AND _ew._mapping = {src_view}._mapping\n  )"
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Build GROUP BY: _entity_id_resolved + all grouped field references.
     let mut group_by_extra: Vec<String> = Vec::new();
     for (group_name, fields) in &groups {
@@ -324,7 +385,12 @@ pub fn render_resolution_view(
         })
         .collect();
 
-    let needs_cte = has_default_expr || !group_ctes.is_empty();
+    let needs_cte = has_default_expr || !group_ctes.is_empty() || element_where.is_some();
+
+    let where_clause = element_where
+        .as_ref()
+        .map(|w| format!("\n  WHERE {w}"))
+        .unwrap_or_default();
 
     if needs_cte {
         let mut all_ctes = group_ctes;
@@ -350,7 +416,7 @@ pub fn render_resolution_view(
         if has_default_expr {
             // CTE approach: aggregate first, then apply default_expressions in outer SELECT.
             all_ctes.push(format!(
-                "_agg AS (\n  SELECT\n    {agg_columns}\n  FROM {from_clause}\n  {group_by}\n)",
+                "_agg AS (\n  SELECT\n    {agg_columns}\n  FROM {from_clause}{where_clause}\n  {group_by}\n)",
                 agg_columns = agg_exprs.join(",\n    "),
                 group_by = group_by_clause,
             ));
@@ -374,7 +440,7 @@ pub fn render_resolution_view(
         } else {
             // Groups but no default_expression: use WITH for group CTEs only.
             sql.push_str(&format!(
-                "WITH\n  {ctes}\nSELECT\n  {columns}\nFROM {from_clause}\n{group_by};\n",
+                "WITH\n  {ctes}\nSELECT\n  {columns}\nFROM {from_clause}{where_clause}\n{group_by};\n",
                 ctes = all_ctes.join(",\n  "),
                 columns = agg_exprs.join(",\n  "),
                 group_by = group_by_clause,

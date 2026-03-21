@@ -206,6 +206,9 @@ tests:
             owner: "Alice"
             tasks:
               - { name: "Design mockups", status: "done", hours: 10 }
+        inserts:
+          - project_name: "Mobile App"
+            owner: "Dave"
       enterprise_pm:
         updates:
           - id: "E1"

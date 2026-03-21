@@ -74,6 +74,7 @@ mappings:
     fields:
       - source: address_id
         target: address_id
+        reverse_required: true
       - source: street
         target: street
         last_modified: modified_at

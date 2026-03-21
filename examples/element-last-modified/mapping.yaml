@@ -1,0 +1,156 @@
+version: "1.0"
+description: >
+  Two sources contribute line items to the same order.  The child target
+  declares elements: last_modified so the most recently active source's
+  entire set of elements wins per parent — elements from the stale
+  source are excluded, not merged.
+
+sources:
+  shop_orders:
+    primary_key: order_id
+  shop_lines:
+    primary_key: line_id
+  warehouse_orders:
+    primary_key: order_number
+  warehouse_lines:
+    primary_key: line_id
+
+targets:
+  purchase_order:
+    fields:
+      order_ref:
+        strategy: identity
+
+  order_line:
+    elements: last_modified
+    fields:
+      order_ref:
+        strategy: identity
+        references: purchase_order
+        link_group: line_id
+      line_number:
+        strategy: identity
+        type: numeric
+        link_group: line_id
+      product:
+        strategy: coalesce
+      quantity:
+        strategy: coalesce
+        type: numeric
+
+mappings:
+  - name: shop_orders
+    source: shop_orders
+    target: purchase_order
+    fields:
+      - source: order_id
+        target: order_ref
+
+  - name: shop_lines
+    source: shop_lines
+    target: order_line
+    last_modified: updated_at
+    fields:
+      - source: order_id
+        target: order_ref
+        references: shop_orders
+      - source: line_number
+        target: line_number
+      - source: product
+        target: product
+      - source: qty
+        target: quantity
+
+  - name: warehouse_orders
+    source: warehouse_orders
+    target: purchase_order
+    fields:
+      - source: order_number
+        target: order_ref
+
+  - name: warehouse_lines
+    source: warehouse_lines
+    target: order_line
+    last_modified: modified_at
+    fields:
+      - source: order_number
+        target: order_ref
+        references: warehouse_orders
+      - source: line_number
+        target: line_number
+      - source: product_name
+        target: product
+      - source: qty
+        target: quantity
+
+tests:
+  - description: >
+      The shop has lines [1: Widget, 2: Gadget] (updated March 15).
+      The warehouse has lines [1: Industrial Widget, 3: Sprocket]
+      (modified March 20).  With elements: last_modified the warehouse
+      wins because its MAX(_last_modified) is newer — only warehouse
+      lines survive.  The shop gets the warehouse set; shop-only
+      line 2 (Gadget) is excluded.
+    input:
+      shop_orders:
+        - { order_id: "ORD-001" }
+      shop_lines:
+        - { line_id: "SL1", order_id: "ORD-001", line_number: 1, product: "Widget", qty: 2, updated_at: "2026-03-15T10:00:00Z" }
+        - { line_id: "SL2", order_id: "ORD-001", line_number: 2, product: "Gadget", qty: 1, updated_at: "2026-03-15T10:00:00Z" }
+      warehouse_orders:
+        - { order_number: "ORD-001" }
+      warehouse_lines:
+        - { line_id: "WL1", order_number: "ORD-001", line_number: 1, product_name: "Industrial Widget", qty: 3, modified_at: "2026-03-20T14:00:00Z" }
+        - { line_id: "WL3", order_number: "ORD-001", line_number: 3, product_name: "Sprocket", qty: 10, modified_at: "2026-03-20T14:00:00Z" }
+    expected:
+      shop_orders: {}
+      shop_lines:
+        updates:
+          - line_id: "SL1"
+            order_id: "ORD-001"
+            line_number: 1
+            product: "Industrial Widget"
+            qty: 3
+        inserts:
+          - order_id: "ORD-001"
+            line_number: 3
+            product: "Sprocket"
+            qty: 10
+        deletes:
+          - line_id: "SL2"
+      warehouse_orders: {}
+      warehouse_lines: {}
+
+  - description: >
+      Same sources but the shop modified more recently (March 25 vs
+      March 20).  Shop wins — only shop lines survive.  The warehouse
+      gets the shop's set; warehouse-only line 3 is excluded.
+    input:
+      shop_orders:
+        - { order_id: "ORD-001" }
+      shop_lines:
+        - { line_id: "SL1", order_id: "ORD-001", line_number: 1, product: "Widget", qty: 2, updated_at: "2026-03-25T10:00:00Z" }
+        - { line_id: "SL2", order_id: "ORD-001", line_number: 2, product: "Gadget", qty: 1, updated_at: "2026-03-25T10:00:00Z" }
+      warehouse_orders:
+        - { order_number: "ORD-001" }
+      warehouse_lines:
+        - { line_id: "WL1", order_number: "ORD-001", line_number: 1, product_name: "Industrial Widget", qty: 3, modified_at: "2026-03-20T14:00:00Z" }
+        - { line_id: "WL3", order_number: "ORD-001", line_number: 3, product_name: "Sprocket", qty: 10, modified_at: "2026-03-20T14:00:00Z" }
+    expected:
+      shop_orders: {}
+      shop_lines: {}
+      warehouse_orders: {}
+      warehouse_lines:
+        updates:
+          - line_id: "WL1"
+            order_number: "ORD-001"
+            line_number: 1
+            product_name: "Widget"
+            qty: 2
+        inserts:
+          - order_number: "ORD-001"
+            line_number: 2
+            product_name: "Gadget"
+            qty: 1
+        deletes:
+          - line_id: "WL3"

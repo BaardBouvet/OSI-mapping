@@ -118,9 +118,32 @@ tests:
         - { system_c_id: 1001, system_a_id: 1, system_b_id: null }
         - { system_c_id: 1002, system_a_id: null, system_b_id: 103 }
     expected:
+      system_a:
+        inserts:
+          - { name: "Charlie Brown" }
+      system_a_linkage:
+        updates:
+          - { system_a_id: 1, system_b_id: 101, system_c_id: 1001 }
+        inserts:
+          - { system_b_id: 103, system_c_id: 1002 }
       system_b:
         updates:
           - { id: 101, full_name: "Alice Johnson" }
+        inserts:
+          - { full_name: "Bob Smith" }
+      system_b_linkage:
+        updates:
+          - { system_b_id: 101, system_a_id: 1, system_c_id: 1001 }
+          - { system_b_id: 103, system_a_id: null, system_c_id: 1002 }
+        inserts:
+          - { system_a_id: 2 }
       system_c:
         updates:
           - { id: 1002, full_name: "Charlie Brown" }
+        inserts:
+          - { full_name: "Bob Smith" }
+      system_c_linkage:
+        updates:
+          - { system_c_id: 1001, system_a_id: 1, system_b_id: 101 }
+        inserts:
+          - { system_a_id: 2 }

@@ -73,6 +73,8 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`derive-noop`](derive-noop/README.md) | Target-centric noop detection via ETL written state |
 | [`passthrough`](passthrough/README.md) | Carrying unmapped source columns through to delta output via `passthrough` |
 | [`element-hard-delete`](element-hard-delete/README.md) | Deletion-wins: one source's element removal wins over other sources via `written_state` |
+| [`element-last-modified`](element-last-modified/README.md) | Most recently modified source's element values win via `last_modified` |
+| [`element-priority`](element-priority/README.md) | One source's array elements always win via mapping-level `priority` |
 | [`element-soft-delete`](element-soft-delete/README.md) | Element-level soft-delete: promote scalar value lists to objects with `removed_at` lifecycle metadata |
 
 Each example directory contains a local `README.md` and a `mapping.yaml` with the full definition including test cases.

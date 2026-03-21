@@ -143,3 +143,14 @@ tests:
                 duration: "5"
               - instruction: "Bake"
                 duration: "30"
+      blog_cms:
+        updates:
+          - id: "Chocolate Cake"
+            cuisine: "French"
+            steps:
+              - instruction: "Preheat"
+                duration: "10"
+              - instruction: "Mix"
+                duration: "5"
+              - instruction: "Bake"
+                duration: "30"
