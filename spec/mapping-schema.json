@@ -256,10 +256,10 @@
         "resurrect": {
           "type": "boolean",
           "default": false,
-          "description": "Whether to resurrect entities that disappeared from this source. When false (default) and a persistence table is available (cluster_members or written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (tombstone)."
+          "description": "Whether to resurrect entities that disappeared from this source. When false (default) and a persistence table is available (cluster_members or written_state), disappeared entities are excluded from the delta. When true, allows re-insertion for hard deletes and enables undelete for soft deletes (soft_delete)."
         },
-        "tombstone": {
-          "$ref": "#/$defs/Tombstone"
+        "soft_delete": {
+          "$ref": "#/$defs/SoftDelete"
         }
       },
       "anyOf": [
@@ -424,36 +424,30 @@
 
 
 
-    "Tombstone": {
-      "type": "object",
-      "description": "Soft-delete detection configuration. Declares a source column that signals deletion and how to detect/reverse it. Exactly one of undelete_value or undelete_expression is required.",
-      "required": ["field"],
-      "additionalProperties": false,
-      "properties": {
-        "field": {
-          "type": "string",
-          "description": "Source column carrying the deletion signal. Auto-included as passthrough."
-        },
-        "undelete_value": {
-          "description": "The value this field holds when the entity is NOT deleted. Used to derive detect and undelete projection. null = IS NOT NULL means deleted; false for boolean flags; a string for enum values. Mutually exclusive with undelete_expression."
-        },
-        "undelete_expression": {
-          "type": "string",
-          "description": "Raw SQL expression to project for the tombstone field when undeleting (resurrect: true). Requires detect. Mutually exclusive with undelete_value."
-        },
-        "detect": {
-          "$ref": "#/$defs/Expression",
-          "description": "SQL boolean expression that evaluates to true when the entity is soft-deleted. When omitted, derived from field + undelete_value."
-        },
-        "undelete_columns": {
-          "type": "object",
-          "additionalProperties": { "type": "string" },
-          "description": "Additional columns to override when undeleting (resurrect: true). Map of column name to SQL expression. Keys are auto-included as passthrough."
-        }
-      },
+    "SoftDelete": {
+      "description": "Soft-delete detection configuration. Declares a source column that signals deletion. Strategy determines detection and undelete semantics.",
       "oneOf": [
-        { "required": ["undelete_value"] },
-        { "required": ["undelete_expression"] }
+        {
+          "type": "string",
+          "description": "Shorthand: field name. Strategy defaults to timestamp."
+        },
+        {
+          "type": "object",
+          "required": ["field"],
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "type": "string",
+              "description": "Source column carrying the deletion signal. Auto-included as passthrough."
+            },
+            "strategy": {
+              "type": "string",
+              "enum": ["timestamp", "deleted_flag", "active_flag"],
+              "default": "timestamp",
+              "description": "Detection strategy: timestamp (IS NOT NULL, undelete NULL), deleted_flag (IS NOT FALSE, undelete FALSE), active_flag (IS NOT TRUE, undelete TRUE)."
+            }
+          }
+        }
       ]
     },
 

@@ -1,6 +1,6 @@
 # Element-level soft-delete for value lists
 
-Cross-source soft-delete of individual array elements using tombstone on child mappings.
+Cross-source soft-delete of individual array elements using `soft_delete` on child mappings.
 
 ## Scenario
 
@@ -9,7 +9,7 @@ Two CRM systems track contact tags. Instead of storing tags as bare scalars
 optional `removed_at` timestamp (`[{tag: "vip"}, {tag: "churned", removed_at: "2026-01-15"}]`).
 
 When one CRM soft-deletes a tag by setting `removed_at`, the child mapping's
-`tombstone` declaration causes the engine to exclude that element from
+`soft_delete` declaration causes the engine to exclude that element from
 **all** sources' reconstructed arrays — not just the source that set the
 marker. This is the explicit-marker counterpart to
 [`derive_element_tombstones`](../element-hard-delete/) (which detects deletions by
@@ -20,11 +20,11 @@ an email address used for identity resolution.
 
 ## Key features
 
-- **Tombstone on child mapping** — `tombstone: { field: removed_at, undelete_value: null }`
+- **Soft-delete on child mapping** — `soft_delete: removed_at`
   tells the engine to treat array elements with non-null `removed_at` as soft-deleted
-- **Cross-source propagation** — tombstoned elements are excluded from all
-  sources' deltas, not just the tombstoning source (deletion-wins semantics)
-- **No `removed_at` in the target** — the tombstone field is carried via passthrough
+- **Cross-source propagation** — soft-deleted elements are excluded from all
+  sources' deltas, not just the source that set the marker (deletion-wins semantics)
+- **No `removed_at` in the target** — the soft-delete field is carried via passthrough
   and used only for filtering, keeping the target schema clean
 - **Reuses `DeletionFilter` pipeline** — feeds into the same `_del_{segment}`
   CTE infrastructure as `derive_element_tombstones`, so both mechanisms compose
@@ -35,18 +35,18 @@ an email address used for identity resolution.
    via nested child mappings (`parent:` + `array: tags`).
 2. Identity resolution links tag entries by `(contact_ref, tag)` using
    `link_group`.
-3. The engine scans **all** child mappings with tombstone declarations for
+3. The engine scans **all** child mappings with `soft_delete` declarations for
    the same segment. For each, it generates a deletion CTE that selects
-   tombstoned elements from that mapping's reverse view.
+   soft-deleted elements from that mapping's reverse view.
 4. All deletion CTEs are UNION ALL'd into a combined `_del_tags` CTE,
-   which the nested CTE LEFT JOINs to exclude tombstoned elements.
+   which the nested CTE LEFT JOINs to exclude soft-deleted elements.
 5. CRM A sets `removed_at` on "churned" → `_del_tags` contains "churned"
    → both CRM A and CRM B deltas exclude it → both get `'update'` with
    `[{tag: "vip"}]`.
 
 ## Comparison with derive_element_tombstones
 
-| | `tombstone:` (this pattern) | `derive_element_tombstones` |
+| | `soft_delete:` (this pattern) | `derive_element_tombstones` |
 |---|---|---|
 | **Signal** | Explicit field (`removed_at`) | Absence from forward view vs. `_written` JSONB |
 | **Requires** | Source sets a marker on the element | `written_state` table maintained by ETL |

@@ -314,7 +314,7 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
         // resurrect is a pure policy knob — no prerequisites.
         // Detection comes from cluster_members or written_state.
         // Without a detection source, the knob is inert (no error, just unused).
-        // tombstone.field is validated as a column name below — no prerequisites.
+        // soft_delete.field is validated as a column name below — no prerequisites.
     }
 }
 
@@ -832,7 +832,7 @@ fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
                 result,
             );
         }
-        // tombstone.field is a column name — no SQL expression to validate.
+        // soft_delete.field is a column name — no SQL expression to validate.
         // Column existence is checked in the column-reference pass.
 
         if let Some(ref lm) = m.last_modified {
@@ -1181,46 +1181,14 @@ fn pass_column_refs(doc: &MappingDocument, result: &mut ValidationResult) {
             );
         }
 
-        // tombstone.field: must be a known source column
-        if let Some(ref ts) = m.tombstone {
-            if !source_cols.is_empty() && !source_cols.contains(ts.field.as_str()) {
+        // soft_delete.field: must be a known source column
+        if let Some(ref sd) = m.soft_delete {
+            if !source_cols.is_empty() && !source_cols.contains(sd.field.as_str()) {
                 result.warning(
                     "Column",
                     format!(
-                        "mapping '{}' tombstone.field: unknown source column '{}'",
-                        m.name, ts.field
-                    ),
-                );
-            }
-            // Exactly one of undelete_value / undelete_expression must be set.
-            match (&ts.undelete_value, &ts.undelete_expression) {
-                (None, None) => {
-                    result.error(
-                        "Tombstone",
-                        format!(
-                            "mapping '{}' tombstone: exactly one of undelete_value or undelete_expression is required",
-                            m.name
-                        ),
-                    );
-                }
-                (Some(_), Some(_)) => {
-                    result.error(
-                        "Tombstone",
-                        format!(
-                            "mapping '{}' tombstone: undelete_value and undelete_expression are mutually exclusive",
-                            m.name
-                        ),
-                    );
-                }
-                _ => {}
-            }
-            // detect is required when undelete_expression is used.
-            if ts.undelete_expression.is_some() && ts.detect.is_none() {
-                result.error(
-                    "Tombstone",
-                    format!(
-                        "mapping '{}' tombstone: detect is required when undelete_expression is used",
-                        m.name
+                        "mapping '{}' soft_delete.field: unknown source column '{}'",
+                        m.name, sd.field
                     ),
                 );
             }

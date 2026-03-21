@@ -3,7 +3,7 @@ description: >
   Cross-source element-level soft-delete for value lists.  Two CRM
   systems track contact tags as JSONB object arrays.  Each tag carries
   an optional removed_at timestamp.  The child mappings declare
-  tombstone on removed_at, and the engine feeds tombstoned elements
+  soft_delete on removed_at, and the engine feeds soft-deleted elements
   into the same DeletionFilter pipeline as derive_element_tombstones —
   excluding them from ALL sources' reconstructed arrays with
   deletion-wins semantics.  No removed_at in the target schema.
@@ -52,9 +52,7 @@ mappings:
       parent_email: email
     target: tag_entry
     priority: 1
-    tombstone:
-      field: removed_at
-      undelete_value: null
+    soft_delete: removed_at
     fields:
       - source: parent_email
         target: contact_ref
@@ -82,9 +80,7 @@ mappings:
       parent_email: email
     target: tag_entry
     priority: 2
-    tombstone:
-      field: removed_at
-      undelete_value: null
+    soft_delete: removed_at
     fields:
       - source: parent_email
         target: contact_ref
@@ -98,7 +94,7 @@ tests:
   - description: >
       CRM A soft-deletes the "churned" tag by setting removed_at.
       CRM B still has the tag without the marker.  The cross-source
-      tombstone CTE detects the tombstoned element via the identity
+      soft-delete CTE detects the marked element via the identity
       view and excludes "churned" from BOTH sources' reconstructed
       arrays — same deletion-wins semantics as derive_element_tombstones.
     input:

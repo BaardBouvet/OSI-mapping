@@ -1,6 +1,6 @@
 # Soft-delete refactor plan
 
-**Status:** Proposed
+**Status:** Done
 
 Replace the overengineered `tombstone` object (5 properties, custom serde, mutual
 exclusion validation) with a simple `soft_delete` that captures the only 3

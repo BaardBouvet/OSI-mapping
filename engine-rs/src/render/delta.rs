@@ -194,14 +194,14 @@ struct DeletionFilter {
 
 /// Hard-delete detection info for a mapping.
 ///
-/// Entity-level tombstones require a persistence table that outlives the
-/// source row.  Two paths exist:
+/// Entity-level hard-delete detection requires a persistence table that
+/// outlives the source row.  Two paths exist:
 /// - `cluster_members` — LEFT JOIN on `_cluster_id`, check `_src_id IS NOT NULL`
 /// - `written_state` — `_ws._cluster_id IS NOT NULL`
 ///
 /// When `cluster_members` is available, it is preferred because it's the
 /// semantically correct signal ("was this entity synced to this source?").
-struct TombstoneDetection {
+struct HardDeleteDetection {
     /// SQL expression for the CASE branch (e.g. `_cm_hd."_src_id" IS NOT NULL`).
     detection_expr: String,
     /// SQL fragment to LEFT JOIN the detection table onto the delta FROM clause.
@@ -220,7 +220,7 @@ struct VanishedSource {
 }
 
 /// Compute hard-delete detection for a mapping, if applicable.
-fn tombstone_detection(mapping: &Mapping) -> Option<TombstoneDetection> {
+fn hard_delete_detection(mapping: &Mapping) -> Option<HardDeleteDetection> {
     if !mapping.suppress_resurrect() {
         return None;
     }
@@ -229,7 +229,7 @@ fn tombstone_detection(mapping: &Mapping) -> Option<TombstoneDetection> {
         let cm_table = qi(&cm.table_name(&mapping.name));
         let cm_cluster = qi(&cm.cluster_id);
         let cm_src_key = qi(&cm.source_key);
-        Some(TombstoneDetection {
+        Some(HardDeleteDetection {
             detection_expr: format!("_cm_hd.{cm_src_key} IS NOT NULL"),
             join_fragment: format!(
                 "\nLEFT JOIN {cm_table} AS _cm_hd ON _cm_hd.{cm_cluster} = {{rev_view}}.{}",
@@ -244,7 +244,7 @@ fn tombstone_detection(mapping: &Mapping) -> Option<TombstoneDetection> {
     } else if let Some(ref ws) = mapping.written_state {
         let ws_table = qi(&ws.table_name(&mapping.name));
         let ws_cluster = qi(&ws.cluster_id);
-        Some(TombstoneDetection {
+        Some(HardDeleteDetection {
             detection_expr: format!("_ws.{ws_cluster} IS NOT NULL"),
             // When written_state is present, _ws is already joined for noop.
             // We still emit the join here; callers dedup if _ws is already present.
@@ -326,9 +326,9 @@ fn action_case(
         // They should not produce insert rows (can't insert partial records).
         branches.push(format!("WHEN {src_id} IS NULL THEN NULL"));
     } else {
-        // Soft-delete: source row exists but tombstone field signals deletion.
-        if let Some(ref ts) = mapping.tombstone {
-            let det = ts.detection_expr();
+        // Soft-delete: source row exists but soft_delete field signals deletion.
+        if let Some(ref sd) = mapping.soft_delete {
+            let det = sd.detection_expr();
             if mapping.resurrect {
                 // Undelete: emit 'update' so the ETL writes the undelete values back
                 branches.push(format!(
@@ -497,7 +497,7 @@ pub fn render_delta_view(
         } else {
             None
         };
-        let td = tombstone_detection(mapping);
+        let td = hard_delete_detection(mapping);
         let rev_view = qi(&format!("_rev_{}", mapping.name));
         let src_qualifier = td
             .as_ref()
@@ -519,11 +519,11 @@ pub fn render_delta_view(
                 out_exprs[pos] = format!("{rev_view}.{qi_cluster}");
             }
         }
-        // When resurrect: true + tombstone, override columns with undelete values.
+        // When resurrect: true + soft_delete, override columns with undelete values.
         if mapping.resurrect {
-            if let Some(ref ts) = mapping.tombstone {
-                let det = ts.detection_expr();
-                for (col, expr) in ts.undelete_overrides() {
+            if let Some(ref sd) = mapping.soft_delete {
+                let det = sd.detection_expr();
+                for (col, expr) in sd.undelete_overrides() {
                     let qcol = qi(&col);
                     if let Some(pos) = out_exprs.iter().position(|e| e == &qcol) {
                         out_exprs[pos] =
@@ -684,12 +684,12 @@ fn merged_action_case(
 
     let mut branches = Vec::new();
 
-    // Soft-delete: source row exists but tombstone field signals deletion.
-    // Uses the primary mapping's tombstone config (shared source).
+    // Soft-delete: source row exists but soft_delete field signals deletion.
+    // Uses the primary mapping's soft_delete config (shared source).
     if let Some(det) = primary_mappings
         .first()
-        .and_then(|m| m.tombstone.as_ref())
-        .map(|ts| ts.detection_expr())
+        .and_then(|m| m.soft_delete.as_ref())
+        .map(|sd| sd.detection_expr())
     {
         let resurrect = primary_mappings.first().is_some_and(|m| m.resurrect);
         if resurrect {
@@ -967,7 +967,9 @@ fn render_delta_with_children(
         })
         .collect();
     // Use detection from the first primary mapping that has it.
-    let primary_td = primary_mappings.iter().find_map(|m| tombstone_detection(m));
+    let primary_td = primary_mappings
+        .iter()
+        .find_map(|m| hard_delete_detection(m));
     let merged_src_qualifier = primary_td
         .as_ref()
         .filter(|t| t.needs_src_id_qualifier)
@@ -998,12 +1000,12 @@ fn render_delta_with_children(
             out_exprs[pos] = format!("_merged.{qi_cluster}");
         }
     }
-    // When resurrect: true + tombstone, override columns with undelete values.
+    // When resurrect: true + soft_delete, override columns with undelete values.
     if let Some(m) = primary_mappings.first() {
         if m.resurrect {
-            if let Some(ref ts) = m.tombstone {
-                let det = ts.detection_expr();
-                for (col, expr) in ts.undelete_overrides() {
+            if let Some(ref sd) = m.soft_delete {
+                let det = sd.detection_expr();
+                for (col, expr) in sd.undelete_overrides() {
                     let qcol = qi(&col);
                     if let Some(pos) = out_exprs.iter().position(|e| e == &qcol) {
                         out_exprs[pos] =
@@ -1094,7 +1096,7 @@ fn render_delta_union_all(
             } else {
                 None
             };
-            let td = tombstone_detection(m);
+            let td = hard_delete_detection(m);
             let rev_view = qi(&format!("_rev_{}", m.name));
             let src_qualifier = td
                 .as_ref()
@@ -1116,13 +1118,13 @@ fn render_delta_union_all(
             let m_passthrough: std::collections::HashSet<&str> =
                 m.effective_passthrough().into_iter().collect();
             let mut projected: Vec<String> = vec![format!("{case_expr} AS _action")];
-            // When resurrect: true + tombstone, compute override expressions.
-            let ts_overrides: IndexMap<String, String> = if m.resurrect {
-                m.tombstone
+            // When resurrect: true + soft_delete, compute override expressions.
+            let sd_overrides: IndexMap<String, String> = if m.resurrect {
+                m.soft_delete
                     .as_ref()
-                    .map(|ts| {
-                        let det = ts.detection_expr();
-                        ts.undelete_overrides()
+                    .map(|sd| {
+                        let det = sd.detection_expr();
+                        sd.undelete_overrides()
                             .into_iter()
                             .map(|(col, expr)| {
                                 let qcol = qi(&col);
@@ -1139,9 +1141,9 @@ fn render_delta_union_all(
             };
             for col in out_cols {
                 let qcol = qi(col);
-                // Check if this column has a tombstone undelete override.
-                if let Some(ts_expr) = ts_overrides.get(&qcol) {
-                    projected.push(ts_expr.clone());
+                // Check if this column has a soft_delete undelete override.
+                if let Some(sd_expr) = sd_overrides.get(&qcol) {
+                    projected.push(sd_expr.clone());
                     continue;
                 }
                 if col == "_cluster_id"
@@ -1181,7 +1183,7 @@ fn render_delta_union_all(
     // branch that picks up entities in the persistence table but absent from _resolved.
     let mut vanished_selects: Vec<String> = Vec::new();
     for m in mappings {
-        if let Some(td) = tombstone_detection(m) {
+        if let Some(td) = hard_delete_detection(m) {
             if let Some(vs) = &td.vanished_source {
                 let resolved_view = qi(&format!("_resolved_{}", m.target.name()));
                 let mut null_cols: Vec<String> = vec!["'delete' AS _action".to_string()];
@@ -1789,12 +1791,12 @@ fn render_delta_with_nested(
             source_idx += 1;
         }
 
-        // ── Explicit element-level tombstones ──────────────────────
+        // ── Explicit element-level soft-delete ────────────────────
         // When ANY child mapping targeting the same (child_target, segment)
-        // declares a tombstone with resurrect: false, scan its reverse view
-        // for tombstoned elements and add them to the deletion set.
+        // declares a soft_delete with resurrect: false, scan its reverse view
+        // for soft-deleted elements and add them to the deletion set.
         // This reuses the same DeletionFilter mechanism as derive_element_tombstones,
-        // making explicit tombstones propagate cross-source.
+        // making explicit soft-delete markers propagate cross-source.
         for foreign_child in all_mappings.iter() {
             // Must be a child mapping targeting the same target + segment.
             if foreign_child.parent.is_none() && foreign_child.source.path.is_none() {
@@ -1810,18 +1812,16 @@ fn render_delta_with_nested(
             {
                 continue;
             }
-            // Must have an explicit tombstone with resurrect: false.
-            let Some(ref ts) = foreign_child.tombstone else {
+            // Must have an explicit soft_delete with resurrect: false.
+            let Some(ref sd) = foreign_child.soft_delete else {
                 continue;
             };
             if foreign_child.resurrect {
                 continue;
             }
-            // Skip if using custom detect: expression (can't reliably
+            // Skip if using non-standard detection (can't reliably
             // evaluate cross-source via _base).
-            if ts.detect.is_some() {
-                continue;
-            }
+            // (No longer applicable — SoftDelete strategies are always standard.)
 
             // Map identity fields: foreign child's source names → current
             // source's source names (via shared target field names).
@@ -1876,7 +1876,7 @@ fn render_delta_with_nested(
                    WHERE n.{}\n\
                  )",
                 qi(foreign_group_col),
-                ts.detection_expr(),
+                sd.detection_expr(),
                 id_cols = id_cols.join(", "),
             ));
 
@@ -2337,7 +2337,7 @@ mappings:
     }
 
     #[test]
-    fn tombstone_suppress_via_written_state() {
+    fn hard_delete_suppress_via_written_state() {
         // written_state + resurrect: false → detection via _written table
         let doc = parse(
             r#"
@@ -2413,7 +2413,7 @@ mappings:
     }
 
     #[test]
-    fn tombstone_suppress_via_cluster_members() {
+    fn hard_delete_suppress_via_cluster_members() {
         // cluster_members + resurrect: false → detection via cluster_members table
         let doc = parse(
             r#"
@@ -2486,7 +2486,7 @@ mappings:
     }
 
     #[test]
-    fn tombstone_cluster_members_preferred_over_written_state() {
+    fn hard_delete_cluster_members_preferred_over_written_state() {
         // When both cluster_members and written_state exist,
         // cluster_members is preferred for detection.
         let doc = parse(
@@ -2518,7 +2518,7 @@ mappings:
     }
 
     #[test]
-    fn tombstone_suppress_union_all_path() {
+    fn hard_delete_suppress_union_all_path() {
         let doc = parse(
             r#"
 version: "1.0"
@@ -2659,7 +2659,7 @@ mappings:
     }
 
     #[test]
-    fn tombstone_suppresses_soft_deleted_row() {
+    fn soft_delete_suppresses_soft_deleted_row() {
         let doc = parse(
             r#"
 version: "1.0"
@@ -2671,7 +2671,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at, undelete_value: null }
+    soft_delete: deleted_at
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2681,13 +2681,13 @@ mappings:
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             sql.contains(r#""deleted_at" IS NOT NULL) THEN NULL"#),
-            "tombstone should suppress soft-deleted entities:\n{sql}"
+            "soft_delete should suppress soft-deleted entities:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_resurrect_true_undeletes() {
-        // tombstone + resurrect: true → emit 'update' (undelete)
+    fn soft_delete_resurrect_true_undeletes() {
+        // soft_delete + resurrect: true → emit 'update' (undelete)
         let doc = parse(
             r#"
 version: "1.0"
@@ -2699,7 +2699,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at, undelete_value: null }
+    soft_delete: deleted_at
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2711,18 +2711,18 @@ mappings:
         // Should emit 'update' not NULL for soft-deleted entities
         assert!(
             sql.contains(r#""deleted_at" IS NOT NULL) THEN 'update'"#),
-            "tombstone + resurrect: true should emit 'update' (undelete):\n{sql}"
+            "soft_delete + resurrect: true should emit 'update' (undelete):\n{sql}"
         );
-        // Should project the default value (NULL) for the tombstone field
+        // Should project the undelete value (NULL) for the soft_delete field
         assert!(
             sql.contains(r#"CASE WHEN ("deleted_at" IS NOT NULL) THEN NULL ELSE "deleted_at" END AS "deleted_at""#),
-            "should project default value for tombstone field:\n{sql}"
+            "should project undelete value for soft_delete field:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_no_vanished_union_all() {
-        // tombstone alone does not produce vanished-entity UNION ALL
+    fn soft_delete_no_vanished_union_all() {
+        // soft_delete alone does not produce vanished-entity UNION ALL
         let doc = parse(
             r#"
 version: "1.0"
@@ -2734,7 +2734,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at, undelete_value: null }
+    soft_delete: deleted_at
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2744,13 +2744,13 @@ mappings:
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         assert!(
             !sql.contains("UNION ALL"),
-            "tombstone alone should not produce UNION ALL:\n{sql}"
+            "soft_delete alone should not produce UNION ALL:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_with_cluster_members() {
-        // Both tombstone (soft) and cluster_members (hard) active
+    fn soft_delete_with_cluster_members() {
+        // Both soft_delete (soft) and cluster_members (hard) active
         let doc = parse(
             r#"
 version: "1.0"
@@ -2762,7 +2762,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at, undelete_value: null }
+    soft_delete: deleted_at
     cluster_members: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2774,7 +2774,7 @@ mappings:
         // Soft-delete branch (before hard-delete)
         assert!(
             sql.contains(r#""deleted_at" IS NOT NULL) THEN NULL"#),
-            "tombstone branch should be present:\n{sql}"
+            "soft_delete branch should be present:\n{sql}"
         );
         // Hard-delete branch
         assert!(
@@ -2789,8 +2789,8 @@ mappings:
     }
 
     #[test]
-    fn tombstone_bool_default() {
-        // tombstone with undelete_value: false
+    fn soft_delete_deleted_flag() {
+        // soft_delete with strategy: deleted_flag
         let doc = parse(
             r#"
 version: "1.0"
@@ -2802,9 +2802,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone:
-      field: is_deleted
-      undelete_value: false
+    soft_delete: { field: is_deleted, strategy: deleted_flag }
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2812,16 +2810,16 @@ mappings:
         let source_meta = doc.sources.get("s");
         let sql =
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
-        // Detection: is_deleted IS DISTINCT FROM FALSE
+        // Detection: is_deleted IS NOT FALSE
         assert!(
-            sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN NULL"#),
-            "tombstone with undelete_value: false should use IS DISTINCT FROM:\n{sql}"
+            sql.contains(r#""is_deleted" IS NOT FALSE) THEN NULL"#),
+            "soft_delete deleted_flag should use IS NOT FALSE:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_bool_default_undelete_projection() {
-        // tombstone undelete_value: false + resurrect: true → undelete with value
+    fn soft_delete_deleted_flag_undelete_projection() {
+        // soft_delete deleted_flag + resurrect: true → undelete with FALSE
         let doc = parse(
             r#"
 version: "1.0"
@@ -2833,9 +2831,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone:
-      field: is_deleted
-      undelete_value: false
+    soft_delete: { field: is_deleted, strategy: deleted_flag }
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2846,19 +2842,19 @@ mappings:
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
         // Should emit 'update' for undelete
         assert!(
-            sql.contains(r#""is_deleted" IS DISTINCT FROM FALSE) THEN 'update'"#),
-            "tombstone + resurrect:true should emit 'update':\n{sql}"
+            sql.contains(r#""is_deleted" IS NOT FALSE) THEN 'update'"#),
+            "soft_delete + resurrect:true should emit 'update':\n{sql}"
         );
-        // Should project value (FALSE) when tombstone detected
+        // Should project value (FALSE) when soft-delete detected
         assert!(
-            sql.contains(r#"CASE WHEN ("is_deleted" IS DISTINCT FROM FALSE) THEN FALSE ELSE "is_deleted" END AS "is_deleted""#),
-            "should project value for tombstone field:\n{sql}"
+            sql.contains(r#"CASE WHEN ("is_deleted" IS NOT FALSE) THEN FALSE ELSE "is_deleted" END AS "is_deleted""#),
+            "should project undelete value for soft_delete field:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_auto_passthrough() {
-        // tombstone field should be auto-included even without explicit passthrough
+    fn soft_delete_auto_passthrough() {
+        // soft_delete field should be auto-included even without explicit passthrough
         let doc = parse(
             r#"
 version: "1.0"
@@ -2870,7 +2866,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone: { field: deleted_at, undelete_value: null }
+    soft_delete: deleted_at
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2878,13 +2874,13 @@ mappings:
         let eff = m.effective_passthrough();
         assert!(
             eff.contains(&"deleted_at"),
-            "effective_passthrough should include tombstone field: {eff:?}"
+            "effective_passthrough should include soft_delete field: {eff:?}"
         );
     }
 
     #[test]
-    fn tombstone_custom_detect() {
-        // Override detection with custom SQL expression
+    fn soft_delete_active_flag() {
+        // soft_delete with strategy: active_flag
         let doc = parse(
             r#"
 version: "1.0"
@@ -2896,10 +2892,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone:
-      field: status
-      detect: "status IN ('deleted', 'archived')"
-      undelete_expression: "'active'"
+    soft_delete: { field: is_active, strategy: active_flag }
     fields: [{ source: name, target: name }]
 "#,
         );
@@ -2907,15 +2900,16 @@ mappings:
         let source_meta = doc.sources.get("s");
         let sql =
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // Detection: is_active IS NOT TRUE
         assert!(
-            sql.contains("status IN ('deleted', 'archived')) THEN NULL"),
-            "custom detect should be used verbatim:\n{sql}"
+            sql.contains(r#""is_active" IS NOT TRUE) THEN NULL"#),
+            "soft_delete active_flag should use IS NOT TRUE:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_custom_undelete_single() {
-        // Override undelete with a single SQL expression
+    fn soft_delete_active_flag_undelete_projection() {
+        // soft_delete active_flag + resurrect: true → undelete with TRUE
         let doc = parse(
             r#"
 version: "1.0"
@@ -2927,10 +2921,7 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone:
-      field: status
-      detect: "status IN ('deleted', 'archived')"
-      undelete_expression: "'active'"
+    soft_delete: { field: is_active, strategy: active_flag }
     resurrect: true
     fields: [{ source: name, target: name }]
 "#,
@@ -2939,16 +2930,21 @@ mappings:
         let source_meta = doc.sources.get("s");
         let sql =
             render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
-        // Should use custom undelete expression
+        // Should emit 'update' for undelete
         assert!(
-            sql.contains(r#"THEN 'active' ELSE "status" END AS "status""#),
-            "custom undelete expression should be projected:\n{sql}"
+            sql.contains(r#""is_active" IS NOT TRUE) THEN 'update'"#),
+            "soft_delete + resurrect:true should emit 'update':\n{sql}"
+        );
+        // Should project value (TRUE) when soft-delete detected
+        assert!(
+            sql.contains(r#"CASE WHEN ("is_active" IS NOT TRUE) THEN TRUE ELSE "is_active" END AS "is_active""#),
+            "should project undelete value for soft_delete field:\n{sql}"
         );
     }
 
     #[test]
-    fn tombstone_multi_column_undelete() {
-        // Multi-column undelete: undelete_value + undelete_columns
+    fn soft_delete_string_shorthand() {
+        // String shorthand: soft_delete: deleted_at → timestamp strategy
         let doc = parse(
             r#"
 version: "1.0"
@@ -2960,61 +2956,14 @@ mappings:
   - name: s
     source: s
     target: t
-    tombstone:
-      field: deleted_at
-      undelete_value: null
-      undelete_columns:
-        status: "'active'"
-    resurrect: true
+    soft_delete: deleted_at
     fields: [{ source: name, target: name }]
 "#,
         );
-        let mappings: Vec<&_> = doc.mappings.iter().collect();
-        let source_meta = doc.sources.get("s");
-        let sql =
-            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
-        // Both columns should have CASE override
-        assert!(
-            sql.contains(r#"CASE WHEN ("deleted_at" IS NOT NULL) THEN NULL ELSE "deleted_at" END AS "deleted_at""#),
-            "deleted_at should be projected with undelete override:\n{sql}"
-        );
-        assert!(
-            sql.contains(r#"CASE WHEN ("deleted_at" IS NOT NULL) THEN 'active' ELSE "status" END AS "status""#),
-            "status should be projected with undelete override:\n{sql}"
-        );
-    }
-
-    #[test]
-    fn tombstone_multi_column_auto_passthrough() {
-        // Extra columns in undelete_columns should auto-include as passthrough
-        let doc = parse(
-            r#"
-version: "1.0"
-sources:
-  s: { primary_key: id }
-targets:
-  t: { fields: { name: { strategy: coalesce } } }
-mappings:
-  - name: s
-    source: s
-    target: t
-    tombstone:
-      field: deleted_at
-      undelete_value: null
-      undelete_columns:
-        status: "'active'"
-    fields: [{ source: name, target: name }]
-"#,
-        );
-        let m = &doc.mappings[0];
-        let eff = m.effective_passthrough();
-        assert!(
-            eff.contains(&"deleted_at"),
-            "effective_passthrough should include tombstone field: {eff:?}"
-        );
-        assert!(
-            eff.contains(&"status"),
-            "effective_passthrough should include undelete map keys: {eff:?}"
-        );
+        let sd = doc.mappings[0].soft_delete.as_ref().unwrap();
+        assert_eq!(sd.field, "deleted_at");
+        assert_eq!(sd.strategy, crate::model::SoftDeleteStrategy::Timestamp);
+        assert_eq!(sd.detection_expr(), r#""deleted_at" IS NOT NULL"#);
+        assert_eq!(sd.undelete_value(), "NULL");
     }
 }

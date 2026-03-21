@@ -369,7 +369,7 @@ Maps fields from one source dataset to one target entity.
 | `derive_tombstones` | boolean | no | Element-level deletion propagation via written state |
 | `derive_timestamps` | boolean | no | Per-field timestamp derivation via written state |
 | `resurrect` | boolean | no | Whether to resurrect entities that disappeared from this source (default `false`) |
-| `tombstone` | object | no | Soft-delete detection configuration |
+| `soft_delete` | string or object | no | Soft-delete detection configuration |
 | `passthrough` | array of strings | no | Source columns carried through to delta output |
 
 ```yaml
@@ -610,7 +610,7 @@ Appropriate when the ETL is the sole writer to the target. If external actors mo
 
 ### `derive_tombstones`
 
-When `true` (requires `written_state`), elements in the previously-written JSONB array that are absent from the current forward view are excluded from all sources' reconstructed arrays. Propagates element-level deletions across sources without explicit tombstone records.
+When `true` (requires `written_state`), elements in the previously-written JSONB array that are absent from the current forward view are excluded from all sources' reconstructed arrays. Propagates element-level deletions across sources without explicit soft-delete records.
 
 ```yaml
   - name: blog_cms
@@ -664,25 +664,24 @@ Without a detection mechanism, the setting is inert (no error, just unused).
 
 **Examples:** [hard-delete](../examples/hard-delete/)
 
-### `tombstone`
+### `soft_delete`
 
-Soft-delete detection.  Declares a source column that signals deletion and how to detect / reverse it.  Exactly one of `undelete_value` or `undelete_expression` is required.
+Soft-delete detection.  Declares a source column that signals deletion.  The `strategy` fully determines detection and undelete values — no overrides needed.
+
+Accepts a string shorthand (field name, defaults to `timestamp` strategy) or an object with `field` and optional `strategy`.
 
 | Property | Type | Required | Description |
 |---|---|---|---|
 | `field` | string | **yes** | Source column carrying the deletion signal |
-| `undelete_value` | null / boolean / string | one-of | The value this field holds when NOT deleted — derives `detect` and undelete projection |
-| `undelete_expression` | string (SQL) | one-of | Raw SQL expression for the tombstone field when undeleting; requires `detect` |
-| `detect` | string (SQL) | no | SQL expression — true when entity is soft-deleted; derived from `field` + `undelete_value` when omitted |
-| `undelete_columns` | map (string → SQL) | no | Additional columns to override when undeleting; keys auto-included as passthrough |
+| `strategy` | enum | no | `timestamp` (default), `deleted_flag`, or `active_flag` |
 
-When `detect` is omitted, it is derived from `field` + `undelete_value`:
+Strategy table:
 
-| `undelete_value` | Derived `detect` |
-|---|---|
-| `null` | `"field" IS NOT NULL` |
-| `false` | `"field" IS DISTINCT FROM FALSE` |
-| `'active'` | `"field" IS DISTINCT FROM 'active'` |
+| Strategy | Detection | Undelete value | Common fields |
+|---|---|---|---|
+| `timestamp` | `"field" IS NOT NULL` | `NULL` | `deleted_at`, `removed_at` |
+| `deleted_flag` | `"field" IS NOT FALSE` | `FALSE` | `is_deleted`, `deleted` |
+| `active_flag` | `"field" IS NOT TRUE` | `TRUE` | `is_active`, `active` |
 
 Behavior depends on `resurrect`:
 
@@ -691,14 +690,14 @@ Behavior depends on `resurrect`:
 | `false` (default) | Suppress — row excluded from delta |
 | `true` | Undelete — delta emits `'update'` with undelete values |
 
-The tombstone `field` (and any `undelete_columns` keys) are auto-included as passthrough columns.
+The `soft_delete` field is auto-included as a passthrough column.
 
 ```yaml
-  # deleted_at IS NOT NULL → soft-deleted
+  # deleted_at IS NOT NULL → soft-deleted (string shorthand)
   - name: crm
     source: crm
     target: customer
-    tombstone: { field: deleted_at, undelete_value: null }
+    soft_delete: deleted_at
     fields: [...]
 ```
 
@@ -708,23 +707,17 @@ The tombstone `field` (and any `undelete_columns` keys) are auto-included as pas
   - name: crm
     source: crm
     target: customer
-    tombstone: { field: is_deleted, undelete_value: false }
+    soft_delete: { field: is_deleted, strategy: deleted_flag }
     resurrect: true
     fields: [...]
 ```
 
 ```yaml
-  # Custom detection + multi-column undelete
+  # is_active != true → soft-deleted
   - name: crm
     source: crm
     target: customer
-    tombstone:
-      field: status
-      detect: "status IN ('deleted', 'archived')"
-      undelete_expression: "'active'"
-      undelete_columns:
-        deleted_at: "NULL"
-    resurrect: true
+    soft_delete: { field: is_active, strategy: active_flag }
     fields: [...]
 ```
 

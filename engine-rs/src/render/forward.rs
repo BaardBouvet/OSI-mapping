@@ -281,14 +281,14 @@ pub fn render_forward_body(
         None => "NULL::text AS _last_modified".into(),
     });
 
-    // Soft-delete detection: when the mapping declares a tombstone, non-identity
+    // Soft-delete detection: when the mapping declares soft_delete, non-identity
     // fields are NULLed in the forward view so soft-deleted rows cannot win
     // field resolution.  Identity fields keep their values for entity linking.
-    let tombstone_detect = mapping.tombstone.as_ref().map(|t| {
+    let soft_delete_detect = mapping.soft_delete.as_ref().map(|sd| {
         if has_path {
-            t.detection_expr_with_base(Some("item.value"))
+            sd.detection_expr_with_base(Some("item.value"))
         } else {
-            t.detection_expr()
+            sd.detection_expr()
         }
     });
 
@@ -355,7 +355,7 @@ pub fn render_forward_body(
                 // Cast to target field type for UNION ALL compatibility across mappings.
                 // Soft-deleted non-identity fields → NULL so they lose resolution.
                 let is_identity = fdef.strategy() == crate::model::Strategy::Identity;
-                if let (Some(detect), false) = (&tombstone_detect, is_identity) {
+                if let (Some(detect), false) = (&soft_delete_detect, is_identity) {
                     cols.push(format!(
                         "CASE WHEN ({detect}) THEN NULL::{cast_type} ELSE {expr}::{cast_type} END AS {qfname}"
                     ));
@@ -365,7 +365,7 @@ pub fn render_forward_body(
 
                 // Per-field priority (always present, NULL when unset)
                 // Soft-deleted non-identity fields → NULL priority so they cannot win.
-                if let (Some(detect), false) = (&tombstone_detect, is_identity) {
+                if let (Some(detect), false) = (&soft_delete_detect, is_identity) {
                     cols.push(match fm.priority {
                         Some(p) => format!(
                             "CASE WHEN ({detect}) THEN NULL::int ELSE {p} END AS {}",
@@ -443,7 +443,7 @@ pub fn render_forward_body(
                     format!("NULL::text AS {ts_alias}")
                 };
                 // Wrap in soft-delete guard for non-identity fields.
-                if let (Some(detect), false) = (&tombstone_detect, is_identity) {
+                if let (Some(detect), false) = (&soft_delete_detect, is_identity) {
                     // Replace " AS <alias>" with CASE wrapping.
                     // The ts_col already ends with " AS <alias>", so we wrap the
                     // expression part.  Simplest: if already NULL, keep it;
@@ -472,7 +472,7 @@ pub fn render_forward_body(
                     let norm_alias = qi(&format!("_normalize_{fname}"));
                     let has_norm_alias = qi(&format!("_has_normalize_{fname}"));
                     let has_own = fm.normalize.is_some();
-                    if let (Some(detect), false) = (&tombstone_detect, is_identity) {
+                    if let (Some(detect), false) = (&soft_delete_detect, is_identity) {
                         cols.push(format!(
                             "CASE WHEN ({detect}) THEN NULL::text ELSE {norm_expr} END AS {norm_alias}"
                         ));
@@ -964,7 +964,7 @@ mappings:
     }
 
     #[test]
-    fn tombstone_nulls_non_identity_fields() {
+    fn soft_delete_nulls_non_identity_fields() {
         let doc = parse(
             r#"
 version: "1.0"
@@ -979,9 +979,7 @@ mappings:
   - name: crm_contact
     source: crm
     target: contact
-    tombstone:
-      field: deleted_at
-      undelete_value: null
+    soft_delete: deleted_at
     fields:
       - { source: email, target: email }
       - { source: full_name, target: name, priority: 10 }

@@ -326,14 +326,14 @@ pub struct Mapping {
     /// delta instead of being re-inserted.  Set to `true` to allow
     /// re-insertion (opt out of hard-delete detection).
     ///
-    /// For soft deletes (`tombstone`), `resurrect: true` enables
+    /// For soft deletes (`soft_delete`), `resurrect: true` enables
     /// undelete: the delta emits `'update'` with the undelete values, telling
     /// the ETL to clear the soft-delete marker.
     #[serde(default)]
     pub resurrect: bool,
     /// Soft-delete detection configuration.
     #[serde(default)]
-    pub tombstone: Option<Tombstone>,
+    pub soft_delete: Option<SoftDelete>,
 }
 
 impl Mapping {
@@ -386,7 +386,7 @@ impl Mapping {
     /// - `cluster_members` — ETL feedback table.
     /// - `written_state` — written-state table.
     ///
-    /// Note: `tombstone` does NOT contribute here — tombstone
+    /// Note: `soft_delete` does NOT contribute here — soft-delete
     /// suppression is independent and always active when set.
     pub fn suppress_resurrect(&self) -> bool {
         let has_detection = self.cluster_members.is_some() || self.written_state.is_some();
@@ -394,11 +394,11 @@ impl Mapping {
     }
 
     /// Effective passthrough columns — explicit passthrough plus columns
-    /// auto-included by tombstone (`field` + any `undelete` map keys).
+    /// auto-included by soft_delete (`field`).
     pub fn effective_passthrough(&self) -> Vec<&str> {
         let mut cols: Vec<&str> = self.passthrough.iter().map(|s| s.as_str()).collect();
-        if let Some(ref ts) = self.tombstone {
-            for col in ts.passthrough_columns() {
+        if let Some(ref sd) = self.soft_delete {
+            for col in sd.passthrough_columns() {
                 if !cols.contains(&col) {
                     cols.push(col);
                 }
@@ -449,174 +449,112 @@ impl LinkField {
     }
 }
 
-// ── Tombstone (soft-delete detection) ──────────────────────────────────
+// ── Soft-delete detection ──────────────────────────────────────────────
+
+/// Detection strategy for the soft-delete field.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftDeleteStrategy {
+    /// Nullable timestamp — `IS NOT NULL` means deleted; undelete = `NULL`.
+    Timestamp,
+    /// Boolean flag — `IS NOT FALSE` means deleted; undelete = `FALSE`.
+    DeletedFlag,
+    /// Inverted boolean — `IS NOT TRUE` means deleted; undelete = `TRUE`.
+    ActiveFlag,
+}
 
 /// Soft-delete detection configuration.
 ///
 /// Declares a source column that signals deletion and how to detect /
-/// reverse it.  Exactly one of `undelete_value` or `undelete_expression`
-/// must be set.  When `undelete_value` is given, `detect` is derived
-/// automatically; when `undelete_expression` is given, `detect` must be
-/// provided explicitly.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Tombstone {
+/// reverse it.  The `strategy` fully determines detection and undelete
+/// values — no overrides needed.
+#[derive(Debug)]
+pub struct SoftDelete {
     /// Source column carrying the deletion signal.
     pub field: String,
-    /// The value this field holds when the entity is **not** deleted.
-    /// Used to derive `detect` (IS DISTINCT FROM …) and the field's
-    /// undelete projection.  Mutually exclusive with `undelete_expression`.
-    /// Examples: `null` for timestamps, `false` for boolean flags,
-    /// `'active'` for enum values.
-    #[serde(default, deserialize_with = "deser_some_tombstone_default")]
-    pub undelete_value: Option<TombstoneDefault>,
-    /// Raw SQL expression to project for the tombstone field when
-    /// undeleting (resurrect: true).  Mutually exclusive with
-    /// `undelete_value`.  Requires `detect` (cannot be derived).
-    #[serde(default)]
-    pub undelete_expression: Option<String>,
-    /// SQL boolean expression that evaluates to true when the entity is
-    /// soft-deleted.  When omitted, derived from `field` + `undelete_value`.
-    #[serde(default)]
-    pub detect: Option<String>,
-    /// Additional columns to override when undeleting (resurrect: true).
-    /// Map of column name → SQL expression.  Keys are auto-included as
-    /// passthrough columns.
-    #[serde(default)]
-    pub undelete_columns: Option<IndexMap<String, String>>,
+    /// Detection strategy (defaults to `timestamp`).
+    pub strategy: SoftDeleteStrategy,
 }
 
-impl Tombstone {
+impl SoftDelete {
     /// SQL boolean expression: true when the entity is soft-deleted.
     pub fn detection_expr(&self) -> String {
         self.detection_expr_with_base(None)
     }
 
-    /// Like [`detection_expr`] but resolves the tombstone field through an
+    /// Like [`detection_expr`] but resolves the soft-delete field through an
     /// optional JSONB base expression (e.g. `"item.value"` for child mappings
     /// that extract from JSONB arrays).
     pub fn detection_expr_with_base(&self, base: Option<&str>) -> String {
-        if let Some(ref expr) = self.detect {
-            return expr.clone();
-        }
         let field_ref = match base {
             Some(b) => format!("({b}->>'{}')", sql_escape(&self.field)),
             None => qi(&self.field),
         };
-        match &self.undelete_value {
-            Some(TombstoneDefault::Null) | None => format!("{field_ref} IS NOT NULL"),
-            Some(other) => format!("{field_ref} IS DISTINCT FROM {}", other.to_sql()),
+        match self.strategy {
+            SoftDeleteStrategy::Timestamp => format!("{field_ref} IS NOT NULL"),
+            SoftDeleteStrategy::DeletedFlag => format!("{field_ref} IS NOT FALSE"),
+            SoftDeleteStrategy::ActiveFlag => format!("{field_ref} IS NOT TRUE"),
+        }
+    }
+
+    /// The SQL literal to write back when undeleting.
+    pub fn undelete_value(&self) -> &'static str {
+        match self.strategy {
+            SoftDeleteStrategy::Timestamp => "NULL",
+            SoftDeleteStrategy::DeletedFlag => "FALSE",
+            SoftDeleteStrategy::ActiveFlag => "TRUE",
         }
     }
 
     /// Column → SQL expression pairs for undelete projection.
-    /// Includes the tombstone field itself plus any extra columns.
     pub fn undelete_overrides(&self) -> IndexMap<String, String> {
         let mut result = IndexMap::new();
-        // Tombstone field itself.
-        let field_expr = match &self.undelete_expression {
-            Some(expr) => expr.clone(),
-            None => match &self.undelete_value {
-                Some(v) => v.to_sql(),
-                None => "NULL".to_string(),
-            },
-        };
-        result.insert(self.field.clone(), field_expr);
-        // Extra columns.
-        if let Some(ref map) = self.undelete_columns {
-            for (k, v) in map {
-                result.insert(k.clone(), v.clone());
-            }
-        }
+        result.insert(self.field.clone(), self.undelete_value().to_string());
         result
     }
 
-    /// Columns that must be auto-included as passthrough:
-    /// the tombstone field + any extra column keys from `undelete_columns`.
+    /// Columns that must be auto-included as passthrough.
     pub fn passthrough_columns(&self) -> Vec<&str> {
-        let mut cols = vec![self.field.as_str()];
-        if let Some(ref map) = self.undelete_columns {
-            for k in map.keys() {
-                if k != &self.field && !cols.contains(&k.as_str()) {
-                    cols.push(k.as_str());
-                }
-            }
-        }
-        cols
+        vec![self.field.as_str()]
     }
 }
 
-/// The non-deleted value for a tombstone field.
-#[derive(Debug, Clone, PartialEq)]
-pub enum TombstoneDefault {
-    /// SQL NULL — `deleted_at IS NOT NULL` means deleted.
-    Null,
-    /// SQL boolean literal (`is_deleted = false`).
-    Bool(bool),
-    /// SQL string literal (`status = 'active'`).
-    String(String),
+/// Raw serde representation — accepts string shorthand or object form.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SoftDeleteRaw {
+    /// `soft_delete: deleted_at` → field + timestamp strategy.
+    Short(String),
+    /// `soft_delete: { field: ..., strategy: ... }`.
+    Full {
+        field: String,
+        #[serde(default)]
+        strategy: Option<SoftDeleteStrategy>,
+    },
 }
 
-impl TombstoneDefault {
-    /// Render as a SQL literal.
-    pub fn to_sql(&self) -> String {
-        match self {
-            TombstoneDefault::Null => "NULL".to_string(),
-            TombstoneDefault::Bool(true) => "TRUE".to_string(),
-            TombstoneDefault::Bool(false) => "FALSE".to_string(),
-            TombstoneDefault::String(s) => format!("'{}'", s.replace('\'', "''")),
+impl From<SoftDeleteRaw> for SoftDelete {
+    fn from(raw: SoftDeleteRaw) -> Self {
+        match raw {
+            SoftDeleteRaw::Short(f) => SoftDelete {
+                field: f,
+                strategy: SoftDeleteStrategy::Timestamp,
+            },
+            SoftDeleteRaw::Full { field, strategy } => SoftDelete {
+                field,
+                strategy: strategy.unwrap_or(SoftDeleteStrategy::Timestamp),
+            },
         }
     }
 }
 
-impl<'de> serde::Deserialize<'de> for TombstoneDefault {
+impl<'de> serde::Deserialize<'de> for SoftDelete {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        struct TombstoneDefaultVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for TombstoneDefaultVisitor {
-            type Value = TombstoneDefault;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("null, a boolean, or a string")
-            }
-
-            fn visit_unit<E: serde::de::Error>(self) -> Result<TombstoneDefault, E> {
-                Ok(TombstoneDefault::Null)
-            }
-
-            fn visit_none<E: serde::de::Error>(self) -> Result<TombstoneDefault, E> {
-                Ok(TombstoneDefault::Null)
-            }
-
-            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<TombstoneDefault, E> {
-                Ok(TombstoneDefault::Bool(v))
-            }
-
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<TombstoneDefault, E> {
-                Ok(TombstoneDefault::String(v.to_string()))
-            }
-
-            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<TombstoneDefault, E> {
-                Ok(TombstoneDefault::String(v))
-            }
-        }
-
-        deserializer.deserialize_any(TombstoneDefaultVisitor)
+        SoftDeleteRaw::deserialize(deserializer).map(SoftDelete::from)
     }
-}
-
-/// Deserialize `undelete_value` so that YAML `null` becomes
-/// `Some(TombstoneDefault::Null)` instead of the serde-default `None`.
-fn deser_some_tombstone_default<'de, D>(
-    deserializer: D,
-) -> Result<Option<TombstoneDefault>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    TombstoneDefault::deserialize(deserializer).map(Some)
 }
 
 /// ETL feedback configuration — per-mapping cluster membership table.

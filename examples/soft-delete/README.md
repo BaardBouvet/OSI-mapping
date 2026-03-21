@@ -1,7 +1,7 @@
 # Soft-delete detection
 
 Detect soft-deleted entities (source row exists but is semantically
-deleted) via a `tombstone` configuration.
+deleted) via a `soft_delete` configuration.
 
 ## Scenario
 
@@ -12,24 +12,18 @@ soft delete — when a user deletes a customer, the row stays but
 Without detection, the engine sees the CRM row as normal and emits
 `'update'` or `'noop'` — the soft deletion has no effect on the delta.
 
-With `tombstone: { field: deleted_at, undelete_value: null }`, the engine detects that
-`deleted_at` is non-null and treats the entity as soft-deleted.
+With `soft_delete: deleted_at`, the engine detects that `deleted_at`
+is non-null and treats the entity as soft-deleted.
 When `resurrect: false` (default), the row is suppressed — no stale
 data is written back to CRM.  When `resurrect: true`, the delta emits
 `'update'` with the undelete values so the ETL can clear the marker.
 
 ## Key features
 
-- **`tombstone.field`** — source column carrying the deletion signal.
-- **`tombstone.undelete_value`** — the value this field holds when NOT deleted.
-  null means IS NOT NULL = deleted. Set to `false` for boolean flags, or a string
-  for enum values. Mutually exclusive with `undelete_expression`.
-- **`tombstone.undelete_expression`** — raw SQL expression for the tombstone
-  field when undeleting. Requires `detect`. Mutually exclusive with `undelete_value`.
-- **`tombstone.detect`** — optional SQL expression override for
-  custom detection logic.
-- **`tombstone.undelete_columns`** — optional map of additional columns
-  to override when undeleting (keys auto-included as passthrough).
+- **`soft_delete`** — string shorthand (field name, timestamp strategy)
+  or object with `field` and optional `strategy`.
+- **`strategy`** — `timestamp` (default), `deleted_flag`, or `active_flag`.
+  Determines detection expression and undelete value automatically.
 - **`resurrect`** — controls behavior: `false` (default) suppresses,
   `true` enables undelete.
 - **No UNION ALL** — soft-deleted rows still exist in the source, so
@@ -38,9 +32,9 @@ data is written back to CRM.  When `resurrect: true`, the delta emits
 
 ## How it works
 
-1. The CRM mapping declares `tombstone: { field: deleted_at, undelete_value: null }`.
+1. The CRM mapping declares `soft_delete: deleted_at`.
 2. The delta CASE evaluates the detection before normal insert/update/noop:
    - `WHEN _src_id IS NOT NULL AND ("deleted_at" IS NOT NULL) THEN NULL`
 3. Soft-deleted rows produce `NULL` action — excluded from the delta.
 4. Active rows proceed through normal insert/update/noop logic.
-5. ERP's delta is completely unaffected — no tombstone declared.
+5. ERP's delta is completely unaffected — no soft_delete declared.
