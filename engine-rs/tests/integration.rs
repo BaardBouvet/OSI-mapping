@@ -528,13 +528,18 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                     })
                     .unwrap_or_default();
                 let expects_base = expected_inserts.iter().any(|obj| obj.contains_key("_base"));
-                let any_expected_has_cluster = expected_inserts
-                    .iter()
-                    .any(|obj| obj.contains_key("_cluster_id"));
+                // Require _cluster_id on every expected insert.
+                for exp in &expected_inserts {
+                    assert!(
+                        exp.contains_key("_cluster_id"),
+                        "{dataset}: every expected insert must include _cluster_id.\n  missing in: {}",
+                        serde_json::to_string(exp).unwrap(),
+                    );
+                }
                 let actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> = insert_rows
                     .iter()
                     .map(|row| {
-                        let mut m = delta_row_to_map(row, expects_base, any_expected_has_cluster);
+                        let mut m = delta_row_to_map(row, expects_base, true);
                         for pk in &pk_cols {
                             m.remove(pk);
                         }
@@ -943,6 +948,15 @@ async fn verify_test_expected(
             }
 
             let expects_base = expected_inserts.iter().any(|obj| obj.contains_key("_base"));
+            // Require _cluster_id on every expected insert.
+            for exp in &expected_inserts {
+                if !exp.contains_key("_cluster_id") {
+                    return Err(format!(
+                        "{dataset}: every expected insert must include _cluster_id.\n  missing in: {}",
+                        serde_json::to_string(exp).unwrap(),
+                    ));
+                }
+            }
             let actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> = insert_rows
                 .iter()
                 .map(|row| delta_row_to_map(row, expects_base, true))
@@ -1213,23 +1227,46 @@ async fn verify_test_expected(
 ///
 /// Parses the seed as `"{mapping}:{src_id}"` and queries
 /// `_id_{target}` for the resolved entity ID.
+///
+/// For nested-array elements that share `_src_id`, append query-param
+/// style filters to disambiguate: `"shop_lines:ORD-001?line_number=1"`.
 async fn resolve_cluster_id(
     client: &tokio_postgres::Client,
     seed: &str,
     target_name: &str,
 ) -> String {
-    let (mapping, src_id) = seed
+    // Split off optional ?field=value&field2=value2 filters.
+    let (base, query) = seed.split_once('?').unwrap_or((seed, ""));
+    let (mapping, src_id) = base
         .split_once(':')
         .unwrap_or_else(|| panic!("_cluster_id seed must be 'mapping:src_id', got '{seed}'"));
     let id_view = osi_engine::qi(&format!("_id_{target_name}"));
+
+    let mut sql = format!(
+        "SELECT _entity_id_resolved FROM {id_view} \
+         WHERE _mapping = $1 AND _src_id = $2"
+    );
+    let mut params: Vec<String> = vec![mapping.to_string(), src_id.to_string()];
+
+    if !query.is_empty() {
+        for pair in query.split('&') {
+            let (field, value) = pair.split_once('=').unwrap_or_else(|| {
+                panic!("_cluster_id seed filter must be 'field=value', got '{pair}' in '{seed}'")
+            });
+            params.push(value.to_string());
+            sql.push_str(&format!(
+                " AND {}::text = ${}",
+                osi_engine::qi(field),
+                params.len()
+            ));
+        }
+    }
+    sql.push_str(" LIMIT 1");
+
+    let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+        params.iter().map(|s| s as _).collect();
     let rows = client
-        .query(
-            &format!(
-                "SELECT _entity_id_resolved FROM {id_view} \
-                 WHERE _mapping = $1 AND _src_id = $2 LIMIT 1"
-            ),
-            &[&mapping, &src_id],
-        )
+        .query(&sql, &param_refs)
         .await
         .unwrap_or_else(|e| panic!("resolve _cluster_id for '{seed}' in {id_view}: {e}"));
     assert!(

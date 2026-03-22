@@ -89,4 +89,4 @@ tests:
     expected:
       erp:
         inserts:
-          - { email: "bob@example.com", name: "Bob" }
+          - { _cluster_id: "crm_customers:C1", email: "bob@example.com", name: "Bob" }

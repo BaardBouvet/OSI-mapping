@@ -1109,7 +1109,7 @@ Expected rows must match the **complete** actual output — every column, every 
 - **All source columns** present in the input must appear in the expected row (including unmapped columns like timestamps).
 - **All reverse-mapped fields** must appear with their resolved values (or `null` when resolution produces no value).
 - **`_base` may be omitted** from expected rows for brevity. The test harness strips `_base` from both sides before comparison.
-- **Insert rows** must include `_cluster_id` (seed notation like `"mapping:src_id"`) plus every reverse-mapped field. Fields that cannot be reverse-resolved appear as `null`.
+- **Insert rows** must include `_cluster_id` — see [`_cluster_id` seed format](#_cluster_id-seed-format) below — plus every reverse-mapped field. Fields that cannot be reverse-resolved appear as `null`.
 
 ```yaml
 tests:
@@ -1129,3 +1129,74 @@ tests:
 ```
 
 **Examples:** Every example includes tests. See [inserts-and-deletes](../examples/inserts-and-deletes/) for all three categories, [hello-world](../examples/hello-world/) for simplest case.
+
+### `_cluster_id` seed format
+
+Every expected insert must include a `_cluster_id` field. The engine uses cluster IDs to trace which resolved entity an insert originated from. The test harness enforces this — an insert without `_cluster_id` fails the test.
+
+The value is a **seed** that the harness resolves at runtime to the actual `_entity_id_resolved` hash. The basic format is:
+
+```yaml
+_cluster_id: "<mapping>:<src_id>"
+```
+
+- `<mapping>` — the mapping name that contributed the entity (typically from the *other* source).
+- `<src_id>` — the source primary-key value in that mapping's forward view.
+
+```yaml
+# CRM entity C1 creates an insert in ERP
+erp:
+  inserts:
+    - { _cluster_id: "crm_customers:C1", email: "alice@example.com", name: "Alice" }
+```
+
+#### Nested-array disambiguation
+
+Child mappings that use `parent:` + `array:` share `_src_id` with their parent (the parent's primary key). Multiple child entities from the same parent therefore have identical `_mapping` + `_src_id` pairs. To disambiguate, append `?field=value` query-style filters:
+
+```yaml
+_cluster_id: "shop_lines:ORD-001?line_number=2"
+```
+
+Filters match against columns in the identity view (`_id_{target}`), which includes all target fields from the forward views. Multiple filters chain with `&`:
+
+```yaml
+_cluster_id: "source_tasks:org1?project_name=Alpha&task_id=t1"
+```
+
+**Rules for choosing filter fields:**
+
+Filter field names are **target field names** — the column names in `_id_{target}`, not source field names.
+
+1. Use the **identity field(s)** of the child target — they are always present in the identity view and by definition distinguish entities.
+2. Use the **minimum fields needed** to be unambiguous. If the identity field is globally unique (e.g., `grandchild_id: 11` appears only once across all parents), a single filter suffices even for deeply nested entities. You do *not* need to replicate the full nesting path.
+3. If identity values are only unique within a parent (e.g., child 1 and child 2 both have a grandchild with `grandchild_id: 1`), include the **reference field** that points to the parent to disambiguate. Use the target field name (e.g., `child_ref`), not the source field name.
+
+**Examples:**
+
+```yaml
+# Flat source — src_id is unique, no filter needed
+flat_parents:
+  inserts:
+    - { _cluster_id: "source_parents:P1", parent_id: "P1", name: "Parent A" }
+
+# Nested children share _src_id=P1 — filter by child's identity field
+flat_children:
+  inserts:
+    - { _cluster_id: "source_children:P1?child_id=1", child_id: "1", value: "v" }
+    - { _cluster_id: "source_children:P1?child_id=2", child_id: "2", value: "w" }
+
+# Deeply nested grandchildren — grandchild_id is globally unique, one filter suffices
+flat_grandchildren:
+  inserts:
+    - { _cluster_id: "source_grandchildren:P1?grandchild_id=11", grandchild_id: "11", data: "GC" }
+
+# Grandchild ID only unique within parent — include the reference field
+# (child 1 and child 2 both have grandchild_id "1")
+flat_grandchildren:
+  inserts:
+    - { _cluster_id: "source_grandchildren:P1?child_ref=1&grandchild_id=1", grandchild_id: "1", data: "from child 1" }
+    - { _cluster_id: "source_grandchildren:P1?child_ref=2&grandchild_id=1", grandchild_id: "1", data: "from child 2" }
+```
+
+See [nested-arrays-deep](../../examples/nested-arrays-deep/) for a full working example with two levels of nesting.

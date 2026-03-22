@@ -265,13 +265,20 @@ pub fn render_reverse_view(
                         }
                     };
 
+                    // Prefer the local ref that matches the original
+                    // forward-view value so that merged entities don't
+                    // cause spurious reference changes (reference-preservation).
+                    let order_clause = format!(
+                        " ORDER BY ({return_expr}::text = id._base->>'{source_name}')::int DESC",
+                    );
                     format!(
                         "(SELECT {return_expr} \
                          FROM {id_ref} ref_match \
                          JOIN {id_ref} ref_local \
                            ON ref_local._entity_id_resolved = ref_match._entity_id_resolved \
                          WHERE ({match_clause}) \
-                         AND ref_local._mapping = '{ref_mapping_name}' \
+                         AND ref_local._mapping = '{ref_mapping_name}'\
+                         {order_clause} \
                          LIMIT 1)",
                     )
                 } else {

@@ -45,6 +45,7 @@ Guidance on applicability.
 ### Test requirements
 
 - Every example must include at least one test that shows changes propagating (i.e., `expected:` contains `updates:` or `deletes:`, not just `{}`). Noop-only tests don't prove the mapping works.
+- Every expected insert must include `_cluster_id`. See [Schema reference — `_cluster_id` seed format](docs/reference/schema-reference.md#_cluster_id-seed-format) for the full specification.
 
 ### Catalog (`examples/README.md`)
 

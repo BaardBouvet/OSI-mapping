@@ -97,4 +97,4 @@ tests:
           - { _cluster_id: "hr_system:bob", status_code: 0 }
       crm_status_codes:
         inserts:
-          - { vocabulary_code: "on-leave" }
+          - { _cluster_id: "hr_status_codes:L", vocabulary_code: "on-leave" }

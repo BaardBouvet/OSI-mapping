@@ -112,7 +112,8 @@ tests:
             product: "Industrial Widget"
             qty: 3
         inserts:
-          - order_id: "ORD-001"
+          - _cluster_id: "warehouse_lines:WL3"
+            order_id: "ORD-001"
             line_number: 3
             product: "Sprocket"
             qty: 10
@@ -148,7 +149,8 @@ tests:
             product_name: "Widget"
             qty: 2
         inserts:
-          - order_number: "ORD-001"
+          - _cluster_id: "shop_lines:SL2"
+            order_number: "ORD-001"
             line_number: 2
             product_name: "Gadget"
             qty: 1

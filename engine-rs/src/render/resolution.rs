@@ -209,7 +209,6 @@ pub fn render_resolution_view(
     }
 
     let mut outer_defaults: Vec<(String, String)> = Vec::new();
-
     for (fname, fdef) in &target.fields {
         let qfname = qi(fname);
 

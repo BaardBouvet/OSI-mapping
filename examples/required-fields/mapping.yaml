@@ -98,4 +98,4 @@ tests:
           - { id: "C2" }
       registry:
         inserts:
-          - { org_number: "NO-789", name: "Valid AS", country_code: "NO" }
+          - { _cluster_id: "crm_orgs:C1", org_number: "NO-789", name: "Valid AS", country_code: "NO" }

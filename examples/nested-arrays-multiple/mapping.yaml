@@ -221,13 +221,13 @@ tests:
       source: {}
       hr_departments:
         inserts:
-          - { budget: 500000, dept_id: "d1", dept_name: "Engineering", org_id: "org1" }
-          - { budget: 300000, dept_id: "d2", dept_name: "Sales", org_id: "org1" }
+          - { _cluster_id: "source_departments:org1?dept_id=d1", budget: 500000, dept_id: "d1", dept_name: "Engineering", org_id: "org1" }
+          - { _cluster_id: "source_departments:org1?dept_id=d2", budget: 300000, dept_id: "d2", dept_name: "Sales", org_id: "org1" }
       hr_employees:
         inserts:
-          - { emp_id: "e1", emp_name: "Alice", salary: 90000 }
-          - { emp_id: "e2", emp_name: "Bob", salary: 85000 }
-          - { emp_id: "e3", emp_name: "Carol", salary: 75000 }
+          - { _cluster_id: "source_employees:org1?emp_id=e1", emp_id: "e1", emp_name: "Alice", salary: 90000 }
+          - { _cluster_id: "source_employees:org1?emp_id=e2", emp_id: "e2", emp_name: "Bob", salary: 85000 }
+          - { _cluster_id: "source_employees:org1?emp_id=e3", emp_id: "e3", emp_name: "Carol", salary: 75000 }
 
   - description: "HR system corrects salary via priority — nested source gets updated"
     input:

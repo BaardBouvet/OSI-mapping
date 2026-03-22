@@ -105,11 +105,11 @@ tests:
       shop: {}
       warehouse_orders:
         inserts:
-          - { order_number: "ORD-001", total_amount: 150 }
+          - { _cluster_id: "shop_orders:ORD-001", order_number: "ORD-001", total_amount: 150 }
       warehouse_lines:
         inserts:
-          - { line_number: 1, product_name: "Widget", qty: 2 }
-          - { line_number: 2, product_name: "Gadget", qty: 1 }
+          - { _cluster_id: "shop_lines:ORD-001?line_number=1", line_number: 1, product_name: "Widget", qty: 2 }
+          - { _cluster_id: "shop_lines:ORD-001?line_number=2", line_number: 2, product_name: "Gadget", qty: 1 }
 
   - description: "Both sources share an order — warehouse total wins via priority"
     input:
@@ -130,5 +130,5 @@ tests:
               - { line_num: 1, item: "Widget", qty: 2 }
       warehouse_lines:
         inserts:
-          - { order_number: "W1", line_number: 1, product_name: "Widget", qty: 2 }
+          - { _cluster_id: "shop_lines:ORD-001?line_number=1", order_number: "W1", line_number: 1, product_name: "Widget", qty: 2 }
 

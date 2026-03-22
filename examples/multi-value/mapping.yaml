@@ -137,8 +137,10 @@ tests:
     expected:
       crm:
         inserts:
-          - email: "dave@other.com"
+          - _cluster_id: "cc_contacts:CC3"
+            email: "dave@other.com"
             phone: "555-9000"
       contact_center:
         inserts:
-          - email: "carol@example.com"
+          - _cluster_id: "crm_contacts:C1"
+            email: "carol@example.com"

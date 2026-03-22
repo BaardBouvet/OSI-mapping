@@ -96,7 +96,7 @@ tests:
           - { _cluster_id: "erp_contact:C2", company_id: null, primary_email: "orphan@example.com" }
       erp_customer:
         inserts:
-          - { website: "wrong.com", assigned_account_manager: null }
+          - { _cluster_id: "crm_company:2000", website: "wrong.com", assigned_account_manager: null }
 
   - description: "Namespace collision — ID '100' in both systems means different things"
     input:
