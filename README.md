@@ -35,6 +35,20 @@ docs/
 engine-rs/               # Rust reference engine (YAML → PostgreSQL views)
 ```
 
+## Development Container
+
+If you do not want Rust installed on your host machine, use the repo devcontainer:
+
+```bash
+# Open the repository in VS Code
+code .
+
+# Then in VS Code:
+# Ctrl+Shift+P -> "Dev Containers: Reopen in Container"
+```
+
+This container includes Rust, Python, PostgreSQL client tooling, and Docker access for integration tests.
+
 ## Resolution Strategies
 
 Each target field declares a resolution strategy that determines how conflicts between sources are handled:

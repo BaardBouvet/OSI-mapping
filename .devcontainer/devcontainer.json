@@ -1,0 +1,24 @@
+{
+  "name": "OSI Mapping",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "tamasfe.even-better-toml",
+        "ms-python.python",
+        "redhat.vscode-yaml"
+      ]
+    }
+  },
+  "postCreateCommand": "cd engine-rs && cargo fetch",
+  "workspaceFolder": "/workspaces/OSI-mapping",
+  "remoteUser": "vscode"
+}

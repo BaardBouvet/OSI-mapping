@@ -1573,11 +1573,26 @@ async fn setup_pg() -> (
         .await
         .expect("Failed to start Postgres container");
 
-    let host_port = container.get_host_port_ipv4(5432).await.unwrap();
-    let conn_str =
-        format!("host=127.0.0.1 port={host_port} user=postgres password=postgres dbname=postgres");
+    let host = container
+        .get_host()
+        .await
+        .expect("Failed to determine container host")
+        .to_string();
+    let host_port = container
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("Failed to map Postgres host port");
 
-    let (client, connection) = tokio_postgres::connect(&conn_str, NoTls)
+    let mut config = tokio_postgres::Config::new();
+    config
+        .host(&host)
+        .port(host_port)
+        .user("postgres")
+        .password("postgres")
+        .dbname("postgres");
+
+    let (client, connection) = config
+        .connect(NoTls)
         .await
         .expect("Failed to connect to Postgres");
 

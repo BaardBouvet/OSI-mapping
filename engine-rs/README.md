@@ -48,9 +48,12 @@ Analytics views are always generated. Reverse and delta views are opt-in per map
 Or use the devcontainer (recommended):
 
 ```bash
-# Open in VS Code with Dev Containers extension
-code engine-rs/
+# Open the repository root in VS Code with Dev Containers extension
+code .
 # Then: Ctrl+Shift+P → "Reopen in Container"
+
+# In the container terminal
+cd engine-rs
 ```
 
 ### Running Tests
