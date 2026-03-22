@@ -1,0 +1,93 @@
+version: "1.0"
+description: >
+  Opaque JSON fields mapped as atomic values. Source fields containing JSON
+  arrays or objects (e.g. tags, attributes) map directly to target fields
+  with type: jsonb. The entire blob is treated as one value — no sub-field
+  extraction or per-element resolution. Coalesce picks the winning source's
+  JSON wholesale.
+
+sources:
+  catalog_a:
+    primary_key: sku
+  catalog_b:
+    primary_key: product_id
+
+targets:
+  product:
+    fields:
+      sku:
+        strategy: identity
+      name:
+        strategy: coalesce
+      tags:
+        strategy: coalesce
+        type: jsonb
+      attributes:
+        strategy: coalesce
+        type: jsonb
+
+mappings:
+  - name: catalog_a
+    source: catalog_a
+    target: product
+    priority: 1
+    fields:
+      - source: sku
+        target: sku
+      - source: name
+        target: name
+      - source: tags
+        target: tags
+      - source: attributes
+        target: attributes
+
+  - name: catalog_b
+    source: catalog_b
+    target: product
+    fields:
+      - source: product_id
+        target: sku
+      - source: product_name
+        target: name
+      - source: tags
+        target: tags
+      - source: attributes
+        target: attributes
+
+tests:
+  - description: "Catalog A wins — catalog B gets A's tags and attributes"
+    input:
+      catalog_a:
+        - sku: "WIDGET-1"
+          name: "Widget"
+          tags: ["electronics", "sale"]
+          attributes: { color: "red", size: "medium" }
+      catalog_b:
+        - product_id: "WIDGET-1"
+          product_name: "Widget Pro"
+          tags: ["gadgets"]
+          attributes: { color: "blue" }
+    expected:
+      catalog_b:
+        updates:
+          - product_id: "WIDGET-1"
+            product_name: "Widget"
+            tags: ["electronics", "sale"]
+            attributes: { color: "red", size: "medium" }
+
+  - description: "New product inserts into catalog B with JSON intact"
+    input:
+      catalog_a:
+        - sku: "WIDGET-1"
+          name: "Widget"
+          tags: ["electronics", "sale"]
+          attributes: { color: "red", size: "medium" }
+      catalog_b: []
+    expected:
+      catalog_b:
+        inserts:
+          - _cluster_id: "catalog_a:WIDGET-1"
+            product_id: "WIDGET-1"
+            product_name: "Widget"
+            tags: ["electronics", "sale"]
+            attributes: { color: "red", size: "medium" }

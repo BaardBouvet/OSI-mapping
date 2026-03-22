@@ -38,6 +38,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`hierarchy-merge`](hierarchy-merge/README.md) | Merging 2-level and 3-level hierarchies via cross-depth identity resolution |
 | [`inserts-and-deletes`](inserts-and-deletes/README.md) | Handling new and removed records |
 | [`json-fields`](json-fields/README.md) | Extracting sub-fields from JSONB source columns via `source_path` |
+| [`json-opaque`](json-opaque/README.md) | Whole JSON values mapped as atomic blobs — no sub-field extraction |
 | [`merge-curated`](merge-curated/README.md) | Curated merge with manual overrides |
 | [`merge-generated-ids`](merge-generated-ids/README.md) | Merge with system-generated identifiers |
 | [`merge-groups`](merge-groups/README.md) | Group-based atomic resolution |
