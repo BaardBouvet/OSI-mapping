@@ -55,7 +55,7 @@ tests:
     expected:
       erp:
         inserts:
-          - { _cluster_id: "crm_customers:C2", email: "bob@example.com", name: "Bob" }
+          - { _cluster_id: "crm_customers:C2", cust_id: null, email: "bob@example.com", name: "Bob" }
 
   - description: >
       Baseline — same data but Alice is NOT soft-deleted.
@@ -70,7 +70,7 @@ tests:
     expected:
       erp:
         inserts:
-          - { _cluster_id: "crm_customers:C2", email: "bob@example.com", name: "Bob" }
+          - { _cluster_id: "crm_customers:C2", cust_id: null, email: "bob@example.com", name: "Bob" }
 
   - description: >
       Soft-deleted CRM row must not win resolution.

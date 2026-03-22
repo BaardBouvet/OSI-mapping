@@ -1,4 +1,13 @@
-# Nested Array Reconstruction for Insert Rows
+# Nested array reconstruction for insert rows
+
+**Status:** Done
+
+## Design requirement
+
+Nested array reconstruction must support **arbitrary nesting depth** — the
+engine must not impose a limit on the number of nesting levels. This is a
+fundamental design constraint: any solution must work for 2-level, 3-level,
+and N-level hierarchies alike.
 
 ## Problem
 
@@ -7,115 +16,113 @@ When the delta view produces an **insert** row for a source that has nested arra
 NULL or empty. This happens because:
 
 1. Insert rows have `_src_id = NULL` (no existing source row to match).
-2. The nested CTE (`_nested_phones`) groups by `_src_id` and filters
-   `WHERE n._src_id IS NOT NULL`, so insert rows are excluded.
-3. The LEFT JOIN in the final delta SELECT finds no matching `_parent_key`,
+2. The nested CTE groups by the `parent_fk_field` which resolves through
+   a reference query returning `ref_local._src_id` — NULL for inserts.
+3. The `WHERE n.{group_col} IS NOT NULL` filter excludes insert rows.
+4. The LEFT JOIN in the final delta SELECT finds no matching `_parent_key`,
    producing NULL for the nested column.
-
-### Concrete example (multi-value test 3)
-
-Carol exists only in CRM. The engine correctly generates an insert for
-`contact_center`, but the insert has no `phones` array — even though Carol's
-phone ("555-4000") is available in the resolved `phone_entry` target.
-
-### Secondary issue: NULL phone entries (multi-value test 2)
-
-When CRM's `phone` is NULL, the `crm_phones` mapping still contributes a
-`phone_entry` row with `phone = NULL`. The nested CTE for `contact_center`
-aggregates ALL phone_entry rows (from both mappings), so this NULL entry
-appears in the phones array as `{number: null}`.
 
 ## Root Cause
 
 The nested CTE joins on `_src_id` (the source primary key of the parent row).
 Insert rows don't have a source PK, but they DO have a `_cluster_id` (entity ID).
-The child rows in the reverse view also have an entity-level key (via the
-`contact_ref` → `contact` reference). The join could theoretically use the
-entity/cluster key instead of the source PK for insert rows.
+The child reverse view's reference query for `parent_fields` returns
+`ref_local._src_id`, which is NULL when the parent has no source row.
 
-## Proposed Solution
+## Solution
 
-### Phase 1: Fix nested arrays on insert rows
+Two targeted changes — no UNION ALL or CTE restructuring needed:
 
-**Approach**: Dual-path nested CTE — one path for existing rows (join on
-`_src_id`), one path for insert rows (join on `_cluster_id` / entity key).
+### 1. Reverse view: COALESCE fallback on reference subquery (`reverse.rs`)
 
-1. **Modify `build_nested_ctes()`** to generate a UNION ALL CTE:
-   ```sql
-   _nested_phones AS (
-     -- Existing rows: join on source PK (current logic)
-     SELECT n._src_id AS _parent_key,
-            COALESCE(jsonb_agg(...), '[]'::jsonb) AS phones
-     FROM _reverse_cc_phones n
-     WHERE n._src_id IS NOT NULL
-     GROUP BY n._src_id
+For `parent_fields` references, the existing reference subquery finds the
+parent mapping's identity entry and returns its `_src_id`. For insert
+entities (where the parent mapping has no source row), the subquery's
+`JOIN ... AND ref_local._mapping = '...'` produces zero rows → NULL.
 
-     UNION ALL
+Fix: wrap the entire reference subquery in a COALESCE with a fallback
+that returns the entity's cluster ID from **any** identity entry:
 
-     -- Insert rows: join on entity cluster ID
-     SELECT n._cluster_id AS _parent_key,
-            COALESCE(jsonb_agg(...), '[]'::jsonb) AS phones
-     FROM _reverse_cc_phones n
-     WHERE n._src_id IS NULL AND n._cluster_id IS NOT NULL
-     GROUP BY n._cluster_id
-   )
-   ```
+```sql
+COALESCE(
+  -- Primary: find the specific mapping's identity entry
+  (SELECT ref_local._src_id
+   FROM _id_contact ref_match
+   JOIN _id_contact ref_local
+     ON ref_local._entity_id_resolved = ref_match._entity_id_resolved
+   WHERE (...) AND ref_local._mapping = 'cc_contacts'
+   ORDER BY ... LIMIT 1),
+  -- Fallback: entity cluster ID from any matching identity entry
+  (SELECT ref_fb._entity_id_resolved
+   FROM _id_contact ref_fb
+   WHERE (...)
+   LIMIT 1)
+)
+```
 
-2. **Modify delta final SELECT** to join on `_cluster_id` for insert rows:
-   ```sql
-   LEFT JOIN _nested_phones
-     ON _nested_phones._parent_key = CASE
-       WHEN p._action = 'insert' THEN p._cluster_id
-       ELSE p.cid::text
-     END
-   ```
+For existing parents, the primary subquery returns the PK (unchanged).
+For insert parents, the fallback returns the entity cluster ID, making
+`_parent_key` non-NULL and passing the `IS NOT NULL` filter.
 
-**Complexity**: Medium. The main challenge is that the child reverse view
-currently joins on `_src_id` of the parent mapping. For insert rows, there
-is no `_src_id`, so the child reverse view needs a secondary join path via
-the entity ID (cluster_id). This requires:
-- The child reverse view to expose `_cluster_id` alongside `_src_id`
-- The nested CTE to handle both join keys
+### 2. Delta join: CASE on insert (`delta.rs`)
 
-### Phase 2: Filter NULL entries from cross-source contributions
+Change the root-level nested CTE join from:
 
-**Problem**: `crm_phones` contributes a NULL phone entry that appears in
-`contact_center`'s phones array.
+```sql
+LEFT JOIN _nested_lines ON _nested_lines._parent_key = p.order_id::text
+```
 
-**Approach**: Add a `WHERE` filter in the nested CTE that excludes rows where
-all non-key fields are NULL. This is already partially implied by the
-`direction: forward_only` annotation on `crm_phones` fields, but the reverse
-view still generates rows.
+to:
 
-Alternatively, the `direction: forward_only` fields should suppress the
-mapping's contribution to the child target's reverse view entirely, since
-those fields are declared as not participating in reverse sync.
+```sql
+LEFT JOIN _nested_lines ON _nested_lines._parent_key =
+  CASE WHEN p._src_id IS NULL THEN p."_cluster_id"
+       ELSE p.order_id::text END
+```
 
-**Complexity**: Low-Medium. The `direction: forward_only` check already exists
-in field filtering; extending it to suppress entire child target rows in the
-reverse view when ALL fields are forward_only is straightforward.
+For existing rows, the join uses the PK column (unchanged behavior).
+For insert rows, the join uses `_cluster_id`, which matches the
+`_entity_id_resolved` fallback from change 1.
 
-## Files to Modify
+### Why this works at arbitrary depth
+
+Only the **root-level** join needs the fix. Intermediate joins (within the
+CTE tree) use identity fields from the resolved target view, which are
+always populated for entities that exist. The `ref_is_nested` code path in
+`reverse.rs` already returns identity field values for nested-to-nested
+references, so intermediate levels work without modification.
+
+## Files Modified
 
 | File | Change |
 |------|--------|
-| `src/render/delta.rs` | `build_nested_ctes()`: dual-path UNION ALL for insert rows |
-| `src/render/delta.rs` | Final SELECT JOIN: conditional join key based on `_action` |
-| `src/render/reverse.rs` | Expose `_cluster_id` in child reverse views |
-| `src/render/reverse.rs` | Consider suppressing all-forward_only child mappings |
+| `src/render/reverse.rs` | Parent-fields reference: outer COALESCE with fallback to `ref_fb._entity_id_resolved` |
+| `src/render/delta.rs` | Root nested CTE join: `CASE WHEN p._src_id IS NULL ...`; NULL entry filter on leaf and interior CTEs |
+| `examples/multi-value/mapping.yaml` | Test 3: contact_center insert now includes `phones: [{number: "555-4000"}]` |
 
-## Test Plan
+## Phase 2 — NULL entry filtering
 
-- **multi-value test 3**: Carol's `contact_center` insert should include `phones: [{number: "555-4000"}]`
-- **multi-value test 2**: Bob's `contact_center` update should NOT include `{number: null}` entry
-- **nested-arrays test 1**: `warehouse_lines` inserts should include correct `order_number` reference
-- Existing nested-array examples must continue to pass
+Cross-source contributions can inject all-NULL entries into nested arrays.
+For example, when CRM maps a scalar `phone` (value NULL) into a nested
+`phones` array, the reverse view produces a row with `number = NULL`
+whose parent FK is valid. Without filtering, `jsonb_agg` produces
+`{number: null}` in the array.
 
-## Open Questions
+### Fix (delta.rs — `build_nested_ctes`)
 
-1. Should the dual-path approach use `_cluster_id` or the resolved entity key
-   from the target's identity view? `_cluster_id` is available in the delta
-   view directly, making it simpler.
-2. For deeply nested arrays (3+ levels), the insert-path reconstruction may
-   need to cascade through multiple entity references. Is this worth
-   supporting in Phase 1 or should it be deferred?
+Add a WHERE clause fragment to both leaf and interior CTEs:
+
+- **Scalar arrays**: `AND n.{scalar_field} IS NOT NULL`
+- **Object arrays**: `AND NOT (n.{f1} IS NULL AND n.{f2} IS NULL AND ...)`
+  where f1, f2, … are all `item_fields` excluding order metadata targets.
+
+The filter triggers only when *every* value field is NULL (rows with at
+least one non-NULL value are preserved). If there are no value fields
+(structural nodes with only child branches), the filter is omitted.
+
+### Impact
+
+| File | Change |
+|------|--------|
+| `src/render/delta.rs` | `null_filter` computed after `obj_expr`, appended to WHERE in leaf and interior CTEs |
+| `examples/multi-value/mapping.yaml` | Test 2: removed `{number: null}` from expected phones; CC no longer shows an update (phones unchanged → noop) |

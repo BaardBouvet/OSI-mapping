@@ -117,13 +117,7 @@ tests:
       crm:
         updates:
           - { id: "C1", email: "bob@example.com", name: "Bob", phone: "555-3000" }
-      contact_center:
-        updates:
-          - cid: "CC2"
-            email: "bob@example.com"
-            phones:
-              - { number: "555-3000" }
-              - { number: null }
+      contact_center: {}
 
   - description: "No overlap — different emails, CRM gets insert for CC-only contact"
     input:
@@ -138,9 +132,14 @@ tests:
       crm:
         inserts:
           - _cluster_id: "cc_contacts:CC3"
+            id: null
             email: "dave@other.com"
+            name: null
             phone: "555-9000"
       contact_center:
         inserts:
           - _cluster_id: "crm_contacts:C1"
+            cid: null
             email: "carol@example.com"
+            phones:
+              - { number: "555-4000" }

@@ -208,8 +208,11 @@ tests:
               - { name: "Design mockups", status: "done", hours: 10 }
         inserts:
           - _cluster_id: "enterprise_projects:E1?project_name=Mobile App"
+            id: null
             project_name: "Mobile App"
             owner: "Dave"
+            tasks:
+              - { name: "Build prototype", status: "active", hours: 16 }
       enterprise_pm:
         updates:
           - id: "E1"

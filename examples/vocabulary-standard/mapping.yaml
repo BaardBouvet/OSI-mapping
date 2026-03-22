@@ -78,4 +78,4 @@ tests:
           - { customer_id: "C001", country: "Denmark" }
       crm_system:
         inserts:
-          - { _cluster_id: "erp_system:C002", country_code: "DK" }
+          - { _cluster_id: "erp_system:C002", account_id: "C002", country_code: "DK" }

@@ -120,15 +120,17 @@ tests:
           - { order_id: "ORD-100", external_ref: "PO-2024-001", order_date: "2024-01-15", customer_name: "Acme Corp", status: "shipped" }
       erp_order_lines:
         inserts:
-          - { _cluster_id: "crm_line_items:LI-1001", product_name: "Gadget X", quantity: 10, unit_price: 25 }
+          - { _cluster_id: "crm_line_items:LI-1001", order_id: "ORD-100", line_no: null, product_name: "Gadget X", quantity: 10, unit_price: 25 }
       crm_line_items:
         inserts:
           - _cluster_id: 'erp_order_lines:{"line_no": 1, "order_id": "ORD-100"}'
+            line_item_id: null
             order_ref: "CRM-500"
             product_name: "Widget A"
             quantity: 5
             price: 10.50
           - _cluster_id: 'erp_order_lines:{"line_no": 2, "order_id": "ORD-100"}'
+            line_item_id: null
             order_ref: "CRM-500"
             product_name: "Widget B"
             quantity: 3

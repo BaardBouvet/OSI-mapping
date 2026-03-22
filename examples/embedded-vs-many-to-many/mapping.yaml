@@ -119,4 +119,4 @@ tests:
           - { id: "C1", domain: "acme.com", contact_name: "Charlie Johnson", contact_email: "charlie@acme.com" }
       erp_customer_contacts:
         inserts:
-          - { _cluster_id: "crm_embedded_associations:C1", customer_id: "100", relation_type: "primary" }
+          - { _cluster_id: "crm_embedded_associations:C1", id: null, contact_id: null, customer_id: "100", relation_type: "primary" }

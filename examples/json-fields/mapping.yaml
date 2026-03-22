@@ -85,6 +85,7 @@ tests:
       erp:
         inserts:
           - _cluster_id: "crm_customers:C1"
+            cust_id: null
             email: "alice@example.com"
             city: "Oslo"
             tier: "gold"

@@ -113,6 +113,7 @@ tests:
             qty: 3
         inserts:
           - _cluster_id: "warehouse_lines:WL3"
+            line_id: null
             order_id: "ORD-001"
             line_number: 3
             product: "Sprocket"
@@ -150,6 +151,7 @@ tests:
             qty: 2
         inserts:
           - _cluster_id: "shop_lines:SL2"
+            line_id: null
             order_number: "ORD-001"
             line_number: 2
             product_name: "Gadget"

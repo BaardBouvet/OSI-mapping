@@ -114,11 +114,11 @@ tests:
           - { id: "CON1", email: "john@example.com", contact_name: "John A. Doe", contact_phone: "555-1001", contact_type: "person" }
           - { id: "CON2", email: "info@acme.com", contact_name: "Acme Corporation", contact_phone: "555-2001", contact_type: "company" }
         inserts:
-          - { _cluster_id: "crm_persons:CRM2", email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-4000", contact_type: "person" }
-          - { _cluster_id: "erp_companies:ERP2", email: "sales@techco.com", contact_name: "TechCo Inc", contact_phone: "555-5000", contact_type: "company" }
+          - { _cluster_id: "crm_persons:CRM2", id: null, email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-4000", contact_type: "person" }
+          - { _cluster_id: "erp_companies:ERP2", id: null, email: "sales@techco.com", contact_name: "TechCo Inc", contact_phone: "555-5000", contact_type: "company" }
       crm_persons:
         inserts:
-          - { _cluster_id: "contacts_person:CON3", email: "bob@example.com", full_name: "Bob Wilson", phone_number: "555-3000" }
+          - { _cluster_id: "contacts_person:CON3", id: null, email: "bob@example.com", full_name: "Bob Wilson", phone_number: "555-3000" }
   - description: "CRM persons insert into empty contacts table"
     input:
       contacts: []
@@ -128,4 +128,4 @@ tests:
     expected:
       contacts:
         inserts:
-          - { _cluster_id: "crm_persons:CRM1", email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-1000", contact_type: "person" }
+          - { _cluster_id: "crm_persons:CRM1", id: null, email: "alice@example.com", contact_name: "Alice Brown", contact_phone: "555-1000", contact_type: "person" }

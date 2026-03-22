@@ -63,7 +63,7 @@ tests:
         updates:
           - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }
         inserts:
-          - { _cluster_id: "crm:2", contact_email: "bob@example.com", contact_name: "Bob" }
+          - { _cluster_id: "crm:2", id: null, contact_email: "bob@example.com", contact_name: "Bob" }
 
   - description: "ERP-only contact triggers insert into CRM"
     input:
@@ -75,7 +75,7 @@ tests:
     expected:
       crm:
         inserts:
-          - { _cluster_id: "erp:200", email: "carol@example.com", name: "Carol", _base: null }
+          - { _cluster_id: "erp:200", id: null, email: "carol@example.com", name: "Carol", _base: null }
       erp:
         updates:
           - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }

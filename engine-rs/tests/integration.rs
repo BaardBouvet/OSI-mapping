@@ -515,18 +515,6 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                     .unwrap_or_else(|e| panic!("query {delta_view} inserts: {e}"));
 
                 // Build actual insert maps directly from delta view columns.
-                // Strip source primary key columns — inserts are new rows so PKs are always null.
-                let pk_cols: Vec<String> = doc
-                    .sources
-                    .get(dataset.as_str())
-                    .map(|src| {
-                        src.primary_key
-                            .columns()
-                            .into_iter()
-                            .map(|s| s.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
                 let expects_base = expected_inserts.iter().any(|obj| obj.contains_key("_base"));
                 // Require _cluster_id on every expected insert.
                 for exp in &expected_inserts {
@@ -538,13 +526,7 @@ async fn execute_example(client: &tokio_postgres::Client, example_name: &str) {
                 }
                 let actual_inserts: Vec<serde_json::Map<String, serde_json::Value>> = insert_rows
                     .iter()
-                    .map(|row| {
-                        let mut m = delta_row_to_map(row, expects_base, true);
-                        for pk in &pk_cols {
-                            m.remove(pk);
-                        }
-                        m
-                    })
+                    .map(|row| delta_row_to_map(row, expects_base, true))
                     .collect();
 
                 // Resolve expected _cluster_id seeds: "mapping:src_id" → look up
@@ -988,29 +970,44 @@ async fn verify_test_expected(
                 expected_resolved.push(resolved);
             }
 
-            // Subset matching: each expected insert must match one actual insert
-            // on all keys present in expected. Extra keys in actual are ignored.
-            let mut unmatched: Vec<&serde_json::Map<String, serde_json::Value>> =
-                actual_inserts.iter().collect();
-            for exp in &expected_resolved {
-                let pos = unmatched
-                    .iter()
-                    .position(|actual| exp.iter().all(|(k, v)| actual.get(k) == Some(v)));
-                match pos {
-                    Some(i) => {
-                        unmatched.remove(i);
-                    }
-                    None => {
-                        let actuals_str: Vec<String> = actual_inserts
-                            .iter()
-                            .map(|m| serde_json::to_string(m).unwrap())
-                            .collect();
-                        return Err(format!(
-                            "{dataset}: no matching insert for expected: {}\n  actuals: {}",
-                            serde_json::to_string(exp).unwrap(),
-                            actuals_str.join("\n           "),
-                        ));
-                    }
+            // Full-column matching: expected inserts must specify every column
+            // the delta produces (except _action, _base unless opted-in, and
+            // source PK columns which are always null).  This catches missing
+            // nested arrays and unexpected NULL fields.
+            //
+            // Normalize actual values to text to match expected normalization,
+            // then sort and compare row-by-row.
+            let actual_normalized: Vec<serde_json::Map<String, serde_json::Value>> = actual_inserts
+                .iter()
+                .map(|m| {
+                    m.iter()
+                        .map(|(k, v)| (k.clone(), normalize_json_to_text(v)))
+                        .collect()
+                })
+                .collect();
+            let mut actual_sorted: Vec<String> = actual_normalized
+                .iter()
+                .map(|m| serde_json::to_string(m).unwrap())
+                .collect();
+            actual_sorted.sort();
+            let mut expected_sorted: Vec<String> = expected_resolved
+                .iter()
+                .map(|m| serde_json::to_string(m).unwrap())
+                .collect();
+            expected_sorted.sort();
+
+            if actual_sorted.len() != expected_sorted.len() {
+                return Err(format!(
+                    "{dataset}: insert count mismatch: got {} expected {}\n  actual: {actual_sorted:?}\n  expected: {expected_sorted:?}",
+                    actual_sorted.len(),
+                    expected_sorted.len(),
+                ));
+            }
+            for (actual, exp) in actual_sorted.iter().zip(expected_sorted.iter()) {
+                if actual != exp {
+                    return Err(format!(
+                        "{dataset}: insert row mismatch.\n  actual:   {actual}\n  expected: {exp}"
+                    ));
                 }
             }
         } else {

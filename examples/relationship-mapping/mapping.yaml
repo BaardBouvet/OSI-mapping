@@ -133,14 +133,14 @@ tests:
     expected:
       crm_contacts:
         inserts:
-          - { _cluster_id: "erp_contacts_person:1001", contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
+          - { _cluster_id: "erp_contacts_person:1001", contact_id: null, contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
       crm_associations:
         inserts:
-          - { _cluster_id: "erp_contacts_assoc:1001" }
+          - { _cluster_id: "erp_contacts_assoc:1001", company_id: "C1", contact_id: null, relation_type: "employee" }
       erp_companies:
         inserts:
-          - { _cluster_id: "crm_companies:C2", name: "TechStart", email: "hello@techstart.com" }
+          - { _cluster_id: "crm_companies:C2", id: null, name: "TechStart", email: "hello@techstart.com" }
       erp_contacts:
         inserts:
-          - { _cluster_id: "crm_contacts:P1", name: "Alice Johnson", email: "alice@example.com" }
-          - { _cluster_id: "crm_contacts:P2", name: "Bob Smith", email: "bob@example.com" }
+          - { _cluster_id: "crm_contacts:P1", id: null, name: "Alice Johnson", email: "alice@example.com" }
+          - { _cluster_id: "crm_contacts:P2", id: null, name: "Bob Smith", email: "bob@example.com" }

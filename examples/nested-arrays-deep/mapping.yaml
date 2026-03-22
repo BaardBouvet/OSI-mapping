@@ -101,6 +101,7 @@ mappings:
       - source: parent_id
         target: parent_ref
         references: flat_parents
+        reverse_required: true
       - source: value
         target: value
         priority: 1
@@ -114,6 +115,7 @@ mappings:
       - source: child_id
         target: child_ref
         references: flat_children
+        reverse_required: true
       - source: data
         target: data
         priority: 1
@@ -144,18 +146,9 @@ tests:
       source: {}
       flat_parents:
         inserts:
-          - { _cluster_id: "source_parents:P1", name: "Parent A", parent_id: "P1" }
-      flat_children:
-        inserts:
-          - { _cluster_id: "source_children:P1?child_id=1", child_id: "1", value: "Child 1" }
-          - { _cluster_id: "source_children:P1?child_id=2", child_id: "2", value: "Child 2" }
-      flat_grandchildren:
-        inserts:
-          - { _cluster_id: "source_grandchildren:P1?grandchild_id=11", grandchild_id: "11", data: "GC 1.1" }
-          - { _cluster_id: "source_grandchildren:P1?grandchild_id=12", grandchild_id: "12", data: "GC 1.2" }
-          - { _cluster_id: "source_grandchildren:P1?grandchild_id=21", grandchild_id: "21", data: "GC 2.1" }
-          - { _cluster_id: "source_grandchildren:P1?grandchild_id=22", grandchild_id: "22", data: "GC 2.2" }
-          - { _cluster_id: "source_grandchildren:P1?grandchild_id=23", grandchild_id: "23", data: "GC 2.3" }
+          - { _cluster_id: "source_parents:P1", pid: null, name: "Parent A", parent_id: "P1" }
+      flat_children: {}
+      flat_grandchildren: {}
 
   - description: "Flat source overrides grandchild data via priority"
     input:

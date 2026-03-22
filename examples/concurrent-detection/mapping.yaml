@@ -60,7 +60,7 @@ tests:
         updates:
           - { id: "C1", company_email: "acme@example.org", company_name: "Acme Inc", company_account: "A12345" }
         inserts:
-          - { _cluster_id: "customers:CU2", company_email: "orphan@example.com", company_account: null, company_name: "No Account" }
+          - { _cluster_id: "customers:CU2", id: null, company_email: "orphan@example.com", company_account: null, company_name: "No Account" }
       customers:
         updates:
           - { id: "CU1", customer_email: "acme@example.org", customer_name: "Acme Inc", customer_account: "A12345" }

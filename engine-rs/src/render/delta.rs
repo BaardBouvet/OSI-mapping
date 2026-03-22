@@ -1180,6 +1180,30 @@ fn build_nested_ctes(
 
         format!("jsonb_build_object({})", obj_parts.join(", "))
     };
+
+    // Filter out rows where every value field is NULL.  These arise from
+    // cross-source contributions that carry no actual data (e.g. a scalar
+    // NULL being expanded into a nested array element).
+    let null_filter = if let Some(ref sf) = node.scalar_field {
+        format!(" AND {table_alias}{} IS NOT NULL", qi(sf))
+    } else {
+        let value_fields: Vec<&str> = node
+            .item_fields
+            .iter()
+            .filter(|f| !order_targets.contains(f.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+        if value_fields.is_empty() {
+            String::new()
+        } else {
+            let null_checks: Vec<String> = value_fields
+                .iter()
+                .map(|f| format!("{table_alias}{} IS NULL", qi(f)))
+                .collect();
+            format!(" AND NOT ({})", null_checks.join(" AND "))
+        }
+    };
+
     let qgroup = qi(group_col);
     let qsegment = qi(&node.segment);
 
@@ -1233,7 +1257,7 @@ fn build_nested_ctes(
                SELECT n.{qgroup} AS _parent_key, \
              COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_leaf}), '[]'::jsonb) AS {qsegment}\n\
                FROM {rev_view} AS n{del_join}\n\
-               WHERE n.{qgroup} IS NOT NULL{del_where}\n\
+               WHERE n.{qgroup} IS NOT NULL{del_where}{null_filter}\n\
                GROUP BY n.{qgroup}\n\
              )",
         ));
@@ -1262,7 +1286,7 @@ fn build_nested_ctes(
              COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_nested}), '[]'::jsonb) AS {qsegment}\n\
              FROM {rev_view} AS n\n\
              {joins}\n\
-             WHERE n.{qgroup} IS NOT NULL\n\
+             WHERE n.{qgroup} IS NOT NULL{null_filter}\n\
              GROUP BY n.{qgroup}\n\
              )",
             joins = joins.join("\n"),
@@ -1806,9 +1830,14 @@ fn render_delta_with_nested(
             .as_deref()
             .map(qi)
             .unwrap_or_else(|| qpk.clone());
+        // For insert rows (_src_id IS NULL) the PK column is the resolved
+        // identity value, but the nested CTE's _parent_key falls back to
+        // _entity_id_resolved.  Match via _cluster_id for inserts.
         join_clauses.push(format!(
-            "LEFT JOIN {} ON {}._parent_key = p.{join_col}::text",
-            rr.alias, rr.alias,
+            "LEFT JOIN {alias} ON {alias}._parent_key = \
+             CASE WHEN p._src_id IS NULL THEN p.\"_cluster_id\" \
+             ELSE p.{join_col}::text END",
+            alias = rr.alias,
         ));
     }
 
@@ -1916,6 +1945,17 @@ mappings:
         assert!(
             sql.contains("_parent_key"),
             "nested array CTE should include _parent_key"
+        );
+        // Insert-aware join: for insert rows (_src_id IS NULL) the join falls
+        // back to _cluster_id so nested arrays populate on insert rows.
+        assert!(
+            sql.contains("CASE WHEN p._src_id IS NULL THEN p.\"_cluster_id\""),
+            "nested CTE join should fall back to _cluster_id for insert rows"
+        );
+        // Phase 2: null-entry filter removes all-NULL cross-source contributions.
+        assert!(
+            sql.contains("AND NOT (n.\"lid\" IS NULL)"),
+            "nested CTE should filter all-NULL value rows"
         );
     }
 

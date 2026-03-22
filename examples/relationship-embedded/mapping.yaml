@@ -131,13 +131,14 @@ tests:
     expected:
       crm_contacts:
         inserts:
-          - { _cluster_id: "erp_companies_person:100", contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
+          - { _cluster_id: "erp_companies_person:100", contact_id: null, contact_name: "Charlie Brown", contact_email: "charlie@example.com" }
       crm_associations:
         inserts:
-          - { _cluster_id: "erp_companies_assoc:100", company_id: "C1", relation_type: "employee" }
+          # PK is [company_id, contact_id, relation_type] — all carry resolved values.
+          - { _cluster_id: "erp_companies_assoc:100", company_id: "C1", contact_id: null, relation_type: "employee" }
       erp_companies:
         inserts:
-          - { _cluster_id: "crm_companies:C2", name: "TechStart", email: "hello@techstart.com", contact_name: null, contact_email: null }
+          - { _cluster_id: "crm_companies:C2", id: null, name: "TechStart", email: "hello@techstart.com", contact_name: null, contact_email: null }
 
   - description: "CRM employee association triggers insert in ERP (ERP starts empty)"
     input:
@@ -151,4 +152,4 @@ tests:
     expected:
       erp_companies:
         inserts:
-          - { _cluster_id: "crm_companies:C1", name: "Acme Corp", email: "info@acme.com", contact_name: null, contact_email: null }
+          - { _cluster_id: "crm_companies:C1", id: null, name: "Acme Corp", email: "info@acme.com", contact_name: null, contact_email: null }

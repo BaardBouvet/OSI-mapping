@@ -36,8 +36,8 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [CRDT-ORDERING-PLAN.md](CRDT-ORDERING-PLAN.md) | Done | CRDT ordering for array elements: `order: true` + optional `order_prev`/`order_next` linked-list merge. |
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
 | [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Done | Element-level deletion for array targets — `_element_delta_{child}` views via parent `written_state`. |
-| [ELEMENT-TOMBSTONES-AS-FIELD-PLAN.md](ELEMENT-TOMBSTONES-AS-FIELD-PLAN.md) | Planned | Unify `derive_tombstones` across entities and elements — remove `derive_element_tombstones`, use one property at both levels. |
-| [HARD-DELETE-PROPAGATION-PLAN.md](HARD-DELETE-PROPAGATION-PLAN.md) | Design | Hard-delete propagation via ETL-layer provenance tracking — prevents re-insertion loops. |
+| [ELEMENT-TOMBSTONES-AS-FIELD-PLAN.md](ELEMENT-TOMBSTONES-AS-FIELD-PLAN.md) | Done | Unify `derive_tombstones` across entities and elements — remove `derive_element_tombstones`, use one property at both levels. |
+| [NESTED-ARRAY-INSERT-PLAN.md](NESTED-ARRAY-INSERT-PLAN.md) | Done | Nested array reconstruction for insert rows — COALESCE fallback to `_entity_id_resolved` + `_cluster_id` join. Supports arbitrary nesting depth. |
 | [HUBSPOT-DELAYED-ENRICHMENT-PLAN.md](HUBSPOT-DELAYED-ENRICHMENT-PLAN.md) | Design | Delayed enrichment from external providers: group NULL-bleed, cluster-merge, dangling-FK failure modes and split-mapping pattern. |
 | [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Done (Phase 1) | ETL-maintained state as engine input — `written_state` table + `written_noop` opt-in for target-centric noop detection. |
 | [EVENTUAL-CONSISTENCY-PLAN.md](EVENTUAL-CONSISTENCY-PLAN.md) | Design | Write-read visibility delays: failure modes and ETL-layer mitigation strategies for eventually consistent sources. |
@@ -53,6 +53,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [OUTPUT-CONTRACT-PLAN.md](OUTPUT-CONTRACT-PLAN.md) | Maybe | Tracks hardcoded consumer-facing output columns (`_cluster_id`, `_action`, `_src_id`); configurable aliases via `output.columns`. |
 | [DELTA-RESERVED-COLUMNS-PLAN.md](DELTA-RESERVED-COLUMNS-PLAN.md) | Proposed | Support source columns like `_base` without collisions by namespacing consumer-facing delta metadata columns. |
 | [NATURAL-KEYS-PLAN.md](NATURAL-KEYS-PLAN.md) | Done | Natural keys (email, business codes, composite PKs) work correctly today — no engine changes needed. |
+| [INSERT-PK-VISIBILITY-PLAN.md](INSERT-PK-VISIBILITY-PLAN.md) | Done | Stop stripping PK columns from insert verification — natural keys show resolved values, surrogate keys show null. |
 | [TYPE-HIERARCHY-PLAN.md](TYPE-HIERARCHY-PLAN.md) | Design | `hierarchy:` on target fields for IS-A type relationships; `type_matches` helper in reverse_filter. |
 | [TARGET-PATH-PLAN.md](TARGET-PATH-PLAN.md) | Design | Analysis of `target_path` (dotted notation on targets) — recommends output formatting over pipeline changes. |
 | [DBT-OUTPUT-PLAN.md](DBT-OUTPUT-PLAN.md) | Design | Generate a dbt project from mapping YAML; `ViewOutput` refactor; compatible with custom materialisations. |
@@ -72,7 +73,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [SCHEMA-VALIDATION-PLAN.md](SCHEMA-VALIDATION-PLAN.md) | Done | JSON Schema validation as Pass 0 — reports all structural errors before serde deserialization. |
 | [HUMAN-CONFIRMATION-PLAN.md](HUMAN-CONFIRMATION-PLAN.md) | Design | Human-in-the-loop approval for reverse ETL — confirmation gates per system, action, field, and pattern. |
 | [COMBINED-ETL-REVERSE-ETL-ANALYSIS.md](COMBINED-ETL-REVERSE-ETL-ANALYSIS.md) | Design | Which stateful features belong in engine vs combined ETL runtime; recommends `derive_tombstones` and hard-delete propagation as experimental. |
-| [SCALAR-ARRAY-DELETION-PLAN.md](SCALAR-ARRAY-DELETION-PLAN.md) | Proposed | Detect element-level deletions in pure scalar arrays without source schema changes; extends `derive_tombstones` with soft/hard/signal modes. |
+| [SCALAR-ARRAY-DELETION-PLAN.md](SCALAR-ARRAY-DELETION-PLAN.md) | Done | Detect element-level deletions in pure scalar arrays without source schema changes; extends `derive_tombstones` with soft/hard/signal modes. |
 | [ELEMENT-SOFT-DELETE-PLAN.md](ELEMENT-SOFT-DELETE-PLAN.md) | Done | Cross-source element-level soft-delete via tombstone on child mappings — reuses `DeletionFilter` pipeline to exclude tombstoned elements from all sources' arrays. |
 | [SOFT-DELETE-REFACTOR-PLAN.md](SOFT-DELETE-REFACTOR-PLAN.md) | Done | Rename `tombstone:` → `soft_delete:` with strategy-based API (`timestamp`/`deleted_flag`/`active_flag`). |
 | [DELETION-AS-FIELD-PLAN.md](DELETION-AS-FIELD-PLAN.md) | Done | `soft_delete.target` routes detection into a resolved field; `derive_tombstones` synthesizes `TRUE` for absent entities via `cluster_members`. |

@@ -227,6 +227,9 @@ pub fn render_reverse_view(
                                 // matches the parent reverse view's column value.
                                 format!("ref_local.{}", qi(tgt))
                             } else {
+                                // Root mapping: return _src_id.  For insert
+                                // entities, the outer COALESCE fallback to
+                                // _entity_id_resolved handles the NULL case.
                                 "ref_local._src_id".to_string()
                             }
                         }
@@ -271,7 +274,7 @@ pub fn render_reverse_view(
                     let order_clause = format!(
                         " ORDER BY ({return_expr}::text = id._base->>'{source_name}')::int DESC",
                     );
-                    format!(
+                    let ref_subquery = format!(
                         "(SELECT {return_expr} \
                          FROM {id_ref} ref_match \
                          JOIN {id_ref} ref_local \
@@ -280,7 +283,30 @@ pub fn render_reverse_view(
                          AND ref_local._mapping = '{ref_mapping_name}'\
                          {order_clause} \
                          LIMIT 1)",
-                    )
+                    );
+
+                    // For parent_fields references, the subquery returns NULL
+                    // when the referenced mapping has no identity entry (insert
+                    // entities from other sources).  Fall back to the entity's
+                    // cluster ID so the nested CTE can still join via
+                    // _cluster_id on the delta side.
+                    if is_parent_field {
+                        // Build match clause using ref_fb alias for fallback.
+                        let mut fb_match_parts = vec![format!("ref_fb._src_id = r.{qtgt}::text")];
+                        for f in &identity_fields {
+                            fb_match_parts.push(format!("ref_fb.{}::text = r.{qtgt}::text", qi(f)));
+                        }
+                        let fb_match_clause = fb_match_parts.join(" OR ");
+                        format!(
+                            "COALESCE({ref_subquery}, \
+                             (SELECT ref_fb._entity_id_resolved \
+                              FROM {id_ref} ref_fb \
+                              WHERE ({fb_match_clause}) \
+                              LIMIT 1))",
+                        )
+                    } else {
+                        ref_subquery
+                    }
                 } else {
                     // No explicit references — pass through raw value.
                     format!("r.{}", qi(tgt))
@@ -483,6 +509,12 @@ mappings:
         assert!(
             sql.contains("ref_local._src_id"),
             "parent_field referencing root mapping should return ref_local._src_id"
+        );
+        // For parent_fields, the reference subquery should have a COALESCE
+        // fallback to _entity_id_resolved for insert entities.
+        assert!(
+            sql.contains("COALESCE(") && sql.contains("ref_fb._entity_id_resolved"),
+            "parent_field reference should fall back to entity cluster ID for inserts"
         );
     }
 
