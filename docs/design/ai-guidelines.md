@@ -353,7 +353,7 @@ For nested array mappings, `order: true` generates a sortable position key from 
         order_next: true        # LEAD over identity field
 ```
 
-The target field should use `coalesce` strategy so the highest-priority source's ordering wins. See [`examples/crdt-ordering/`](../../examples/crdt-ordering/) and [`examples/crdt-ordering-native/`](../../examples/crdt-ordering-native/).
+The target field should use `coalesce` strategy so the highest-priority source's ordering wins. See [`examples/crdt-ordering/`](../../examples/crdt-ordering/).
 
 ## Tests Section
 

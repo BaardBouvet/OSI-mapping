@@ -2095,12 +2095,12 @@ async fn dump_composite_keys_intermediates() {
     }
 }
 
-/// Dump intermediate views for relationship-embedded.
+/// Dump intermediate views for relationship-mapping.
 #[tokio::test]
-async fn dump_relationship_embedded_intermediates() {
+async fn dump_relationship_mapping_intermediates() {
     let (client, _container) = setup_pg().await;
 
-    let mapping_path = examples_dir().join("relationship-embedded/mapping.yaml");
+    let mapping_path = examples_dir().join("relationship-mapping/mapping.yaml");
     let doc = osi_engine::parser::parse_file(&mapping_path).expect("parse");
     let dag = osi_engine::dag::build_dag(&doc);
     let sql = osi_engine::render::render_sql(&doc, &dag, false, false, false).expect("render");

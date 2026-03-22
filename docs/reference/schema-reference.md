@@ -184,7 +184,7 @@ When a mapping has no timestamp (both per-field timestamps and mapping-level `_l
 name: last_modified
 ```
 
-**Examples:** [embedded-simple](../examples/embedded-simple/), [value-groups](../examples/value-groups/)
+**Examples:** [embedded-objects](../examples/embedded-objects/), [value-groups](../examples/value-groups/)
 
 #### `expression`
 
@@ -196,7 +196,7 @@ score:
   expression: "max(score)"
 ```
 
-**Examples:** [custom-resolution](../examples/custom-resolution/), [types](../examples/types/), [merge-partials](../examples/merge-partials/)
+**Examples:** [hard-delete](../examples/hard-delete/) (`bool_or` for deletion flags)
 
 #### `collect`
 
@@ -217,7 +217,7 @@ is_deleted:
 
 The underlying SQL aggregation is `bool_or((field)::boolean)`. Source values are cast to boolean before aggregation.
 
-**Examples:** [propagated-delete](../examples/propagated-delete/)
+**Examples:** [hard-delete](../examples/hard-delete/)
 
 ### `references`
 
@@ -251,7 +251,7 @@ targets:
         references: company    # FK to company entity
 ```
 
-**Examples:** [references](../examples/references/) (cross-system FK resolution), [reference-preservation](../examples/reference-preservation/) (FK preservation after merge), [embedded-objects](../examples/embedded-objects/), [nested-arrays](../examples/nested-arrays/), [vocabulary-custom](../examples/vocabulary-custom/), [vocabulary-standard](../examples/vocabulary-standard/)
+**Examples:** [references](../examples/references/) (cross-system FK resolution), [reference-preservation](../examples/reference-preservation/) (FK preservation after merge), [embedded-objects](../examples/embedded-objects/), [nested-arrays](../examples/nested-arrays/), [vocabulary-standard](../examples/vocabulary-standard/)
 
 ### `references_field`
 
@@ -297,7 +297,7 @@ full_name:
   default_expression: "first_name || ' ' || last_name"
 ```
 
-**Examples:** [value-defaults](../examples/value-defaults/) (default), [value-derived](../examples/value-derived/) (default_expression)
+**Examples:** [value-defaults](../examples/value-defaults/) (default + default_expression)
 
 ### `group`
 
@@ -315,7 +315,7 @@ zip:
   group: addr
 ```
 
-**Examples:** [value-groups](../examples/value-groups/), [merge-groups](../examples/merge-groups/), [value-derived](../examples/value-derived/)
+**Examples:** [value-groups](../examples/value-groups/)
 
 ### `link_group`
 
@@ -335,7 +335,7 @@ dob:
 
 Multiple link_groups on the same target act as OR — a match on *any* group links the records.
 
-**Examples:** [composite-keys](../examples/composite-keys/), [merge-groups](../examples/merge-groups/), [relationship-embedded](../examples/relationship-embedded/)
+**Examples:** [composite-keys](../examples/composite-keys/), [relationship-mapping](../examples/relationship-mapping/)
 
 ---
 

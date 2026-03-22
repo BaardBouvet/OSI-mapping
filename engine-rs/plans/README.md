@@ -45,7 +45,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [PRECISION-LOSS-PLAN.md](PRECISION-LOSS-PLAN.md) | Done | `normalize` property on field mappings for lossy noop comparison and echo-aware `last_modified` resolution. |
 | [MULTI-VALUE-PLAN.md](MULTI-VALUE-PLAN.md) | Done | Cardinality mismatch (single vs. multi-value fields) — mapping patterns, no engine changes. |
 | [EXPRESSION-SAFETY-PLAN.md](EXPRESSION-SAFETY-PLAN.md) | Done | Validate expressions as safe SQL snippets; cross-target `lookup:` superseded by COMPUTED-FIELDS-PLAN. |
-| [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Maybe | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
+| [TARGET-ARRAYS-PLAN.md](TARGET-ARRAYS-PLAN.md) | Planned | Native array fields (`text[]`) with per-element identity and cross-source dedup. Opaque JSON covers the simple case. |
 | [PROPTEST-PLAN.md](PROPTEST-PLAN.md) | Done | Property-based testing harness using `proptest` to fuzz the engine with random mapping documents. |
 | [ANALYTICS-PROVENANCE-PLAN.md](ANALYTICS-PROVENANCE-PLAN.md) | Planned | Provenance + contributions views — trace golden records back to source data. |
 | [PASSTHROUGH-PLAN.md](PASSTHROUGH-PLAN.md) | Done | Carry unmapped source columns through to delta output for ETL context. |
@@ -77,3 +77,4 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [ELEMENT-SOFT-DELETE-PLAN.md](ELEMENT-SOFT-DELETE-PLAN.md) | Done | Cross-source element-level soft-delete via tombstone on child mappings — reuses `DeletionFilter` pipeline to exclude tombstoned elements from all sources' arrays. |
 | [SOFT-DELETE-REFACTOR-PLAN.md](SOFT-DELETE-REFACTOR-PLAN.md) | Done | Rename `tombstone:` → `soft_delete:` with strategy-based API (`timestamp`/`deleted_flag`/`active_flag`). |
 | [DELETION-AS-FIELD-PLAN.md](DELETION-AS-FIELD-PLAN.md) | Done | `soft_delete.target` routes detection into a resolved field; `derive_tombstones` synthesizes `TRUE` for absent entities via `cluster_members`. |
+| [EXAMPLE-REDUCTION-PLAN.md](EXAMPLE-REDUCTION-PLAN.md) | Planned (Phases 1–2 done) | Reduce examples from 52 to ~28–34 by removing expression-heavy demos and consolidating overlapping groups. |

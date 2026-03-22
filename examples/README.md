@@ -22,61 +22,40 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 
 | Example | Demonstrates |
 |---|---|
-| [`hello-world`](hello-world/README.md) | Simplest mapping — two sources, one target, identity + coalesce |
-| [`composite-keys`](composite-keys/README.md) | Multi-field identity (compound match key) |
-| [`concurrent-detection`](concurrent-detection/README.md) | Detecting and handling concurrent edits |
+| [`composite-keys`](composite-keys/README.md) | Multi-field identity via `link_group` (compound match key) |
+| [`concurrent-detection`](concurrent-detection/README.md) | Detecting concurrent edits via `include_base` |
 | [`crdt-ordering`](crdt-ordering/README.md) | Deterministic array element ordering via `order: true` |
-| [`crdt-ordering-native`](crdt-ordering-native/README.md) | Mixed ordering inputs: native `sort_key` + generated `order: true` |
-| [`custom-resolution`](custom-resolution/README.md) | Custom resolution strategy via expression |
-| [`depth-mismatch`](depth-mismatch/README.md) | Asymmetric nesting depth — 2-level vs 3-level with intermediate grouping |
-| [`embedded-simple`](embedded-simple/README.md) | Single embedded sub-entity |
-| [`embedded-objects`](embedded-objects/README.md) | Nested embedded objects |
-| [`embedded-multiple`](embedded-multiple/README.md) | Multiple embedded entities |
-| [`embedded-vs-many-to-many`](embedded-vs-many-to-many/README.md) | Embedded vs. reference-based relationships |
-| [`flattened`](flattened/README.md) | Flattened source structure into normalized target |
-| [`hard-delete`](hard-delete/README.md) | Hard-delete propagation via `derive_tombstones` + `cluster_members` + `bool_or` resolution |
-| [`hierarchy-merge`](hierarchy-merge/README.md) | Merging 2-level and 3-level hierarchies via cross-depth identity resolution |
-| [`inserts-and-deletes`](inserts-and-deletes/README.md) | Handling new and removed records |
-| [`json-fields`](json-fields/README.md) | Extracting sub-fields from JSONB source columns via `source_path` |
-| [`json-opaque`](json-opaque/README.md) | Whole JSON values mapped as atomic blobs — no sub-field extraction |
-| [`merge-curated`](merge-curated/README.md) | Curated merge with manual overrides |
-| [`merge-generated-ids`](merge-generated-ids/README.md) | Merge with system-generated identifiers |
-| [`merge-groups`](merge-groups/README.md) | Group-based atomic resolution |
-| [`merge-internal`](merge-internal/README.md) | Internal merge within a single source |
-| [`merge-partials`](merge-partials/README.md) | Partial record merge |
-| [`merge-threeway`](merge-threeway/README.md) | Three-way merge between sources |
-| [`multi-value`](multi-value/README.md) | Scalar-vs-list cardinality mismatch with primary_phone + phone list |
-| [`multiple-target-mappings`](multiple-target-mappings/README.md) | Multiple targets in one file |
-| [`nested-arrays`](nested-arrays/README.md) | Array-of-objects field mapping |
-| [`nested-arrays-deep`](nested-arrays-deep/README.md) | Deeply nested array structures |
-| [`nested-arrays-multiple`](nested-arrays-multiple/README.md) | Multiple nested arrays |
-| [`null-propagation`](null-propagation/README.md) | Propagating intentional NULLs via sentinel pattern |
-| [`precision-loss`](precision-loss/README.md) | Handling precision loss with `normalize` on field mappings |
-| [`propagated-delete`](propagated-delete/README.md) | GDPR-style deletion propagation via bool_or + reverse_filter |
-| [`reference-preservation`](reference-preservation/README.md) | Preserving foreign-key references |
-| [`references`](references/README.md) | Foreign-key references between targets |
-| [`required-fields`](required-fields/README.md) | Required-field constraints via reverse_filter OR pattern |
-| [`relationship-embedded`](relationship-embedded/README.md) | Embedded relationship mapping |
-| [`relationship-mapping`](relationship-mapping/README.md) | Standalone relationship mapping |
-| [`route`](route/README.md) | Routing records by field values |
-| [`route-combined`](route-combined/README.md) | Combined routing logic |
-| [`route-embedded`](route-embedded/README.md) | Routing within embedded objects |
-| [`route-multiple`](route-multiple/README.md) | Multiple routing rules |
-| [`scalar-array-deletion`](scalar-array-deletion/README.md) | Scalar array element deletion via `scalar: true` and `derive_tombstones` |
-| [`soft-delete`](soft-delete/README.md) | Soft-delete detection via `soft_delete` |
-| [`types`](types/README.md) | Type conversion and coercion |
-| [`value-conversions`](value-conversions/README.md) | Value mapping / vocabulary conversion |
-| [`value-defaults`](value-defaults/README.md) | Default values and default expressions |
-| [`value-derived`](value-derived/README.md) | Derived / computed fields |
-| [`value-groups`](value-groups/README.md) | Field group resolution |
-| [`vocabulary-custom`](vocabulary-custom/README.md) | Custom vocabulary definitions |
-| [`vocabulary-standard`](vocabulary-standard/README.md) | Standard vocabulary usage |
-| [`derive-noop`](derive-noop/README.md) | Target-centric noop detection via ETL written state |
-| [`passthrough`](passthrough/README.md) | Carrying unmapped source columns through to delta output via `passthrough` |
-| [`element-hard-delete`](element-hard-delete/README.md) | Deletion-wins: one source's element removal wins over other sources via `written_state` |
-| [`element-last-modified`](element-last-modified/README.md) | Most recently modified source's element values win via `last_modified` |
-| [`element-priority`](element-priority/README.md) | One source's array elements always win via mapping-level `priority` |
-| [`element-soft-delete`](element-soft-delete/README.md) | Element-level soft-delete: promote scalar value lists to objects with `removed_at` lifecycle metadata |
+| [`depth-mismatch`](depth-mismatch/README.md) | Asymmetric nesting depth — 2-level vs 3-level cross-source merge |
+| [`derive-noop`](derive-noop/README.md) | Target-centric noop detection via `written_state` + `derive_noop` |
+| [`derive-timestamps`](derive-timestamps/README.md) | Per-field change detection via `derive_timestamps` |
+| [`element-priority`](element-priority/README.md) | Element-set resolution via `elements: coalesce` on child targets |
+| [`embedded-objects`](embedded-objects/README.md) | Embedded sub-entities via `parent:` mappings |
+| [`embedded-vs-many-to-many`](embedded-vs-many-to-many/README.md) | Embedded ↔ junction table structural conversion |
+| [`flattened`](flattened/README.md) | Flat target from nested source structures |
+| [`hard-delete`](hard-delete/README.md) | Hard-delete propagation via `derive_tombstones` + `cluster_members` |
+| [`hello-world`](hello-world/README.md) | Simplest mapping — two sources, one target, identity + coalesce |
+| [`inserts-and-deletes`](inserts-and-deletes/README.md) | Insert suppression via `reverse_required` |
+| [`json-fields`](json-fields/README.md) | JSONB sub-field extraction via `source_path` |
+| [`json-opaque`](json-opaque/README.md) | Whole JSON values mapped as atomic blobs (`type: jsonb`) |
+| [`merge-curated`](merge-curated/README.md) | Human-curated merge via explicit linkage tables |
+| [`merge-internal`](merge-internal/README.md) | Single-source deduplication |
+| [`merge-threeway`](merge-threeway/README.md) | Three-way merge via transitive identity closure |
+| [`multi-value`](multi-value/README.md) | Scalar ↔ list cardinality mismatch |
+| [`multiple-target-mappings`](multiple-target-mappings/README.md) | Multiple targets from one source |
+| [`nested-arrays`](nested-arrays/README.md) | Array-of-objects via `parent:` + `array:` |
+| [`nested-arrays-deep`](nested-arrays-deep/README.md) | Multi-level nesting with `parent_fields` chains |
+| [`passthrough`](passthrough/README.md) | Unmapped source columns via `passthrough:` |
+| [`precision-loss`](precision-loss/README.md) | Lossy noop comparison via `normalize` |
+| [`reference-preservation`](reference-preservation/README.md) | FK preservation after entity merge |
+| [`references`](references/README.md) | Cross-entity foreign keys via `references:` |
+| [`relationship-mapping`](relationship-mapping/README.md) | Many-to-many relationship mapping with `link_group` |
+| [`required-fields`](required-fields/README.md) | Data quality gates via `reverse_filter` |
+| [`route`](route/README.md) | Discriminator-based routing via `filter:` |
+| [`route-combined`](route-combined/README.md) | Routing + dedicated sources merging |
+| [`soft-delete`](soft-delete/README.md) | Soft-delete detection via `soft_delete:` |
+| [`value-defaults`](value-defaults/README.md) | Fallback values via `default` and `default_expression` |
+| [`value-groups`](value-groups/README.md) | Atomic field group resolution via `group:` |
+| [`vocabulary-standard`](vocabulary-standard/README.md) | Vocabulary targets with `references_field` |
 
 Each example directory contains a local `README.md` and a `mapping.yaml` with the full definition including test cases.
 
@@ -89,5 +68,10 @@ These mapping schema properties are not yet demonstrated by any example:
 | `array_path` | Dotted path to a JSONB array nested inside a JSON object (vs `array` for top-level arrays) |
 | `links` / `LinkRef` | External identity edges from a linking table |
 | `link_key` | Column in a linking table providing pre-computed cluster identity |
-| `cluster_members` | ETL feedback table for insert tracking |
 | `cluster_field` | Source column holding a pre-populated cluster ID |
+| `elements: last_modified` | Element-set resolution by most recent timestamp (vs `elements: coalesce` shown in `element-priority`) |
+| `scalar` | Bare scalar array element extraction (`scalar: true` on field mapping) |
+| `strategy: expression` | Custom SQL aggregation on target fields |
+| `strategy: bool_or` | Boolean OR aggregation across sources |
+| `soft_delete` on child | Element-level soft-delete on nested array child mappings |
+| `order_prev` / `order_next` | CRDT linked-list ordering fields |

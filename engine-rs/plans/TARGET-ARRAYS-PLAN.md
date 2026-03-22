@@ -1,10 +1,15 @@
 # Target arrays
 
-**Status:** Proposed
+**Status:** Planned
 
-Support array-typed fields directly on a target, so that a one-to-many
-relationship can live on the parent target instead of requiring a separate
-child target.
+Native array-typed target fields (`text[]`, `integer[]`) with per-element
+identity, cross-source deduplication, and element-level resolution.
+
+Note: the simple "one source wins for a whole array" case is already solved
+by opaque JSON fields (`type: jsonb` + `strategy: coalesce`) — see
+[`json-opaque`](../../examples/json-opaque/README.md). This plan covers
+what opaque JSON cannot: per-element dedup across sources, scalar ↔ array
+wrapping, `element_identity`, and `array_field` child mappings.
 
 ## Problem
 
