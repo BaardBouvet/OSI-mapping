@@ -6,6 +6,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 |------|--------|---------|
 | [ASYMMETRY-ANALYSIS.md](ASYMMETRY-ANALYSIS.md) | Design | Read/write asymmetry: mapping concern vs ETL concern — analysis of where shape differences belong. |
 | [CLI-TEST-COMMAND-PLAN.md](CLI-TEST-COMMAND-PLAN.md) | Proposed | CLI `test` subcommand — execute embedded test cases against PostgreSQL. |
+| [CLUSTER-SEED-FORMAT-PLAN.md](CLUSTER-SEED-FORMAT-PLAN.md) | Design | `_cluster_id` seed format for nested-array disambiguation: query params vs path expressions. |
 | [PLAN.md](PLAN.md) | Done | Original implementation plan — Rust engine compiling YAML to a DAG of PostgreSQL views. |
 | [PRIMARY-KEYS-PLAN.md](PRIMARY-KEYS-PLAN.md) | Done | Replace synthetic `_row_id` with real source primary keys via `sources:` section. |
 | [ANALYTICS-VIEW-PLAN.md](ANALYTICS-VIEW-PLAN.md) | Done | Consumer-friendly analytics view exposing resolved golden records. |
