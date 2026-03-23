@@ -1,0 +1,124 @@
+version: "1.0"
+description: >
+  Invoicing system stores line items as a JSONB array where each element
+  has a voided_at timestamp. Voided lines are suppressed from the resolved
+  output — other systems should not see them. Tests both voided and
+  un-voided (reappearing) line items.
+
+sources:
+  billing:
+    primary_key: invoice_id
+  accounting:
+    primary_key: invoice_id
+
+targets:
+  invoice:
+    fields:
+      invoice_ref:
+        strategy: identity
+      customer:
+        strategy: coalesce
+
+  invoice_line:
+    fields:
+      invoice_ref:
+        strategy: identity
+        references: invoice
+        link_group: line_key
+      line_number:
+        strategy: identity
+        type: numeric
+        link_group: line_key
+      description:
+        strategy: coalesce
+      amount:
+        strategy: coalesce
+
+mappings:
+  - name: billing_invoices
+    source: billing
+    target: invoice
+    fields:
+      - source: invoice_ref
+        target: invoice_ref
+      - source: customer
+        target: customer
+        priority: 1
+
+  - name: billing_lines
+    parent: billing_invoices
+    array: lines
+    parent_fields:
+      parent_ref: invoice_ref
+    soft_delete: voided_at
+    target: invoice_line
+    fields:
+      - source: parent_ref
+        target: invoice_ref
+        references: billing_invoices
+      - source: line_number
+        target: line_number
+      - source: description
+        target: description
+      - source: amount
+        target: amount
+
+  - name: accounting_invoices
+    source: accounting
+    target: invoice
+    fields:
+      - source: invoice_ref
+        target: invoice_ref
+      - source: customer
+        target: customer
+
+  - name: accounting_lines
+    parent: accounting_invoices
+    array: lines
+    parent_fields:
+      parent_ref: invoice_ref
+    target: invoice_line
+    fields:
+      - source: parent_ref
+        target: invoice_ref
+        references: accounting_invoices
+      - source: line_number
+        target: line_number
+      - source: description
+        target: description
+      - source: amount
+        target: amount
+
+tests:
+  - description: "Voided line suppressed — only active lines appear in both systems' delta"
+    input:
+      billing:
+        - invoice_id: "INV-001"
+          invoice_ref: "INV-001"
+          customer: "Acme Corp"
+          lines:
+            - { line_number: 1, description: "Widget", amount: "100", voided_at: null }
+            - { line_number: 2, description: "Gadget", amount: "50", voided_at: "2024-06-15T10:00:00Z" }
+            - { line_number: 3, description: "Sprocket", amount: "75", voided_at: null }
+      accounting:
+        - invoice_id: "INV-001"
+          invoice_ref: "INV-001"
+          customer: "Acme"
+          lines: []
+    expected:
+      billing:
+        updates:
+          - invoice_id: "INV-001"
+            invoice_ref: "INV-001"
+            customer: "Acme Corp"
+            lines:
+              - { line_number: 1, description: "Widget", amount: "100" }
+              - { line_number: 3, description: "Sprocket", amount: "75" }
+      accounting:
+        updates:
+          - invoice_id: "INV-001"
+            invoice_ref: "INV-001"
+            customer: "Acme Corp"
+            lines:
+              - { line_number: 1, description: "Widget", amount: "100" }
+              - { line_number: 3, description: "Sprocket", amount: "75" }

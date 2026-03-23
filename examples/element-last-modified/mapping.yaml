@@ -1,0 +1,112 @@
+version: "1.0"
+description: >
+  Two project tools contribute task lists. The child target uses
+  elements: last_modified — whichever source most recently modified
+  its task set provides the entire list for that project.
+
+sources:
+  tool_a:
+    primary_key: id
+  tool_b:
+    primary_key: id
+
+targets:
+  project:
+    fields:
+      name:
+        strategy: identity
+
+  task:
+    elements: last_modified
+    fields:
+      project_name:
+        strategy: identity
+        references: project
+        link_group: task_key
+      task_name:
+        strategy: identity
+        link_group: task_key
+      assignee:
+        strategy: coalesce
+
+mappings:
+  - name: tool_a_projects
+    source: tool_a
+    target: project
+    fields:
+      - source: name
+        target: name
+
+  - name: tool_a_tasks
+    parent: tool_a_projects
+    array: tasks
+    parent_fields:
+      parent_name: name
+      parent_ts: tasks_updated_at
+    last_modified: parent_ts
+    target: task
+    fields:
+      - source: parent_name
+        target: project_name
+        references: tool_a_projects
+      - source: task_name
+        target: task_name
+      - source: assignee
+        target: assignee
+
+  - name: tool_b_projects
+    source: tool_b
+    target: project
+    fields:
+      - source: name
+        target: name
+
+  - name: tool_b_tasks
+    parent: tool_b_projects
+    array: tasks
+    parent_fields:
+      parent_name: name
+      parent_ts: tasks_updated_at
+    last_modified: parent_ts
+    target: task
+    fields:
+      - source: parent_name
+        target: project_name
+        references: tool_b_projects
+      - source: task_name
+        target: task_name
+      - source: assignee
+        target: assignee
+
+tests:
+  - description: "Tool A tasks updated more recently — its entire task set wins"
+    input:
+      tool_a:
+        - id: "P1"
+          name: "Alpha"
+          tasks_updated_at: "2024-01-15T10:00:00Z"
+          tasks:
+            - { task_name: "Design", assignee: "Alice" }
+            - { task_name: "Build", assignee: "Bob" }
+      tool_b:
+        - id: "P1"
+          name: "Alpha"
+          tasks_updated_at: "2024-01-10T10:00:00Z"
+          tasks:
+            - { task_name: "Design", assignee: "Charlie" }
+            - { task_name: "Test", assignee: "Diana" }
+    expected:
+      tool_a:
+        updates:
+          - id: "P1"
+            name: "Alpha"
+            tasks:
+              - { task_name: "Build", assignee: "Bob" }
+              - { task_name: "Design", assignee: "Alice" }
+      tool_b:
+        updates:
+          - id: "P1"
+            name: "Alpha"
+            tasks:
+              - { task_name: "Build", assignee: "Bob" }
+              - { task_name: "Design", assignee: "Alice" }

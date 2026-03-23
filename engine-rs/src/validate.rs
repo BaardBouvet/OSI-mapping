@@ -232,16 +232,7 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
                 }
             }
 
-            // order_prev/order_next must appear together
-            if fm.order_prev != fm.order_next {
-                result.error(
-                    "Schema",
-                    format!(
-                        "mapping '{}' field[{}]: 'order_prev' and 'order_next' must both be set or both omitted",
-                        mapping.name, i
-                    ),
-                );
-            }
+            // order_prev/order_next: per-field constraints
             if fm.order_prev || fm.order_next {
                 if fm.source.is_some() || fm.source_path.is_some() || fm.expression.is_some() {
                     result.error(
@@ -300,8 +291,18 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
 
         // order_prev/order_next require that the mapping also has order: true
         let has_order = mapping.fields.iter().any(|f| f.order);
-        let has_prev_next = mapping.fields.iter().any(|f| f.order_prev || f.order_next);
-        if has_prev_next && !has_order {
+        let has_prev = mapping.fields.iter().any(|f| f.order_prev);
+        let has_next = mapping.fields.iter().any(|f| f.order_next);
+        if has_prev != has_next {
+            result.error(
+                "Schema",
+                format!(
+                    "mapping '{}': 'order_prev' and 'order_next' must both appear on the same mapping",
+                    mapping.name
+                ),
+            );
+        }
+        if (has_prev || has_next) && !has_order {
             result.error(
                 "Schema",
                 format!(

@@ -1,0 +1,122 @@
+version: "1.0"
+description: >
+  Shop stores product measurements inside a nested array path:
+  specs[].measurements[]. Warehouse stores the same data as a
+  top-level JSONB array. array_path navigates the two-level
+  nesting into a flat child target. With a single spec group,
+  the reverse reconstruction round-trips cleanly.
+
+sources:
+  shop:
+    primary_key: sku
+  warehouse:
+    primary_key: sku
+
+targets:
+  product:
+    fields:
+      sku:
+        strategy: identity
+      name:
+        strategy: coalesce
+
+  product_measurement:
+    fields:
+      product_sku:
+        strategy: identity
+        references: product
+        link_group: measurement_key
+      measurement_type:
+        strategy: identity
+        link_group: measurement_key
+      measurement_value:
+        strategy: coalesce
+
+mappings:
+  - name: shop_products
+    source: shop
+    target: product
+    fields:
+      - source: sku
+        target: sku
+      - source: name
+        target: name
+        priority: 1
+
+  - name: shop_measurements
+    parent: shop_products
+    array_path: specs.measurements
+    parent_fields:
+      parent_sku:
+        path: specs
+        field: sku
+    target: product_measurement
+    fields:
+      - source: parent_sku
+        target: product_sku
+        references: shop_products
+      - source: type
+        target: measurement_type
+      - source: value
+        target: measurement_value
+        priority: 2
+
+  - name: warehouse_products
+    source: warehouse
+    target: product
+    fields:
+      - source: sku
+        target: sku
+      - source: name
+        target: name
+
+  - name: warehouse_measurements
+    parent: warehouse_products
+    array: measurements
+    parent_fields:
+      parent_sku: sku
+    target: product_measurement
+    fields:
+      - source: parent_sku
+        target: product_sku
+        references: warehouse_products
+      - source: type
+        target: measurement_type
+      - source: value
+        target: measurement_value
+        priority: 1
+
+tests:
+  - description: "Nested array_path flattens two-level array into measurements — warehouse value wins"
+    input:
+      shop:
+        - sku: "WIDGET-1"
+          name: "Widget"
+          specs:
+            - measurements:
+                - { type: "height", value: "10" }
+                - { type: "width", value: "5" }
+                - { type: "mass", value: "500" }
+      warehouse:
+        - sku: "WIDGET-1"
+          name: "Widget"
+          measurements:
+            - { type: "height", value: "12" }
+    expected:
+      shop:
+        updates:
+          - sku: "WIDGET-1"
+            name: "Widget"
+            specs:
+              - measurements:
+                  - { type: "height", value: "12" }
+                  - { type: "mass", value: "500" }
+                  - { type: "width", value: "5" }
+      warehouse:
+        updates:
+          - sku: "WIDGET-1"
+            name: "Widget"
+            measurements:
+              - { type: "height", value: "12" }
+              - { type: "mass", value: "500" }
+              - { type: "width", value: "5" }

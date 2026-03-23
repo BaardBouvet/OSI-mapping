@@ -26,12 +26,15 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`composite-keys`](composite-keys/README.md) | Multi-field identity via `link_group` (compound match key) |
 | [`concurrent-detection`](concurrent-detection/README.md) | Detecting concurrent edits via `include_base` |
 | [`crdt-ordering`](crdt-ordering/README.md) | Deterministic array element ordering via `order: true` |
+| [`crdt-ordering-linked`](crdt-ordering-linked/README.md) | CRDT linked-list adjacency pointers via `order_prev` / `order_next` with `last_modified` resolution |
 | [`depth-mismatch`](depth-mismatch/README.md) | Asymmetric nesting depth — 2-level vs 3-level cross-source merge |
 | [`derive-noop`](derive-noop/README.md) | Target-centric noop detection via `written_state` + `derive_noop` |
 | [`derive-timestamps`](derive-timestamps/README.md) | Per-field change detection via `derive_timestamps` |
+| [`element-last-modified`](element-last-modified/README.md) | Element-set resolution by most recent timestamp via `elements: last_modified` |
 | [`element-priority`](element-priority/README.md) | Element-set resolution via `elements: coalesce` on child targets |
 | [`embedded-objects`](embedded-objects/README.md) | Embedded sub-entities via `parent:` mappings |
 | [`embedded-vs-many-to-many`](embedded-vs-many-to-many/README.md) | Embedded ↔ junction table structural conversion |
+| [`external-links`](external-links/README.md) | External identity linkage via `links` / `LinkRef` + `link_key` |
 | [`flattened`](flattened/README.md) | Flat target from nested source structures |
 | [`hard-delete`](hard-delete/README.md) | Hard-delete propagation via `derive_tombstones` + `cluster_members` |
 | [`hello-world`](hello-world/README.md) | Simplest mapping — two sources, one target, identity + coalesce |
@@ -43,6 +46,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`merge-threeway`](merge-threeway/README.md) | Three-way merge via transitive identity closure |
 | [`multi-value`](multi-value/README.md) | Scalar ↔ list cardinality mismatch |
 | [`multiple-target-mappings`](multiple-target-mappings/README.md) | Multiple targets from one source |
+| [`nested-array-path`](nested-array-path/README.md) | Nested array-of-arrays via `array_path` dotted path |
 | [`nested-arrays`](nested-arrays/README.md) | Array-of-objects via `parent:` + `array:` |
 | [`nested-arrays-deep`](nested-arrays-deep/README.md) | Multi-level nesting with `parent_fields` chains |
 | [`passthrough`](passthrough/README.md) | Unmapped source columns via `passthrough:` |
@@ -53,24 +57,12 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`required-fields`](required-fields/README.md) | Data quality gates via `reverse_filter` |
 | [`route`](route/README.md) | Discriminator-based routing via `filter:` |
 | [`route-combined`](route-combined/README.md) | Routing + dedicated sources merging |
+| [`scalar-array`](scalar-array/README.md) | Bare scalar array element extraction via `scalar: true` |
 | [`soft-delete`](soft-delete/README.md) | Soft-delete detection via `soft_delete:` |
+| [`soft-delete-child`](soft-delete-child/README.md) | Element-level soft-delete on nested array child mappings |
 | [`soft-delete-resurrect`](soft-delete-resurrect/README.md) | Soft-delete resurrection via `soft_delete.target` + `BOOL_AND` consensus |
 | [`value-defaults`](value-defaults/README.md) | Fallback values via `default` and `default_expression` |
 | [`value-groups`](value-groups/README.md) | Atomic field group resolution via `group:` |
 | [`vocabulary-standard`](vocabulary-standard/README.md) | Vocabulary targets with `references_field` |
 
 Each example directory contains a local `README.md` and a `mapping.yaml` with the full definition including test cases.
-
-## Schema Properties Without Example Coverage
-
-These mapping schema properties are not yet demonstrated by any example:
-
-| Property | Description |
-|---|---|
-| `array_path` | Dotted path to a JSONB array nested inside a JSON object (vs `array` for top-level arrays) |
-| `links` / `LinkRef` | External identity edges from a linking table |
-| `link_key` | Column in a linking table providing pre-computed cluster identity |
-| `elements: last_modified` | Element-set resolution by most recent timestamp (vs `elements: coalesce` shown in `element-priority`) |
-| `scalar` | Bare scalar array element extraction (`scalar: true` on field mapping) |
-| `soft_delete` on child | Element-level soft-delete on nested array child mappings |
-| `order_prev` / `order_next` | CRDT linked-list ordering fields |

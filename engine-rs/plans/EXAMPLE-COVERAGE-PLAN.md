@@ -1,6 +1,6 @@
 # Example coverage for remaining schema properties
 
-**Status:** Planned
+**Status:** Done
 
 Seven schema properties lack dedicated example coverage. This plan proposes five new examples (grouping naturally related properties) to close the gap.
 

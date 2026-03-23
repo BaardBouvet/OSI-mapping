@@ -1,0 +1,164 @@
+version: "1.0"
+description: >
+  Two recipe databases contribute steps for the same recipes.
+  Steps are identified by instruction text; ordering uses
+  `order_prev` / `order_next` for CRDT linked-list adjacency
+  pointers. Step ordering resolves via `strategy: last_modified`
+  so the most recently edited source's order wins.
+
+sources:
+  recipe_db:
+    primary_key: id
+  blog_cms:
+    primary_key: id
+
+targets:
+  recipe:
+    fields:
+      name:
+        strategy: identity
+      cuisine:
+        strategy: coalesce
+
+  recipe_step:
+    fields:
+      recipe_name:
+        strategy: identity
+        link_group: step_identity
+      instruction:
+        strategy: identity
+        link_group: step_identity
+      step_order:
+        strategy: last_modified
+      prev:
+        strategy: last_modified
+      next:
+        strategy: last_modified
+      duration:
+        strategy: coalesce
+
+mappings:
+  # ── Recipe-level mappings ──────────────────────────────────────
+
+  - name: recipe_db_recipes
+    source: recipe_db
+    target: recipe
+    priority: 1
+    fields:
+      - source: id
+        target: name
+      - source: cuisine
+        target: cuisine
+
+  - name: blog_cms_recipes
+    source: blog_cms
+    target: recipe
+    priority: 2
+    fields:
+      - source: id
+        target: name
+      - source: cuisine
+        target: cuisine
+
+  # ── Step-level mappings (nested arrays) ────────────────────────
+
+  - name: recipe_db_steps
+    source: recipe_db
+    parent: recipe_db_recipes
+    array: steps
+    parent_fields:
+      parent_recipe: id
+    target: recipe_step
+    fields:
+      - source: parent_recipe
+        target: recipe_name
+        references: recipe_db_recipes
+      - target: step_order
+        order: true
+        last_modified: steps_updated_at
+      - target: prev
+        order_prev: true
+        last_modified: steps_updated_at
+      - target: next
+        order_next: true
+        last_modified: steps_updated_at
+      - source: instruction
+        target: instruction
+      - source: duration
+        target: duration
+
+  - name: blog_cms_steps
+    source: blog_cms
+    parent: blog_cms_recipes
+    array: steps
+    parent_fields:
+      parent_recipe: id
+    target: recipe_step
+    fields:
+      - source: parent_recipe
+        target: recipe_name
+        references: blog_cms_recipes
+      - target: step_order
+        order: true
+        last_modified: steps_updated_at
+      - target: prev
+        order_prev: true
+        last_modified: steps_updated_at
+      - target: next
+        order_next: true
+        last_modified: steps_updated_at
+      - source: instruction
+        target: instruction
+      - source: duration
+        target: duration
+
+tests:
+  - description: "Blog CMS recently reordered — its step ordering wins"
+    input:
+      recipe_db:
+        - id: "Chocolate Cake"
+          cuisine: "French"
+          steps_updated_at: "2025-01-15T10:00:00Z"
+          steps:
+            - instruction: "Preheat to 200°C"
+              duration: "10"
+            - instruction: "Mix dry ingredients"
+              duration: "5"
+            - instruction: "Bake 30 min"
+              duration: "30"
+      blog_cms:
+        - id: "Chocolate Cake"
+          cuisine: "Dessert"
+          steps_updated_at: "2025-01-16T10:00:00Z"
+          steps:
+            - instruction: "Preheat to 200°C"
+            - instruction: "Grease the pan"
+            - instruction: "Mix dry ingredients"
+            - instruction: "Bake 30 min"
+    expected:
+      recipe_db:
+        updates:
+          - id: "Chocolate Cake"
+            cuisine: "French"
+            steps:
+              - instruction: "Preheat to 200°C"
+                duration: "10"
+              - instruction: "Grease the pan"
+                duration: null
+              - instruction: "Mix dry ingredients"
+                duration: "5"
+              - instruction: "Bake 30 min"
+                duration: "30"
+      blog_cms:
+        updates:
+          - id: "Chocolate Cake"
+            cuisine: "French"
+            steps:
+              - instruction: "Preheat to 200°C"
+                duration: "10"
+              - instruction: "Grease the pan"
+                duration: null
+              - instruction: "Mix dry ingredients"
+                duration: "5"
+              - instruction: "Bake 30 min"
+                duration: "30"

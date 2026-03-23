@@ -1,0 +1,68 @@
+version: "1.0"
+description: >
+  Two CRMs each have customer tables. An MDM system produces a cross-reference
+  table linking records across systems. The engine uses links to declare
+  identity edges and link_key for the pre-computed cluster ID.
+
+sources:
+  crm_a:
+    primary_key: id
+  crm_b:
+    primary_key: id
+  mdm_xref:
+    primary_key: xref_id
+
+targets:
+  customer:
+    fields:
+      name:
+        strategy: coalesce
+      email:
+        strategy: coalesce
+
+mappings:
+  - name: crm_a_customers
+    source: crm_a
+    target: customer
+    fields:
+      - source: name
+        target: name
+        priority: 1
+      - source: email
+        target: email
+        priority: 1
+
+  - name: crm_b_customers
+    source: crm_b
+    target: customer
+    fields:
+      - source: name
+        target: name
+        priority: 2
+      - source: email
+        target: email
+        priority: 2
+
+  - name: mdm_links
+    source: mdm_xref
+    target: customer
+    link_key: cluster_id
+    links:
+      - field: crm_a_id
+        references: crm_a_customers
+      - field: crm_b_id
+        references: crm_b_customers
+
+tests:
+  - description: "MDM xref merges CRM A and CRM B records — CRM A name wins via priority"
+    input:
+      crm_a:
+        - { id: "A1", name: "John Doe", email: "john@example.com" }
+      crm_b:
+        - { id: "B1", name: "J. Doe", email: "jdoe@example.com" }
+      mdm_xref:
+        - { xref_id: "X1", cluster_id: "cluster_1", crm_a_id: "A1", crm_b_id: "B1" }
+    expected:
+      crm_b:
+        updates:
+          - { id: "B1", name: "John Doe", email: "john@example.com" }

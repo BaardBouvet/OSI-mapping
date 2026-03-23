@@ -1,0 +1,88 @@
+version: "1.0"
+description: >
+  CRM stores tags as a bare JSONB scalar array ["vip", "newsletter"].
+  ERP stores tags as normalized rows. Both map to the same child target
+  using scalar: true to extract bare values without named keys.
+
+sources:
+  crm:
+    primary_key: id
+  erp:
+    primary_key: id
+
+targets:
+  customer:
+    fields:
+      email:
+        strategy: identity
+
+  customer_tag:
+    fields:
+      email:
+        strategy: identity
+        link_group: tag_key
+      tag:
+        strategy: identity
+        link_group: tag_key
+
+mappings:
+  - name: crm_customers
+    source: crm
+    target: customer
+    fields:
+      - source: email
+        target: email
+
+  - name: crm_tags
+    parent: crm_customers
+    array: tags
+    parent_fields:
+      parent_email: email
+    target: customer_tag
+    fields:
+      - source: parent_email
+        target: email
+      - target: tag
+        scalar: true
+
+  - name: erp_customers
+    source: erp
+    target: customer
+    fields:
+      - source: email
+        target: email
+
+  - name: erp_tags
+    parent: erp_customers
+    array: tags
+    parent_fields:
+      parent_email: email
+    target: customer_tag
+    fields:
+      - source: parent_email
+        target: email
+      - target: tag
+        scalar: true
+
+tests:
+  - description: "Scalar tags merge across sources — new tag propagates both ways"
+    input:
+      crm:
+        - id: "C1"
+          email: "alice@example.com"
+          tags: ["vip", "newsletter"]
+      erp:
+        - id: "E1"
+          email: "alice@example.com"
+          tags: ["vip", "premium"]
+    expected:
+      crm:
+        updates:
+          - id: "C1"
+            email: "alice@example.com"
+            tags: ["newsletter", "premium", "vip"]
+      erp:
+        updates:
+          - id: "E1"
+            email: "alice@example.com"
+            tags: ["newsletter", "premium", "vip"]

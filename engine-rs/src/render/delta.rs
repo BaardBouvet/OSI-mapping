@@ -169,6 +169,11 @@ struct NestingNode<'a> {
     scalar_field: Option<String>,
     /// Child nesting levels (deeper arrays within this one).
     children: Vec<NestingNode<'a>>,
+    /// For multi-segment `array_path` without intermediate mappings.
+    /// The leaf aggregation is wrapped in nested JSON objects, one per segment.
+    /// E.g. `array_path: specs.measurements` → `wrap_segments = ["measurements"]`
+    /// produces `[{"measurements": [...items...]}]` wrapped inside the `specs` column.
+    wrap_segments: Vec<String>,
 }
 
 /// Collected CTE output from recursive nesting tree traversal.
@@ -1078,6 +1083,7 @@ fn build_nesting_tree<'a>(
                 order_field: flat.order_field,
                 scalar_field: flat.scalar_field,
                 children: Vec::new(),
+                wrap_segments: Vec::new(),
             });
         } else {
             // Multi-segment path: find the parent node and insert as child.
@@ -1093,6 +1099,26 @@ fn build_nesting_tree<'a>(
                     order_field: flat.order_field,
                     scalar_field: flat.scalar_field,
                     children: Vec::new(),
+                    wrap_segments: Vec::new(),
+                });
+            } else {
+                // No intermediate mapping exists for the parent segments.
+                // Collapse into a root node with wrap_segments so the
+                // leaf aggregation is wrapped in intermediate JSON objects.
+                // E.g. array_path: "specs.measurements" → root segment = "specs",
+                //       wrap_segments = ["measurements"].
+                let root_segment = flat.segments[0].clone();
+                let wrap_segs: Vec<String> = flat.segments[1..].to_vec();
+                roots.push(NestingNode {
+                    segment: root_segment,
+                    mapping: flat.mapping,
+                    item_fields: flat.item_fields,
+                    parent_fk_field: flat.parent_fk_field,
+                    parent_source_col: flat.parent_source_col,
+                    order_field: flat.order_field,
+                    scalar_field: flat.scalar_field,
+                    children: Vec::new(),
+                    wrap_segments: wrap_segs,
                 });
             }
         }
@@ -1252,10 +1278,27 @@ fn build_nested_ctes(
             (String::new(), String::new())
         };
 
+        // When wrap_segments is non-empty (multi-segment array_path without
+        // intermediate mappings), wrap the leaf aggregation in nested JSON
+        // objects.  E.g. wrap_segments = ["measurements"] produces:
+        //   jsonb_build_array(jsonb_build_object('measurements', jsonb_agg(...)))
+        let inner_agg =
+            format!("COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_leaf}), '[]'::jsonb)");
+        let agg_expr = if node.wrap_segments.is_empty() {
+            inner_agg
+        } else {
+            // Wrap innermost first, then outer segments.
+            let mut wrapped = inner_agg;
+            for seg in node.wrap_segments.iter().rev() {
+                wrapped = format!("jsonb_build_array(jsonb_build_object('{seg}', {wrapped}))");
+            }
+            format!("COALESCE({wrapped}, '[]'::jsonb)")
+        };
+
         all_ctes.push(format!(
             "{alias} AS (\n\
                SELECT n.{qgroup} AS _parent_key, \
-             COALESCE(jsonb_agg({obj_expr} ORDER BY {order_expr_leaf}), '[]'::jsonb) AS {qsegment}\n\
+             {agg_expr} AS {qsegment}\n\
                FROM {rev_view} AS n{del_join}\n\
                WHERE n.{qgroup} IS NOT NULL{del_where}{null_filter}\n\
                GROUP BY n.{qgroup}\n\

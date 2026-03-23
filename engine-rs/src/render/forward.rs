@@ -299,6 +299,36 @@ pub fn render_forward_body(
     // If target is known, emit ALL target fields in target-definition order
     // (NULL for fields this mapping doesn't contribute to).
     if let Some(target) = target {
+        // Pre-compute source expressions for identity fields so LAG/LEAD
+        // window functions can reference them by raw expression instead of
+        // SELECT alias (PostgreSQL cannot reference aliases in the same
+        // SELECT level).
+        let identity_exprs: HashMap<String, String> = target
+            .fields
+            .iter()
+            .filter(|(_, fd)| fd.strategy() == crate::model::Strategy::Identity)
+            .filter_map(|(tname, _)| {
+                let fm = mapping
+                    .fields
+                    .iter()
+                    .find(|fm| fm.is_forward() && fm.target.as_deref() == Some(tname.as_str()))?;
+                let expr = if let Some(ref e) = fm.expression {
+                    e.clone()
+                } else if let Some(ref sp) = fm.source_path {
+                    if has_path {
+                        json_path_expr_with_base(sp, Some("item.value"))
+                    } else {
+                        json_path_expr(sp)
+                    }
+                } else if let Some(ref src) = fm.source {
+                    resolve_nested_source(src, &parent_field_exprs, has_path)
+                } else {
+                    return None;
+                };
+                Some((tname.clone(), expr))
+            })
+            .collect();
+
         for (fname, fdef) in &target.fields {
             let qfname = qi(fname);
             // Use declared type if available, fall back to text.
@@ -316,20 +346,27 @@ pub fn render_forward_body(
                 } else if fm.order_prev || fm.order_next {
                     // Tier 2 linked-list CRDT: LAG/LEAD over identity fields
                     let window_fn = if fm.order_prev { "LAG" } else { "LEAD" };
-                    // Find identity fields on the target for the neighbor reference
-                    let identity_fields: Vec<&str> = target
+                    // Build value expression using raw source expressions (not
+                    // SELECT aliases) so PostgreSQL can resolve them.
+                    let id_names: Vec<&str> = target
                         .fields
                         .iter()
                         .filter(|(_, fd)| fd.strategy() == crate::model::Strategy::Identity)
                         .map(|(n, _)| n.as_str())
                         .collect();
-                    let value_expr = if identity_fields.len() == 1 {
-                        qi(identity_fields[0])
+                    let value_expr = if id_names.len() == 1 {
+                        identity_exprs
+                            .get(id_names[0])
+                            .cloned()
+                            .unwrap_or_else(|| qi(id_names[0]))
                     } else {
                         // Composite identity: JSONB object of neighbor's identity
-                        let parts: Vec<String> = identity_fields
+                        let parts: Vec<String> = id_names
                             .iter()
-                            .map(|f| format!("'{}', {}", crate::sql_escape(f), qi(f)))
+                            .map(|f| {
+                                let expr = identity_exprs.get(*f).cloned().unwrap_or_else(|| qi(f));
+                                format!("'{}', {}", crate::sql_escape(f), expr)
+                            })
                             .collect();
                         format!("jsonb_build_object({})", parts.join(", "))
                     };
