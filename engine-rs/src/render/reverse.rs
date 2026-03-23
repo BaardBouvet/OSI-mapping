@@ -351,8 +351,16 @@ pub fn render_reverse_view(
     select_exprs.push("id._base".to_string());
 
     // Extract passthrough columns from _base JSONB.
+    // Skip columns already projected as reverse-mapped fields to avoid
+    // duplicate column errors (e.g. soft_delete.field also mapped as data).
     for col in mapping.effective_passthrough() {
-        select_exprs.push(format!("id._base->>'{col}' AS {}", qi(col)));
+        let qcol = qi(col);
+        let already = select_exprs
+            .iter()
+            .any(|e| e.ends_with(&format!(" AS {qcol}")) || e == &qcol);
+        if !already {
+            select_exprs.push(format!("id._base->>'{col}' AS {qcol}"));
+        }
     }
 
     // Include target fields referenced by reverse_filter that aren't already projected.
@@ -629,6 +637,60 @@ mappings:
         assert!(
             sql.contains("r.\"name\""),
             "reverse_expression should appear verbatim in SELECT"
+        );
+    }
+
+    #[test]
+    fn soft_delete_field_also_mapped_no_duplicate_column() {
+        // When soft_delete.field is also explicitly mapped as a reverse field,
+        // the passthrough dedup must skip it to avoid duplicate column errors.
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  crm: { primary_key: id }
+targets:
+  customer:
+    fields:
+      email: { strategy: identity }
+      name: { strategy: coalesce }
+      deleted_at: { strategy: coalesce, type: timestamp }
+      is_deleted: { strategy: bool_or, type: boolean }
+mappings:
+  - name: crm_customers
+    source: crm
+    target: customer
+    soft_delete: { field: deleted_at, target: is_deleted }
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+      - { source: deleted_at, target: deleted_at }
+"#,
+        );
+        let mapping = &doc.mappings[0];
+        let target = doc.targets.get("customer").unwrap();
+        let sql = render_reverse_view(
+            mapping,
+            "customer",
+            Some(target),
+            &doc.targets,
+            doc.sources.get("crm"),
+            &doc.mappings,
+            &doc.sources,
+        )
+        .unwrap();
+        // deleted_at should appear exactly once as a projected column.
+        let count = sql.matches("\"deleted_at\"").count();
+        assert!(
+            count <= 2,
+            "deleted_at should not be duplicated as both reverse field and passthrough: \
+             found {count} occurrences\n{sql}"
+        );
+        // Verify passthrough extraction from _base is NOT present
+        // (the reverse field projection already handles it).
+        assert!(
+            !sql.contains("_base->>'deleted_at'"),
+            "passthrough should skip deleted_at when already projected as a reverse field:\n{sql}"
         );
     }
 }

@@ -3,7 +3,7 @@ description: >
   Soft-delete detection via soft_delete field.
   CRM has a deleted_at column — when non-null, the customer is treated as
   disappeared from CRM.  ERP has no soft-delete column.
-  With the default resurrect: false, the soft-deleted row is suppressed.
+  The soft-deleted row is suppressed — no stale data written back to CRM.
 
 sources:
   crm:

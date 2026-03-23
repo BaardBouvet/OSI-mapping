@@ -22,6 +22,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 
 | Example | Demonstrates |
 |---|---|
+| [`asymmetric-io`](asymmetric-io/README.md) | Asymmetric field direction — `forward_only`, `reverse_only`, and `bidirectional` in one mapping |
 | [`composite-keys`](composite-keys/README.md) | Multi-field identity via `link_group` (compound match key) |
 | [`concurrent-detection`](concurrent-detection/README.md) | Detecting concurrent edits via `include_base` |
 | [`crdt-ordering`](crdt-ordering/README.md) | Deterministic array element ordering via `order: true` |
@@ -53,6 +54,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`route`](route/README.md) | Discriminator-based routing via `filter:` |
 | [`route-combined`](route-combined/README.md) | Routing + dedicated sources merging |
 | [`soft-delete`](soft-delete/README.md) | Soft-delete detection via `soft_delete:` |
+| [`soft-delete-resurrect`](soft-delete-resurrect/README.md) | Soft-delete resurrection via `soft_delete.target` + `BOOL_AND` consensus |
 | [`value-defaults`](value-defaults/README.md) | Fallback values via `default` and `default_expression` |
 | [`value-groups`](value-groups/README.md) | Atomic field group resolution via `group:` |
 | [`vocabulary-standard`](vocabulary-standard/README.md) | Vocabulary targets with `references_field` |
@@ -68,10 +70,7 @@ These mapping schema properties are not yet demonstrated by any example:
 | `array_path` | Dotted path to a JSONB array nested inside a JSON object (vs `array` for top-level arrays) |
 | `links` / `LinkRef` | External identity edges from a linking table |
 | `link_key` | Column in a linking table providing pre-computed cluster identity |
-| `cluster_field` | Source column holding a pre-populated cluster ID |
 | `elements: last_modified` | Element-set resolution by most recent timestamp (vs `elements: coalesce` shown in `element-priority`) |
 | `scalar` | Bare scalar array element extraction (`scalar: true` on field mapping) |
-| `strategy: expression` | Custom SQL aggregation on target fields |
-| `strategy: bool_or` | Boolean OR aggregation across sources |
 | `soft_delete` on child | Element-level soft-delete on nested array child mappings |
 | `order_prev` / `order_next` | CRDT linked-list ordering fields |

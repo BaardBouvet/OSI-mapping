@@ -13,10 +13,8 @@ Without detection, the engine sees the CRM row as normal and emits
 `'update'` or `'noop'` — the soft deletion has no effect on the delta.
 
 With `soft_delete: deleted_at`, the engine detects that `deleted_at`
-is non-null and treats the entity as soft-deleted.
-When `resurrect: false` (default), the row is suppressed — no stale
-data is written back to CRM.  When `resurrect: true`, the delta emits
-`'update'` with the undelete values so the ETL can clear the marker.
+is non-null and treats the entity as soft-deleted — the row is
+suppressed and no stale data is written back to CRM.
 
 ## Key features
 
@@ -24,8 +22,6 @@ data is written back to CRM.  When `resurrect: true`, the delta emits
   or object with `field` and optional `strategy`.
 - **`strategy`** — `timestamp` (default), `deleted_flag`, or `active_flag`.
   Determines detection expression and undelete value automatically.
-- **`resurrect`** — controls behavior: `false` (default) suppresses,
-  `true` enables undelete.
 - **No UNION ALL** — soft-deleted rows still exist in the source, so
   there is no vanished-entity query. Only hard deletes (row gone)
   produce the vanished-entity UNION ALL.
@@ -38,3 +34,10 @@ data is written back to CRM.  When `resurrect: true`, the delta emits
 3. Soft-deleted rows produce `NULL` action — excluded from the delta.
 4. Active rows proceed through normal insert/update/noop logic.
 5. ERP's delta is completely unaffected — no soft_delete declared.
+
+## See also
+
+- [soft-delete-resurrect](../soft-delete-resurrect/README.md) — resurrection
+  via `soft_delete.target` when another source overrides the deletion
+- [hard-delete](../hard-delete/README.md) — hard-delete propagation via
+  `derive_tombstones`

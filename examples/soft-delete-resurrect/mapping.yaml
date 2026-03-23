@@ -1,0 +1,103 @@
+version: "1.0"
+description: >
+  Resurrect a soft-deleted entity when another source still has it active.
+  CRM soft-deletes via deleted_at; the detection is routed into a shared
+  is_deleted target field via soft_delete.target, auto-nullifying CRM's
+  non-identity fields so ERP wins resolution.  Mapping deleted_at as a
+  regular data field ensures the resolved NULL flows back to CRM, clearing
+  the soft-delete marker.
+
+sources:
+  crm:
+    primary_key: id
+  erp:
+    primary_key: cust_id
+
+targets:
+  customer:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+      deleted_at:
+        strategy: coalesce
+        type: timestamp
+      is_deleted:
+        strategy: expression
+        expression: "BOOL_AND((is_deleted)::boolean)"
+        type: boolean
+
+mappings:
+  - name: crm_customers
+    source: crm
+    target: customer
+    soft_delete:
+      field: deleted_at
+      target: is_deleted
+    reverse_filter: "is_deleted IS NOT TRUE"
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+        priority: 1
+      - source: deleted_at
+        target: deleted_at
+
+  - name: erp_customers
+    source: erp
+    target: customer
+    reverse_filter: "is_deleted IS NOT TRUE"
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+      - expression: "FALSE"
+        target: is_deleted
+
+tests:
+  - description: >
+      Alice is soft-deleted in CRM but still active in ERP.
+      soft_delete.target routes detection into is_deleted = TRUE.
+      ERP contributes is_deleted = FALSE.
+      BOOL_AND(TRUE, FALSE) = FALSE — entity is not deleted.
+      CRM's reverse_filter passes.  The auto-nullified deleted_at
+      resolves to NULL, which differs from CRM's current timestamp,
+      triggering an update that clears the soft-delete marker.
+    input:
+      crm:
+        - { id: "C1", email: "alice@example.com", name: "Alice", deleted_at: "2026-03-15" }
+      erp:
+        - { cust_id: "E1", email: "alice@example.com", name: "Alice" }
+    expected:
+      crm:
+        updates:
+          - { id: "C1", email: "alice@example.com", name: "Alice", deleted_at: null }
+
+  - description: >
+      Alice is soft-deleted in CRM and absent from ERP.
+      Only CRM contributes: BOOL_AND(TRUE) = TRUE — entity is deleted.
+      CRM's reverse_filter fails — action = 'delete'.
+      No resurrection occurs because no other source overrides.
+    input:
+      crm:
+        - { id: "C1", email: "alice@example.com", name: "Alice", deleted_at: "2026-03-15" }
+      erp: []
+    expected:
+      crm:
+        deletes:
+          - { email: "alice@example.com" }
+
+  - description: >
+      Bob is active in CRM (not soft-deleted) and absent from ERP.
+      Normal insert into ERP.
+    input:
+      crm:
+        - { id: "C2", email: "bob@example.com", name: "Bob", deleted_at: null }
+      erp: []
+    expected:
+      erp:
+        inserts:
+          - { _cluster_id: "crm_customers:C2", cust_id: null, email: "bob@example.com", name: "Bob" }

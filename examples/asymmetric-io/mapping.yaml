@@ -1,0 +1,79 @@
+version: "1.0"
+description: >
+  ERP expands company info on reads (company_name resolved from company_id).
+  Only the ID is accepted on writes — the name is server-derived. Writes also
+  require a sync_source tag not present on reads. Demonstrates forward_only,
+  reverse_only, and bidirectional fields in one mapping.
+
+sources:
+  erp:
+    primary_key: id
+  crm:
+    primary_key: id
+
+targets:
+  contact:
+    fields:
+      email:
+        strategy: identity
+      name:
+        strategy: coalesce
+      company_id:
+        strategy: coalesce
+      company_name:
+        strategy: coalesce
+
+mappings:
+  - name: erp
+    source: erp
+    target: contact
+    fields:
+      - source: email
+        target: email
+      - source: full_name
+        target: name
+        priority: 2
+      - source: company_id
+        target: company_id
+      # Expanded by server on read — enriches the golden record, never written back
+      - source: company_name
+        target: company_name
+        direction: forward_only
+      # Required by server on write — injected with a constant, not present on reads
+      - source: sync_source
+        direction: reverse_only
+        reverse_expression: "'integration'"
+
+  - name: crm
+    source: crm
+    target: contact
+    fields:
+      - source: email
+        target: email
+      - source: name
+        target: name
+        priority: 1
+
+tests:
+  - description: "CRM name wins — ERP update includes sync_source but excludes company_name"
+    input:
+      erp:
+        - { id: "1", email: "alice@example.com", full_name: "A. Smith", company_id: "COMP-1", company_name: "Acme Corp", sync_source: "integration" }
+      crm:
+        - { id: "100", email: "alice@example.com", name: "Alice Smith" }
+    expected:
+      erp:
+        updates:
+          - { id: "1", email: "alice@example.com", full_name: "Alice Smith", company_id: "COMP-1", sync_source: "integration" }
+
+  - description: "CRM-only contact inserted into ERP — reverse_only field injected, forward_only field absent"
+    input:
+      erp:
+        - { id: "1", email: "alice@example.com", full_name: "Alice", company_id: "COMP-1", company_name: "Acme Corp", sync_source: "integration" }
+      crm:
+        - { id: "100", email: "alice@example.com", name: "Alice" }
+        - { id: "200", email: "bob@example.com", name: "Bob" }
+    expected:
+      erp:
+        inserts:
+          - { _cluster_id: "crm:200", id: null, email: "bob@example.com", full_name: "Bob", company_id: null, sync_source: "integration" }

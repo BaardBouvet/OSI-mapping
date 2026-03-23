@@ -2428,4 +2428,51 @@ mappings:
             "derive_tombstones should skip hard-delete suppress:\n{sql}"
         );
     }
+
+    #[test]
+    fn soft_delete_field_mapped_as_data_no_duplicate_column() {
+        // When soft_delete.field is also explicitly mapped as a reverse field,
+        // the delta output columns must not include it twice (once as reverse
+        // field, once as auto-passthrough).
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  crm: { primary_key: id }
+targets:
+  customer:
+    fields:
+      email: { strategy: identity }
+      name: { strategy: coalesce }
+      deleted_at: { strategy: coalesce, type: timestamp }
+      is_deleted:
+        strategy: expression
+        expression: "BOOL_AND((is_deleted)::boolean)"
+        type: boolean
+mappings:
+  - name: crm_customers
+    source: crm
+    target: customer
+    soft_delete: { field: deleted_at, target: is_deleted }
+    fields:
+      - { source: email, target: email }
+      - { source: name, target: name }
+      - { source: deleted_at, target: deleted_at }
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("crm");
+        let sql =
+            render_delta_view("crm", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // The SELECT list should not have deleted_at twice.
+        // Count standalone column references (lines that are just the column).
+        let col_lines = sql
+            .lines()
+            .filter(|l| l.trim() == "\"deleted_at\",")
+            .count();
+        assert!(
+            col_lines == 1,
+            "deleted_at should appear exactly once as a projected column, found {col_lines}:\n{sql}"
+        );
+    }
 }
