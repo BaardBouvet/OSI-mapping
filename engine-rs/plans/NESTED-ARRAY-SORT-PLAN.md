@@ -1,6 +1,6 @@
 # Nested array sort predicate
 
-**Status:** Implemented
+**Status:** Done
 
 Allow child mappings to declare a `sort:` predicate that controls the
 ORDER BY clause when the reverse/delta view reconstructs the nested array

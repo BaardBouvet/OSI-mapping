@@ -75,8 +75,12 @@ without changing the schema surface locked in Phase 1.
 | FORWARD-VIEWS-PLAN | **Done** | Restored separate forward views for debuggability and rollout. |
 | MAPPING-CORRECTNESS-PLAN | **Done** | Audit and fix questionable expected data and missing type declarations in examples. |
 | FIX-SOFT-DELETE-EXAMPLE-PLAN | **Done** | Fix soft-delete example test to demonstrate suppression correctly. |
+| EXAMPLE-COVERAGE-PLAN | **Done** | Fill example gaps for all major schema features. |
+| INSERT-PK-VISIBILITY-PLAN | **Done** | Expose source PK columns on insert rows for ETL feedback. |
+| TEST-PROGRESS-PLAN | **Done** | Track and close E2E test coverage across all examples. |
+| VIEW-CONSOLIDATION-PLAN | **Done** | Remove redundant views to shrink the generated SQL surface. |
 
-**Progress:** 55 examples pass E2E.
+**Progress:** 43 examples pass E2E (reduced from 55 via EXAMPLE-REDUCTION-PLAN).
 
 **Exit criteria:** New examples for each feature. Noop suppression correct for
 normalized fields. Ordered arrays round-trip through reverse views.
@@ -98,6 +102,9 @@ Hardening, documentation, CI/CD, and project identity before the 0.1 tag.
 | MATERIALIZED-VIEW-INDEX-PLAN | **Done** | Opt-in `--materialize` flag with unique indexes for production deployments. |
 | DOCS-SITE-PLAN | **Done** | mdBook documentation site with search, deployed to GitHub Pages. |
 | NESTED-ARRAY-INSERT-PLAN | **Done** | Nested array reconstruction for insert rows — COALESCE fallback to `_entity_id_resolved` + `_cluster_id` join. Supports arbitrary nesting depth. |
+| ENRICHED-EXPRESSIONS-PLAN | **Done** | Raw SQL enriched expressions with `LEFT JOIN LATERAL` rendering, automatic target name rewriting, DML/DDL blocking. Adds `_enriched_` view layer. |
+| NESTED-ARRAY-SORT-PLAN | **Done** | `sort:` property on child mappings — custom `ORDER BY` in `jsonb_agg` for nested array reconstruction. |
+| EXAMPLE-REDUCTION-PLAN | **Done** | Consolidate redundant examples (55 → 43) without loss of feature coverage. |
 | CI-RELEASE-PLAN | Planned | GitHub Actions CI/CD, pre-built binaries via cargo-dist, crate publication. |
 | LEARNING-GUIDE-PLAN | Planned | Progressive 7-chapter learning guide teaching mapping concepts. |
 | CONSUMER-NAMING-PLAN | Planned | Rename consumer-facing `_delta_` → `sync_` and `_cluster_members_` → `cluster_members_` for naming consistency. |
@@ -112,6 +119,8 @@ Consumer-facing naming consistency applied (`sync_{source}` and
 `cluster_members_{mapping}`). Delta metadata columns use `__osi_*` namespace.
 `osi-engine test` runs embedded test cases against a PostgreSQL database.
 Nested array insert rows include child array data at arbitrary depth.
+Enriched expressions documented and tested (sesam-annotated example covers
+full DTL parity). Nested array sort via `sort:` on child mappings.
 
 ## Post-0.1
 
@@ -123,9 +132,11 @@ Plans deferred to after 0.1. All add new capabilities with existing workarounds
 | Plan | Status | Work |
 |------|--------|------|
 | ANALYTICS-PROVENANCE-PLAN | Planned | `_provenance_` and `_contributions_` views for source-tracing and stewardship. |
-| COMPUTED-FIELDS-PLAN | Design | Cross-target aggregation (`from:` + `match:`), recursive self-traversal (`traverse:`). New schema surface. |
+| COMPUTED-FIELDS-PLAN | Design | Cross-target aggregation (`from:` + `match:`), recursive self-traversal (`traverse:`). New schema surface. Partially covered by ENRICHED-EXPRESSIONS-PLAN. |
+| DOT-PATH-EXPRESSIONS-PLAN | Design | Dot-path traversal in expressions for cross-target reference navigation (references-only). |
+| SQL-SAFETY-VALIDATION-PLAN | Proposed | Extended SQL safety analysis — statement-level classification beyond current token-based checks. |
 | COMPOSITE-TYPES-PLAN | Proposed | Replace JSONB with PostgreSQL composite types for typed nested array output. |
-| TARGET-ARRAYS-PLAN | Maybe | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
+| TARGET-ARRAYS-PLAN | Planned | Array-typed fields on targets (`text[]`) — eliminates child targets for simple value lists. |
 | NULL-WINS-PLAN | Maybe | Allow NULL from authoritative sources to override non-NULL (sentinel pattern works today). |
 | SOURCE-GROUPING-PLAN | Design | Optional `system` property on sources for visual grouping in DOT graph output. |
 | TYPE-HIERARCHY-PLAN | Design | `hierarchy:` on target fields for IS-A type relationships. |

@@ -1,6 +1,6 @@
 # Enriched expressions
 
-**Status:** Implemented
+**Status:** Done
 
 Let users write full SQL scalar expressions — including correlated
 subqueries — against other targets' resolved views. The user writes bare

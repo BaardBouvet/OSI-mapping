@@ -1,6 +1,6 @@
 # Soft-delete (tombstone) support
 
-**Status:** Implemented
+**Status:** Done
 
 First-class support for source-provided tombstones — rows that remain in the
 source but are semantically deleted (soft delete).  The engine knows the
