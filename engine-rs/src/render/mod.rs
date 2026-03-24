@@ -623,11 +623,21 @@ fn annotate_resolution(target: &Target) -> String {
     let mut lines = Vec::new();
     lines.push("-- [annotate] resolution strategies:".to_string());
     for (fname, fdef) in &target.fields {
-        let strat = format!("{:?}", fdef.strategy()).to_lowercase();
-        let mut parts = vec![format!("{fname}: {strat}")];
-        if let Some(e) = fdef.expression() {
-            parts.push(format!("expression: {e}"));
-        }
+        let strat = fdef.strategy();
+        let strat_lower = format!("{strat:?}").to_lowercase();
+        let mut parts = if strat == Strategy::Expression {
+            if let Some(e) = fdef.expression() {
+                vec![format!("{fname}: {e}")]
+            } else {
+                vec![format!("{fname}: {strat_lower}")]
+            }
+        } else {
+            let mut p = vec![format!("{fname}: {strat_lower}")];
+            if let Some(e) = fdef.expression() {
+                p.push(format!("expression: {e}"));
+            }
+            p
+        };
         if let Some(g) = fdef.group() {
             parts.push(format!("group: {g}"));
         }
