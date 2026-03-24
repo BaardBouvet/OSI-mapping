@@ -7,17 +7,19 @@ computed late (post-resolution) so aggregated values flow through reverse
 views to source systems. Includes the "missing bottom" example as the
 motivating use case.
 
-## Three capabilities in one plan
+## Capabilities
 
 | Capability | YAML syntax | Pipeline layer | Flows to reverse? |
 |------------|-------------|----------------|-------------------|
-| **Child-target aggregation** | `from:` + `match:` on target field | `_enriched_` (new) | Yes |
+| **Child-target aggregation** | `from:` + `match:` on expression fields | `_enriched_` (new) | Yes |
 | **Recursive self-traversal** | `traverse:` on target | Analytics | No |
 | **Missing-bottom example** | Uses child-target aggregation | — | — |
 
-These are tightly coupled: the missing-bottom example requires child-target
-aggregation, and both aggregation patterns extend the same `TargetFieldDef`
-model with computed values that don't come from source mappings.
+For the recommended dot-path syntax (`sum(shipment.qty)`) that infers
+joins from `references:` edges, see
+[DOT-PATH-EXPRESSIONS-PLAN](DOT-PATH-EXPRESSIONS-PLAN.md). This plan
+covers the explicit `from:` + `match:` fallback, the enriched view layer,
+recursive traversal, and the missing-bottom example.
 
 ---
 
@@ -99,7 +101,7 @@ The subquery result would not appear in `_base` (the noop snapshot), so
 delta detection couldn't compare it — every sync cycle would produce
 spurious updates.
 
-## Proposed YAML
+## Proposed YAML: `from:` + `match:`
 
 Extend `TargetFieldDef` with `from:` and `match:` properties. When present,
 the field becomes a cross-target aggregate computed in the enriched layer.
@@ -131,7 +133,7 @@ targets:
           order_id: order_id
 ```
 
-### Property definitions
+#### Property definitions
 
 | Property | Type | Context | Description |
 |----------|------|---------|-------------|
@@ -143,16 +145,27 @@ When `from:` is present:
 - `expression` is a SQL aggregate evaluated over matching rows from the
   remote target's resolved view
 - `match` defines the equi-join between remote and local fields
-- The field is implicitly `direction: forward_only` — it has no source
-  column, so it cannot participate in reverse-to-source flow (but it does
+- The field is implicitly `direction: reverse_only` — it has no source
+  column, so it cannot participate in forward-to-target flow (but it does
   appear in the reverse view as a resolved value pushed to sources)
 
 When `from:` is absent, `strategy: expression` works as today — aggregating
 the target's own forward contributions in the resolution view.
 
+**Drawback:** `match:` repeats the join condition on every aggregated field,
+even though the relationship between `shipment` and `line_item` is already
+expressed by `references:` on the shipment target's FK fields. The
+dot-path syntax in
+[DOT-PATH-EXPRESSIONS-PLAN](DOT-PATH-EXPRESSIONS-PLAN.md) avoids this
+repetition by inferring joins from the `references:` graph.
+
 ## Generated SQL
 
 ### Enriched view
+
+The `from:` and `match:` properties determine the lateral join's WHERE
+clause. For dot-path syntax that infers joins from `references:` edges,
+see [DOT-PATH-EXPRESSIONS-PLAN](DOT-PATH-EXPRESSIONS-PLAN.md).
 
 ```sql
 CREATE OR REPLACE VIEW "_enriched_line_item" AS
@@ -171,7 +184,7 @@ LEFT JOIN LATERAL (
 ) _agg_shipment ON true;
 ```
 
-When multiple fields share the same `from:` and `match:`, they are grouped
+When multiple fields reference the same remote target, they are grouped
 into a single lateral join. Each field's `expression:` becomes a column in
 the subquery's SELECT list.
 
@@ -187,7 +200,7 @@ regular resolved fields.
 
 ## DAG impact
 
-The enriched view adds one edge per `from:` reference:
+The enriched view adds one edge per cross-target reference:
 
 ```
 _resolved_shipment → _enriched_line_item → _rev_b_items
@@ -202,20 +215,60 @@ are safe — each enriched view depends only on the other target's resolved
 
 ## Validation rules
 
+### Prerequisite: no dots in target field names
+
+Target field names must not contain `.` so that dot-path syntax in
+expressions is unambiguous. Today's JSON Schema for target `fields` has
+no `propertyNames` constraint — add `"propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" }`
+to match the existing constraint on source, target, and mapping names.
+The Rust validator should enforce the same regex on target field names.
+
+### `from:` + `match:` rules
+
 1. `from:` value must name an existing target.
 2. `match:` keys must be fields on the `from` target; values must be fields
    on the current target.
 3. `from:` requires `strategy: expression` and a non-empty `expression:`.
 4. `from:` fields must not also have `source:` — they are computed, not
    mapped from source data.
-5. `from:` fields are implicitly `direction: forward_only`.
+5. `from:` fields are implicitly `direction: reverse_only` (see below).
 6. `expression:` on `from:` fields is validated as a SQL aggregate snippet
    (same rules as today's `TargetExpression` context).
 
+For dot-path validation rules, see
+[DOT-PATH-EXPRESSIONS-PLAN § Validation rules](DOT-PATH-EXPRESSIONS-PLAN.md).
+
+### Direction semantics for cross-target aggregates
+
+Cross-target aggregated fields are **reverse-only** — they are computed
+post-resolution and pushed to sources via the reverse pipeline. They have
+no forward contribution (no source provides them).
+
+This is the correct default. But what about the forward side?
+
+This is exactly the missing-bottom scenario from Part 3: Warehouse B has
+no shipment concept but receives `total_shipped` via the aggregate. If
+Warehouse B also *contributes* a `total_shipped` value (e.g., from a
+manual count), the enriched layer needs to decide which wins — the
+aggregate or the forward contribution.
+
+The enriched layer could support a merge strategy:
+
+- **Aggregate wins** (default): the enriched layer overwrites the resolved
+  value with the computed aggregate. Forward contributions are ignored.
+- **Aggregate as fallback**: use the forward-contributed value if present;
+  fall back to the aggregate when no source provides it.
+- **Forward as seed**: the forward value bootstraps the field; subsequent
+  syncs use the aggregate once child data arrives.
+
+This is an open design area. For Phase 1, cross-target fields are
+reverse-only with no forward contribution. Forward-side handling can be
+added later when a concrete use case drives the design.
+
 ## Noop detection for enriched fields
 
-Fields computed via `from:` have no source value and thus no `_base` entry.
-If `_base` has no entry, the `IS NOT DISTINCT FROM` check yields
+Cross-target aggregated fields have no source value and thus no `_base`
+entry. If `_base` has no entry, the `IS NOT DISTINCT FROM` check yields
 `NULL IS NOT DISTINCT FROM new_value` — which is `false` when `new_value`
 is non-null, correctly flagging the row as an update. On subsequent syncs,
 `_base` will contain the previously-synced aggregate. This seems correct
@@ -224,6 +277,31 @@ without special handling.
 ---
 
 # Part 2 — Recursive self-traversal
+
+## Why dot-paths don't cover recursion
+
+The [dot-path syntax](DOT-PATH-EXPRESSIONS-PLAN.md) (`sum(shipment.qty)`)
+works for cross-target aggregation: lateral joins along `references:`
+edges. Recursive self-traversal is fundamentally different:
+
+- **Arbitrary depth** — following `manager → manager → ... → root` is
+  unbounded; it requires `WITH RECURSIVE`, not a lateral join.
+- **Ordering** — `root_first` vs `leaf_first` path construction has no
+  analogue in aggregate functions.
+- **Cycle detection** — self-references can create loops; the recursive CTE
+  needs a visited-set guard.
+- **Collection** — gathering values at each level (`string_agg` with
+  recursive ordering) isn't expressible as a simple aggregate.
+
+A dot-path like `sum(employee.salary)` where `employee` references itself
+would be ambiguous: does it aggregate all employees (a cross-target
+aggregate against the same target) or walk the hierarchy? And what would
+`string_agg(employee.name, ' / ')` mean without direction/depth control?
+
+`traverse:` remains a separate declarative primitive specifically because
+recursion needs dedicated semantics that aggregate expressions can't
+carry. The two features share the enriched/analytics pipeline but have
+distinct YAML syntax.
 
 ## Problem
 
@@ -355,17 +433,31 @@ Warehouse A (3 levels)              Warehouse B (2 levels)
 ## Target model
 
 ```
-order                  line_item              shipment
-─────                  ─────────              ────────
-order_id (id)          item_name (id)         item_name (id)
-customer (coal)        order_id (id)          order_id (id)
-region (coal)          qty (coal)             ship_date (id)
-                       unit_price (coal)      qty (coal)
-                       warehouse_loc (coal)   carrier (coal)
-                       total_shipped (from)
-                       last_ship_date (from)
-                       fully_shipped (from)
+order                  line_item                      shipment
+─────                  ─────────                      ────────
+order_id (id)          item_name (id)                 item_name (id)
+customer (coal)        order_id (id, ref→order)        order_id (id, ref→order)
+region (coal)          qty (coal)                     ship_date (id)
+                       unit_price (coal)              qty (coal)
+                       warehouse_loc (coal)           carrier (coal)
+                       total_shipped (expr)
+                       last_ship_date (expr)
+                       fully_shipped (expr)
 ```
+
+Dot-path expressions (recommended):
+- `total_shipped`: `expression: "COALESCE(sum(shipment.qty), 0)"`
+- `last_ship_date`: `expression: "max(shipment.ship_date)"`
+- `fully_shipped`: `expression: "COALESCE(sum(shipment.qty), 0) >= qty"`
+
+See [DOT-PATH-EXPRESSIONS-PLAN](DOT-PATH-EXPRESSIONS-PLAN.md) for the
+recommended dot-path syntax and a target model using surrogate keys with
+explicit `references:` edges.
+
+With `from:` + `match:` (composite identity model above):
+- `total_shipped`: `from: shipment`, `match: {item_name: item_name, order_id: order_id}`
+- `last_ship_date`: same `from:` + `match:`
+- `fully_shipped`: same `from:` + `match:`
 
 ## What child-target aggregation gives us
 
@@ -378,9 +470,9 @@ Resolved line_item for "Widget" on ORD-1:
   qty: 10              ← from both (match)
   unit_price: 25       ← from A only
   warehouse_loc: Bay 7 ← from B only
-  total_shipped: 10    ← from: shipment aggregate
-  last_ship_date: 2026-03-08  ← from: shipment aggregate
-  fully_shipped: true  ← from: shipment aggregate
+  total_shipped: 10    ← sum(shipment.qty) via enriched layer
+  last_ship_date: 2026-03-08  ← max(shipment.ship_date)
+  fully_shipped: true  ← sum(shipment.qty) >= qty
 ```
 
 ## Test cases
@@ -413,14 +505,14 @@ Resolved line_item for "Widget" on ORD-1:
 |---------|---------|-------------|----------------|
 | Extra ancestor | hierarchy-merge | Simpler lacks parent above | None |
 | Missing middle | depth-mismatch | Simpler lacks intermediate | reverse\_filter |
-| **Missing bottom** | **this** | **Simpler lacks leaf level** | **from: + match:** |
+| **Missing bottom** | **this** | **Simpler lacks leaf level** | **dot-path expressions (or from: + match:)** |
 
 ---
 
 # Model changes
 
 ```rust
-// TargetFieldDef additions
+// TargetFieldDef additions for from: + match:
 pub from: Option<String>,                          // remote target name
 pub match_fields: Option<HashMap<String, String>>,  // remote→local join
 
@@ -440,18 +532,31 @@ pub struct TraverseField {
 | Component | Change | Lines |
 |-----------|--------|-------|
 | New: `render_enriched()` | `_enriched_{target}` view with lateral joins | ~60 |
-| `render_reverse()` | Read from `_enriched_` when target has `from:` fields | ~5 |
+| `render_reverse()` | Read from `_enriched_` when target has cross-target fields | ~5 |
 | `render_analytics()` | Read from `_enriched_` when available; add `WITH RECURSIVE` for `traverse:` | ~80 |
 
 # Implementation phases
 
-### Phase 1 — Child-target aggregation (~100 lines)
+### Phase 0 — Prerequisite: target field name validation (~5 lines)
+
+- Add `propertyNames` constraint to JSON Schema for target `fields`
+- Add regex check in Rust validator for target field names
+- Shared prerequisite with
+  [DOT-PATH-EXPRESSIONS-PLAN](DOT-PATH-EXPRESSIONS-PLAN.md)
+
+### Phase 1 — Child-target aggregation with `from:` + `match:` (~100 lines)
 
 - Parse `from:` and `match:` on `TargetFieldDef`
 - Validate references and field existence
 - Render `_enriched_{target}` view with grouped lateral joins
 - Switch reverse and analytics to read from enriched when present
 - Test with missing-bottom example
+
+### Phase 1b — Dot-path expressions (~30–50 lines on top of Phase 1)
+
+See [DOT-PATH-EXPRESSIONS-PLAN](DOT-PATH-EXPRESSIONS-PLAN.md). Adds
+expression parsing and `references:` graph traversal on top of the
+enriched layer from Phase 1.
 
 ### Phase 2 — Recursive traversal (~80 lines)
 
@@ -466,20 +571,45 @@ pub struct TraverseField {
 
 # Interaction with existing plans
 
-- **EXPRESSION-SAFETY-PLAN:** `expression:` on `from:` fields is validated
-  as a SQL aggregate snippet (same rules as `TargetExpression`). The engine
-  generates the subquery; the user writes only the aggregate body.
-- **EXPRESSION-SAFETY-PLAN Phase 3 (`lookup:`):** Superseded by `from:` — the
-  `_enriched_` layer covers the same use cases more cleanly and integrates
-  with the full pipeline.
+- **EXPRESSION-SAFETY-PLAN:** `expression:` on cross-target fields is
+  validated as a SQL aggregate snippet (same rules as `TargetExpression`).
+  For dot-path expressions, references are rewritten to qualified column
+  names before safety validation.
+- **EXPRESSION-SAFETY-PLAN Phase 3 (`lookup:`):** Superseded by cross-target
+  aggregation — the `_enriched_` layer covers the same use cases more
+  cleanly and integrates with the full pipeline.
+- **DOT-PATH-EXPRESSIONS-PLAN:** Recommended syntax for cross-target
+  aggregation when the `references:` graph provides an unambiguous join
+  path. Falls back to `from:` + `match:` from this plan when ambiguous.
 
 # Open questions
 
-1. **Should `fully_shipped` reference `qty` from the parent?** The expression
-   `sum(qty) >= max(parent_qty)` assumes the child has a copy. An alternative:
-   a `local:` keyword in expressions, e.g., `sum(qty) >= local.qty`.
+1. **Should `fully_shipped` reference `qty` from the parent?** With
+   dot-path syntax this works naturally: `sum(shipment.qty) >= qty` —
+   unqualified `qty` refers to the local target. With `from:` + `match:`,
+   the expression `sum(qty) >= max(parent_qty)` assumes the child has a
+   copy, or needs a `local:` keyword.
 
 2. **Should match conditions support non-equality?** Start with equi-join only.
 
 3. **Should traversal values flow to reverse views?** Current design says no.
    If needed, a future enhancement could promote traverse to the enriched layer.
+
+4. **Should aggregation support filtering?** The Sesam DTL annotated
+   example uses `["filter", ["gt", "_.amount", 100]]` to drop orders with
+   amount ≤ 100 before embedding them.
+
+   Rather than adding a dedicated `where:` predicate, the composable
+   approach is: define a computed boolean field via `from:` (or a local
+   `expression:`), then use the existing `reverse_filter:` on the child
+   mapping to exclude rows where the flag is false. This reuses two
+   existing building blocks — computed fields and reverse_filter —
+   instead of introducing a new one.
+
+   Example: a `qualifies` boolean computed on the `global_order` target
+   (e.g., `expression: "amount > 100"`) flows through to the enriched
+   layer. The child mapping `person_with_orders_orders` then declares
+   `reverse_filter: "qualifies"` to exclude non-qualifying orders from
+   the reconstructed nested array.
+
+   No new syntax needed beyond what this plan already proposes.

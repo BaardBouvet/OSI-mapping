@@ -208,9 +208,21 @@ pub fn render_resolution_view(
         agg_exprs.push("_entity_id_resolved AS _entity_id".to_string());
     }
 
+    // Detect enriched expression fields (those referencing other targets).
+    let all_target_names: Vec<&str> = _all_targets.keys().map(|s| s.as_str()).collect();
+
     let mut outer_defaults: Vec<(String, String)> = Vec::new();
     for (fname, fdef) in &target.fields {
         let qfname = qi(fname);
+
+        // Enriched expression fields are computed in _enriched_ — skip here.
+        if fdef.strategy() == Strategy::Expression {
+            if let Some(expr) = fdef.expression() {
+                if crate::validate_expr::is_enriched_expression(expr, &all_target_names) {
+                    continue;
+                }
+            }
+        }
 
         // Grouped fields are handled via CTE join — skip aggregation.
         if grouped_fields.contains(fname.as_str()) {

@@ -15,6 +15,10 @@ The Sesam DTL example transforms persons by joining in their orders via `apply-h
 - **`array: orders`** — nested array extraction/reconstruction, equivalent to the embedded orders list in DTL output
 - **`last_modified`** — recency-based resolution so edits flow in both directions
 - **`type: numeric`** — numeric order IDs matching Sesam's entity ID convention
+- **`expression:` (enriched)** — raw SQL subquery computing `order_count` from the orders target, rendered as `LEFT JOIN LATERAL`
+- **`sort: [{field: amount, direction: desc}]`** — sorts the nested orders array by amount descending in the delta output
+- **`direction: reverse_only`** — `order_count` flows only from global target to `person_with_orders`, never written back
+- **`reverse_filter: "amount > 100"`** — only orders exceeding 100 appear in the nested array, equivalent to DTL's `["filter", ["gt", "_.amount", 100]]`
 
 ## How it works
 
@@ -34,20 +38,9 @@ The Sesam DTL example transforms persons by joining in their orders via `apply-h
 | `["add", "type", "customer"]` | `reverse_expression: "'customer'"` on the `person_with_orders_person` mapping |
 | `apply-hops` join on `cust_id` | `references: person` on orders mapping |
 | `"order"` sub-rule | `person_with_orders_orders` nested array mapping |
-| `["count", "_T.orders"]` | Not modelled — OSI syncs data, not computed aggregates |
-| `["filter", ["gt", ...]]` | `filter:` on mapping (not shown here) |
+| `["count", "_T.orders"]` | `expression:` enriched expression with `SELECT count(*)` subquery |
+| `["filter", ["gt", ...]]` | `reverse_filter: "amount > 100"` on the nested orders mapping |
 
-## Gaps between this example and the DTL original
+## Feature coverage
 
-The Sesam DTL annotated example includes several transforms that OSI-mapping
-does not (yet) express:
-
-| DTL feature | What it does | OSI-mapping status |
-|---|---|---|
-| `["count", "_T.orders"]` | Computes `order_count` from the embedded array | No computed/derived fields — OSI syncs stored data, not aggregates (see COMPUTED-FIELDS-PLAN) |
-| `["filter", ["gt", "_.amount", 100]]` | Drops orders with amount ≤ 100 | `filter:` exists in the mapping schema but is not used here |
-| `["sorted", "_.amount"]` + `["sorted-descending", ...]` | Sorts the embedded orders by amount | No explicit sort control — nested arrays use the source's row order |
-| `["add", "order-count", ...]` | Adds a derived field to the output | No computed/derived fields (see COMPUTED-FIELDS-PLAN) |
-
-These gaps are intentional for a pre-1.0 mapping format focused on faithful
-bidirectional synchronisation rather than arbitrary transformation.
+All transforms from the Sesam DTL annotated example are now covered.

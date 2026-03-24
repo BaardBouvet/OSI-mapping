@@ -269,12 +269,35 @@
         "derive_tombstones": {
           "type": "string",
           "description": "Target field to synthesize for absent entities or elements. On root mappings (requires cluster_members): detects entity absence. On child mappings (requires parent with written_state): detects element absence. Absent items contribute TRUE to the named field, letting resolution propagate the deletion."
+        },
+        "sort": {
+          "type": "array",
+          "description": "Sort keys for nested array reconstruction ORDER BY. Only valid on child mappings. Mutually exclusive with order: true on fields.",
+          "items": { "$ref": "#/$defs/SortKey" }
         }
       },
       "anyOf": [
         { "required": ["fields"] },
         { "required": ["links"] }
       ]
+    },
+
+    "SortKey": {
+      "type": "object",
+      "description": "A sort key for nested array reconstruction ORDER BY.",
+      "required": ["field"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string",
+          "description": "Target field name to sort by."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["asc", "desc"],
+          "description": "Sort direction. Defaults to asc."
+        }
+      }
     },
 
     "LinkRef": {

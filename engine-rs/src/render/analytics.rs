@@ -11,8 +11,16 @@ use crate::qi;
 /// Consumer-facing — named directly after the target (no underscore prefix).
 /// Emits `_cluster_id` (aliased from `_entity_id`) and all resolved
 /// business fields — no internal metadata columns.
-pub fn render_analytics_view(target_name: &str, target: &Target) -> Result<String> {
-    let resolved_view = qi(&format!("_resolved_{target_name}"));
+pub fn render_analytics_view(
+    target_name: &str,
+    target: &Target,
+    has_enriched: bool,
+) -> Result<String> {
+    let upstream = if has_enriched {
+        qi(&format!("_enriched_{target_name}"))
+    } else {
+        qi(&format!("_resolved_{target_name}"))
+    };
     let qview_name = qi(target_name);
 
     let mut select_exprs: Vec<String> = Vec::new();
@@ -25,7 +33,7 @@ pub fn render_analytics_view(target_name: &str, target: &Target) -> Result<Strin
     let sql = format!(
         "-- {target_name}\n\
          CREATE OR REPLACE VIEW {qview_name} AS\n\
-         SELECT\n  {columns}\nFROM {resolved_view};\n",
+         SELECT\n  {columns}\nFROM {upstream};\n",
         columns = select_exprs.join(",\n  "),
     );
 
@@ -63,7 +71,7 @@ mappings:
 "#,
         );
         let target = doc.targets.get("contact").unwrap();
-        let sql = render_analytics_view("contact", target).unwrap();
+        let sql = render_analytics_view("contact", target, false).unwrap();
         assert!(
             sql.contains("FROM \"_resolved_contact\""),
             "should select from resolved view"
@@ -96,7 +104,7 @@ mappings:
 "#,
         );
         let target = doc.targets.get("contact").unwrap();
-        let sql = render_analytics_view("contact", target).unwrap();
+        let sql = render_analytics_view("contact", target, false).unwrap();
         assert!(sql.contains("\"email\""), "should include email field");
         assert!(sql.contains("\"name\""), "should include name field");
         assert!(!sql.contains("_src_id"), "should not include _src_id");

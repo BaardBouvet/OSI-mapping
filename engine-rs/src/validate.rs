@@ -375,6 +375,46 @@ fn pass_structural(doc: &MappingDocument, result: &mut ValidationResult) {
                 }
             }
         }
+
+        // sort: validation
+        if let Some(ref sort_keys) = mapping.sort {
+            // sort only valid on child mappings
+            if mapping.parent.is_none() {
+                result.error(
+                    "Schema",
+                    format!(
+                        "mapping '{}': sort is only valid on child mappings (requires parent)",
+                        mapping.name
+                    ),
+                );
+            }
+            // sort and order: true are mutually exclusive
+            if mapping.fields.iter().any(|f| f.order) {
+                result.error(
+                    "Schema",
+                    format!(
+                        "mapping '{}': sort and order: true are mutually exclusive",
+                        mapping.name
+                    ),
+                );
+            }
+            // sort field names must exist on the target
+            if let Some(target) = doc.targets.get(mapping.target.name()) {
+                for sk in sort_keys {
+                    if !target.fields.contains_key(&sk.field) {
+                        result.error(
+                            "Schema",
+                            format!(
+                                "mapping '{}': sort field '{}' is not a field on target '{}'",
+                                mapping.name,
+                                sk.field,
+                                mapping.target.name()
+                            ),
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -852,16 +892,38 @@ fn pass_source_primary_keys(doc: &MappingDocument, result: &mut ValidationResult
 // ──────────────────────────────────────────────────────────────────────
 
 fn pass_sql_syntax(doc: &MappingDocument, result: &mut ValidationResult) {
+    let all_target_names: Vec<&str> = doc.targets.keys().map(|s| s.as_str()).collect();
+
     // Check target-level expressions
     for (tname, tdef) in &doc.targets {
         for (fname, fdef) in &tdef.fields {
             if let Some(expr) = fdef.expression() {
+                let is_enriched =
+                    crate::validate_expr::is_enriched_expression(expr, &all_target_names);
+                let ctx = if is_enriched {
+                    ExprContext::EnrichedExpression
+                } else {
+                    ExprContext::TargetExpression
+                };
                 check_expr(
                     expr,
-                    ExprContext::TargetExpression,
+                    ctx,
                     &format!("target '{tname}.{fname}' expression"),
                     result,
                 );
+                // Validate FROM/JOIN targets are declared target names.
+                if is_enriched {
+                    for ref_name in crate::validate_expr::extract_from_join_targets(expr) {
+                        if !all_target_names.contains(&ref_name.as_str()) {
+                            result.error(
+                                "enriched",
+                                format!(
+                                    "target '{tname}.{fname}' expression references undeclared target '{ref_name}'"
+                                ),
+                            );
+                        }
+                    }
+                }
             }
             if let Some(expr) = fdef.default_expression() {
                 check_expr(

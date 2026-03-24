@@ -355,6 +355,56 @@ For nested array mappings, `order: true` generates a sortable position key from 
 
 The target field should use `coalesce` strategy so the highest-priority source's ordering wins. See [`examples/crdt-ordering/`](../../examples/crdt-ordering/).
 
+### Nested array sort (sort)
+
+For child mappings, `sort` provides static field-based ordering of the reconstructed array — simpler than CRDT ordering when you just need a deterministic sort:
+
+```yaml
+  - name: person_orders
+    parent: person_mapping
+    array: orders
+    target: order
+    sort:
+      - field: amount
+        direction: desc
+    fields:
+      - source: order_id
+        target: order_id
+      - source: amount
+        target: amount
+```
+
+Mutually exclusive with `order: true`. See [`examples/sesam-annotated/`](../../examples/sesam-annotated/).
+
+### Enriched expressions
+
+When a target field's `expression` references other target names via `FROM`/`JOIN`, it becomes an *enriched expression*. The engine renders it as a `LEFT JOIN LATERAL` subquery in a dedicated view layer, allowing correlated subqueries across resolved targets:
+
+```yaml
+targets:
+  global_person:
+    fields:
+      person_id: identity
+      name: coalesce
+      order_count:
+        strategy: expression
+        expression: |
+          COALESCE((
+            SELECT count(*)
+            FROM global_order o
+            WHERE o.person_ref = global_person.person_id
+          ), 0)
+        type: numeric
+```
+
+Rules:
+- Bare target names in `FROM`/`JOIN` are rewritten to resolved view names automatically
+- Referenced targets must be declared in the same file
+- DML/DDL statements are blocked
+- Enriched fields are typically paired with `direction: reverse_only` on consuming mappings (computed values don't write back)
+
+See [`examples/sesam-annotated/`](../../examples/sesam-annotated/).
+
 ## Tests Section
 
 Tests define input data and expected output after the full pipeline (forward → resolution → reverse):

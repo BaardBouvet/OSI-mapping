@@ -421,6 +421,11 @@ pub struct Mapping {
     /// field for absent items, letting resolution propagate the deletion.
     #[serde(default)]
     pub derive_tombstones: Option<String>,
+    /// Sort keys for nested array reconstruction ORDER BY.
+    /// Only valid on child mappings (with `parent:`).
+    /// Mutually exclusive with `order: true` on fields.
+    #[serde(default)]
+    pub sort: Option<Vec<SortKey>>,
 }
 
 impl Mapping {
@@ -487,6 +492,23 @@ impl Mapping {
         }
         cols
     }
+}
+
+/// Sort direction for nested array reconstruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+/// A sort key for nested array reconstruction ORDER BY.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SortKey {
+    pub field: String,
+    #[serde(default)]
+    pub direction: Option<SortDirection>,
 }
 
 /// A link reference — connects a field in a linking table to a source mapping.

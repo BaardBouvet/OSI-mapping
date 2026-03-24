@@ -145,6 +145,7 @@ Full target field definition with strategy and optional configuration.
 |---|---|---|---|
 | `strategy` | string | **yes** | Resolution strategy (see below) |
 | `expression` | string | for `expression` | SQL aggregation expression |
+| `type` | string | no | Type hint (`numeric`, `boolean`, `date`) for typed aggregation |
 | `references` | string | no | Foreign key → another target entity name |
 | `default` | string / number / boolean | no | Static fallback value |
 | `default_expression` | string | no | Computed fallback (SQL) |
@@ -196,7 +197,46 @@ score:
   expression: "max(score)"
 ```
 
-**Examples:** [hard-delete](../examples/hard-delete/) (`bool_or` for deletion flags)
+**Enriched expressions:** When an `expression` references other target names (via `FROM` or `JOIN`), it becomes an *enriched expression*. Instead of running inside the resolution aggregation, it is layered on top via a `LEFT JOIN LATERAL` subquery in a dedicated `_enriched_` view. This lets you write correlated subqueries against other targets' resolved data.
+
+```yaml
+targets:
+  global_person:
+    fields:
+      person_id: identity
+      name: coalesce
+      order_count:
+        strategy: expression
+        expression: |
+          COALESCE((
+            SELECT count(*)
+            FROM global_order o
+            WHERE o.person_ref = global_person.person_id
+          ), 0)
+        type: numeric
+```
+
+Bare target names in `FROM`/`JOIN` clauses are automatically rewritten to internal resolved view names. Referenced target names must be declared in the same file. DML (`INSERT`, `UPDATE`, `DELETE`) and DDL (`DROP`, `ALTER`) are blocked.
+
+CTEs (`WITH`) are supported for complex enriched expressions:
+
+```yaml
+      total_revenue:
+        strategy: expression
+        expression: |
+          COALESCE((
+            WITH recent AS (
+              SELECT amount
+              FROM   order o
+              WHERE  o.customer_ref = customer.customer_id
+                AND  o.status = 'completed'
+            )
+            SELECT sum(amount) FROM recent
+          ), 0)
+        type: numeric
+```
+
+**Examples:** [sesam-annotated](../examples/sesam-annotated/) (enriched `order_count` via correlated subquery), [hard-delete](../examples/hard-delete/) (`bool_or` for deletion flags)
 
 #### `collect`
 
@@ -358,6 +398,7 @@ Maps fields from one source dataset to one target entity.
 | `last_modified` | [TimestampRef](#timestampref) | no | Mapping-level timestamp for last_modified resolution |
 | `filter` | string | no | Forward filter: SQL WHERE condition |
 | `reverse_filter` | string | no | Reverse filter: SQL WHERE condition |
+| `sort` | array of [SortKey](#sort) | no | Custom ordering for nested array reconstruction (child mappings only) |
 
 | `links` | array of [LinkRef](#linkref) | no | External identity edges from a linking table |
 | `link_key` | string | no | Column in linking table providing pre-computed cluster ID (IVM-safe) |
@@ -464,6 +505,36 @@ SQL WHERE conditions that control which rows flow through the mapping.
 ```
 
 **Examples:** [route](../examples/route/), [route-combined](../examples/route-combined/), [route-multiple](../examples/route-multiple/), [types](../examples/types/), [inserts-and-deletes](../examples/inserts-and-deletes/)
+
+### `sort`
+
+Custom ordering for nested array reconstruction. Only valid on child mappings (those with `parent`). Controls the `ORDER BY` inside `jsonb_agg()` when the delta view rebuilds the nested array.
+
+Each entry is a [SortKey](#sort) with a `field` (must be a mapped target field) and an optional `direction` (`asc` or `desc`, defaults to `asc`).
+
+```yaml
+  - name: person_orders
+    parent: person_mapping
+    array: orders
+    target: order
+    sort:
+      - field: amount
+        direction: desc
+    fields:
+      - source: order_id
+        target: order_id
+      - source: amount
+        target: amount
+```
+
+Mutually exclusive with `order: true` — use `sort` for static field-based ordering, `order` for CRDT-style positional ordering.
+
+| Property | Type | Required | Description |
+|---|---|---|---|
+| `field` | string | **yes** | Target field name to sort by |
+| `direction` | string | no | `asc` (default) or `desc` |
+
+**Examples:** [sesam-annotated](../examples/sesam-annotated/) (orders sorted by amount descending)
 
 ### `links`
 

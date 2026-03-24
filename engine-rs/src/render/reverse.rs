@@ -85,6 +85,7 @@ fn pk_base_expr_map(
 /// view then classifies those as inserts.
 ///
 /// No WHERE clause — all filtering deferred to delta.
+#[allow(clippy::too_many_arguments)]
 pub fn render_reverse_view(
     mapping: &Mapping,
     target_name: &str,
@@ -93,12 +94,15 @@ pub fn render_reverse_view(
     source_meta: Option<&Source>,
     all_mappings: &[Mapping],
     all_sources: &IndexMap<String, Source>,
+    has_enriched: bool,
 ) -> Result<String> {
     let view_name = qi(&format!("_rev_{}", mapping.name));
     let id_view = format!("_id_{target_name}");
     let has_mixed_order =
         !ordered::mixed_order_fields_for_target(all_mappings, target_name).is_empty();
-    let resolved_view = if has_mixed_order {
+    let resolved_view = if has_enriched {
+        qi(&format!("_enriched_{target_name}"))
+    } else if has_mixed_order {
         qi(&format!("_ordered_{target_name}"))
     } else {
         qi(&format!("_resolved_{target_name}"))
@@ -512,6 +516,7 @@ mappings:
             None,
             &doc.mappings,
             &doc.sources,
+            false,
         )
         .unwrap();
         assert!(
@@ -559,6 +564,7 @@ mappings:
             doc.sources.get("s"),
             &doc.mappings,
             &doc.sources,
+            false,
         )
         .unwrap();
         assert!(
@@ -597,6 +603,7 @@ mappings:
             source_meta,
             &doc.mappings,
             &doc.sources,
+            false,
         )
         .unwrap();
         assert!(
@@ -632,6 +639,7 @@ mappings:
             None,
             &doc.mappings,
             &doc.sources,
+            false,
         )
         .unwrap();
         assert!(
@@ -677,6 +685,7 @@ mappings:
             doc.sources.get("crm"),
             &doc.mappings,
             &doc.sources,
+            false,
         )
         .unwrap();
         // deleted_at should appear exactly once as a projected column.

@@ -31,6 +31,15 @@ targets:
       age:
         strategy: last_modified
         type: numeric
+      order_count:
+        strategy: expression
+        expression: |
+          COALESCE((
+            SELECT count(*)
+            FROM global_order o
+            WHERE o.person_ref = global_person.person_id
+          ), 0)
+        type: numeric
 
   global_order:
     fields:
@@ -96,6 +105,9 @@ mappings:
         reverse_expression: "'customer'"  # ["add", "type", "customer"] — hardcoded on the way back out
       - source: age
         target: age
+      - source: order_count
+        target: order_count
+        direction: reverse_only  # computed in enriched view, flows back only
 
   # person_with_orders.orders[] → global_order target
   # Nested array — the embedded orders in the join result.
@@ -107,6 +119,10 @@ mappings:
       parent_id: _id
       parent_updated_at: updated_at
     target: global_order
+    sort:
+      - field: amount
+        direction: desc
+    reverse_filter: "amount > 100"
     fields:
       - source: order_id
         target: order_id
@@ -118,8 +134,9 @@ mappings:
 
 tests:
   # Forward: person + orders exist, person-with-orders only has one person
-  # → second person gets inserted as the DTL pipe output
-  - description: "New person + orders produce person-with-orders insert (the DTL pipe output)"
+  # → second person gets inserted; first gets updated because sort: desc
+  #   reorders the embedded orders array (amount DESC: 500, 320)
+  - description: "New person + orders produce person-with-orders insert + sort update"
     input:
       person:
         - { _id: "1", name: "John Smith", age: 25, updated_at: "2024-06-01T10:00:00Z" }
@@ -144,7 +161,17 @@ tests:
             type: "customer"
             name: "JANE DOE"
             age: 32
+            order_count: 0
             orders: null
+        updates:
+          - _id: "1"
+            type: "customer"
+            name: "JOHN SMITH"
+            age: 25
+            order_count: 2
+            orders:
+              - { order_id: 200, amount: 500 }
+              - { order_id: 100, amount: 320 }
 
   # Forward: person corrected + new order → flows to denormalized output
   - description: "Person name corrected + new order — person-with-orders updated"
@@ -169,9 +196,10 @@ tests:
             type: "customer"
             name: "JOHN D. SMITH"
             age: 25
+            order_count: 2
             orders:
-              - { order_id: 100, amount: 320 }
               - { order_id: 200, amount: 500 }
+              - { order_id: 100, amount: 320 }
 
   # Backward: new person-with-orders entry inserts into person + orders
   - description: "New entry in person-with-orders inserts into person and orders"

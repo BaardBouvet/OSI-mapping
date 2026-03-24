@@ -31,13 +31,16 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [PARENT-MAPPING-PLAN.md](PARENT-MAPPING-PLAN.md) | Done | Unify `embedded` + `source.path` under `parent:` with `array`/`array_path` for nested arrays. |
 | [HIERARCHY-MERGE-PLAN.md](HIERARCHY-MERGE-PLAN.md) | Done | Example: merge 2-level and 3-level project hierarchies across systems. |
 | [DEPTH-MISMATCH-PLAN.md](DEPTH-MISMATCH-PLAN.md) | Done | Example: merge when one system has a deeper intermediate level than the other. |
-| [COMPUTED-FIELDS-PLAN.md](COMPUTED-FIELDS-PLAN.md) | Design | Cross-target aggregation (`from:` + `match:`), recursive self-traversal (`traverse:`), and missing-bottom example. |
+| [COMPUTED-FIELDS-PLAN.md](COMPUTED-FIELDS-PLAN.md) | Design | Cross-target aggregation (`from:` + `match:`), enriched view layer, recursive self-traversal (`traverse:`), and missing-bottom example. |
+| [DOT-PATH-EXPRESSIONS-PLAN.md](DOT-PATH-EXPRESSIONS-PLAN.md) | Design | Dot-path syntax (`sum(shipment.qty)`) for cross-target aggregation via `references:` graph traversal; multi-hop support. |
+| [ENRICHED-EXPRESSIONS-PLAN.md](ENRICHED-EXPRESSIONS-PLAN.md) | Design | Raw SQL subqueries against `_resolved_` views in expressions; minimal escape hatch for cross-target computation. |
 | [POSITIONAL-ARRAY-PLAN.md](POSITIONAL-ARRAY-PLAN.md) | Superseded | Superseded by CRDT-ORDERING-PLAN — used position as identity, fragile for multi-source. |
 | [CRDT-ORDERING-PLAN.md](CRDT-ORDERING-PLAN.md) | Done | CRDT ordering for array elements: `order: true` + optional `order_prev`/`order_next` linked-list merge. |
 | [PROPAGATED-DELETE-PLAN.md](PROPAGATED-DELETE-PLAN.md) | Done | GDPR-style deletion propagation using regular target fields + `reverse_filter` — no engine changes. |
 | [ELEMENT-DELETION-PLAN.md](ELEMENT-DELETION-PLAN.md) | Done | Element-level deletion for array targets — `_element_delta_{child}` views via parent `written_state`. |
 | [ELEMENT-TOMBSTONES-AS-FIELD-PLAN.md](ELEMENT-TOMBSTONES-AS-FIELD-PLAN.md) | Done | Unify `derive_tombstones` across entities and elements — remove `derive_element_tombstones`, use one property at both levels. |
 | [NESTED-ARRAY-INSERT-PLAN.md](NESTED-ARRAY-INSERT-PLAN.md) | Done | Nested array reconstruction for insert rows — COALESCE fallback to `_entity_id_resolved` + `_cluster_id` join. Supports arbitrary nesting depth. |
+| [NESTED-ARRAY-SORT-PLAN.md](NESTED-ARRAY-SORT-PLAN.md) | Proposed | `sort:` predicate on child mappings for controlling nested array ORDER BY in reverse/delta reconstruction. |
 | [HUBSPOT-DELAYED-ENRICHMENT-PLAN.md](HUBSPOT-DELAYED-ENRICHMENT-PLAN.md) | Design | Delayed enrichment from external providers: group NULL-bleed, cluster-merge, dangling-FK failure modes and split-mapping pattern. |
 | [ETL-STATE-INPUT-PLAN.md](ETL-STATE-INPUT-PLAN.md) | Done (Phase 1) | ETL-maintained state as engine input — `written_state` table + `written_noop` opt-in for target-centric noop detection. |
 | [EVENTUAL-CONSISTENCY-PLAN.md](EVENTUAL-CONSISTENCY-PLAN.md) | Design | Write-read visibility delays: failure modes and ETL-layer mitigation strategies for eventually consistent sources. |

@@ -1,5 +1,6 @@
 pub mod analytics;
 pub mod delta;
+pub mod enriched;
 pub mod forward;
 pub mod identity;
 pub mod ordered;
@@ -246,11 +247,36 @@ pub fn render_sql(
             }
             ViewNode::Analytics(target_name) => {
                 let target = doc.targets.get(target_name).expect("target exists in dag");
-                let mut view_sql = analytics::render_analytics_view(target_name, target)?;
+                let has_enriched = dag
+                    .edges
+                    .contains_key(&ViewNode::Enriched(target_name.clone()));
+                let mut view_sql =
+                    analytics::render_analytics_view(target_name, target, has_enriched)?;
                 if materialize {
                     view_sql = materialize_view_sql(&view_sql);
                     let vn = node.view_name();
                     view_sql.push_str(&emit_unique_index(&vn, &["_cluster_id"], false));
+                    mat_view_names.push(vn);
+                }
+                sql.push_str(&view_sql);
+                sql.push('\n');
+            }
+            ViewNode::Enriched(target_name) => {
+                let target = doc.targets.get(target_name).expect("target exists in dag");
+                let all_target_names: Vec<&str> = doc.targets.keys().map(|s| s.as_str()).collect();
+                let has_mixed_order = dag
+                    .edges
+                    .contains_key(&ViewNode::Ordered(target_name.clone()));
+                let mut view_sql = enriched::render_enriched_view(
+                    target_name,
+                    target,
+                    &all_target_names,
+                    has_mixed_order,
+                )?;
+                if materialize {
+                    view_sql = materialize_view_sql(&view_sql);
+                    let vn = node.view_name();
+                    view_sql.push_str(&emit_unique_index(&vn, &["_entity_id"], false));
                     mat_view_names.push(vn);
                 }
                 sql.push_str(&view_sql);
@@ -268,6 +294,9 @@ pub fn render_sql(
                 let target_name = mapping.target.name();
                 let target = doc.targets.get(target_name);
                 let source_meta = doc.sources.get(&mapping.source.dataset);
+                let has_enriched = dag
+                    .edges
+                    .contains_key(&ViewNode::Enriched(target_name.to_string()));
                 let mut view_sql = reverse::render_reverse_view(
                     mapping,
                     target_name,
@@ -276,6 +305,7 @@ pub fn render_sql(
                     source_meta,
                     &doc.mappings,
                     &doc.sources,
+                    has_enriched,
                 )?;
                 if materialize {
                     view_sql = materialize_view_sql(&view_sql);

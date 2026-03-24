@@ -226,10 +226,11 @@ fn action_case(
     }
 
     // Noop detection: compare each reverse-mapped source field against _base.
+    // Exclude reverse_only fields — they don't contribute to _base.
     let noop_parts: Vec<String> = mapping
         .fields
         .iter()
-        .filter(|fm| fm.is_reverse() && fm.source_name().is_some())
+        .filter(|fm| fm.is_reverse() && fm.is_forward() && fm.source_name().is_some())
         .filter_map(|fm| {
             let src = fm.source_name()?;
             if pk_columns.contains(src) {
@@ -381,12 +382,19 @@ pub fn render_delta_view(
 
     // Collect all reverse-mapped source fields across all mappings (union).
     let mut reverse_fields: Vec<String> = Vec::new();
+    // Track reverse_only fields: they have no forward contribution so _base
+    // won't contain them. Exclude from noop detection.
+    let mut reverse_only_fields: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     for mapping in mappings {
         for fm in &mapping.fields {
             if fm.is_reverse() {
                 if let Some(src) = fm.source_name() {
                     if !pk_columns.contains(src) && !reverse_fields.contains(&src.to_string()) {
                         reverse_fields.push(src.to_string());
+                    }
+                    if !fm.is_forward() {
+                        reverse_only_fields.insert(src.to_string());
                     }
                 }
             }
@@ -489,6 +497,7 @@ pub fn render_delta_view(
             &pk_columns,
             &out_cols,
             source_meta,
+            &reverse_only_fields,
         );
     }
 
@@ -637,6 +646,7 @@ fn render_delta_with_children(
     pk_columns: &std::collections::HashSet<&str>,
     out_cols: &[String],
     source_meta: Option<&Source>,
+    reverse_only_fields: &std::collections::HashSet<String>,
 ) -> Result<String> {
     // --- Field ownership: which alias provides each reverse field ---
     let primary_fields: std::collections::HashSet<&str> = primary_mappings
@@ -827,10 +837,16 @@ fn render_delta_with_children(
             Some((src, norm))
         })
         .collect();
+    // Filter noop fields: exclude reverse_only fields that don't exist in _base.
+    let noop_fields: Vec<String> = reverse_fields
+        .iter()
+        .filter(|f| !reverse_only_fields.contains(f.as_str()))
+        .cloned()
+        .collect();
     let action_expr = merged_action_case(
         primary_mappings,
         pk_columns,
-        reverse_fields,
+        &noop_fields,
         written_col,
         &normalize_map,
     );
@@ -1233,24 +1249,43 @@ fn build_nested_ctes(
     let qgroup = qi(group_col);
     let qsegment = qi(&node.segment);
 
-    // Determine ORDER BY field: use order_field if set, otherwise first item_field.
-    let order_by_field = node
-        .order_field
-        .as_deref()
-        .or_else(|| node.item_fields.first().map(|s| s.as_str()))
-        .unwrap_or("_src_id");
-    let order_rank_field = format!("_order_rank_{order_by_field}");
-    let q_order_field = qi(order_by_field);
-    let order_expr_leaf = format!(
-        "CASE WHEN NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint IS NULL THEN 1 ELSE 0 END, \
-         NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint, \
-         n.{q_order_field}"
-    );
-    let order_expr_nested = format!(
-        "CASE WHEN NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint IS NULL THEN 1 ELSE 0 END, \
-         NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint, \
-         n.{q_order_field}"
-    );
+    // Determine ORDER BY field: use sort keys if set, then order_field, otherwise first item_field.
+    let (order_expr_leaf, order_expr_nested) = if let Some(ref sort_keys) = node.mapping.sort {
+        // User-declared sort keys for array reconstruction.
+        let mut parts: Vec<String> = sort_keys
+            .iter()
+            .map(|sk| {
+                let dir = match sk.direction {
+                    Some(crate::model::SortDirection::Desc) => "DESC",
+                    _ => "ASC",
+                };
+                format!("n.{} {} NULLS LAST", qi(&sk.field), dir)
+            })
+            .collect();
+        // Append identity fallback for stability.
+        let fallback = node
+            .item_fields
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("_src_id");
+        parts.push(format!("n.{}", qi(fallback)));
+        let expr = parts.join(", ");
+        (expr.clone(), expr)
+    } else {
+        let order_by_field = node
+            .order_field
+            .as_deref()
+            .or_else(|| node.item_fields.first().map(|s| s.as_str()))
+            .unwrap_or("_src_id");
+        let order_rank_field = format!("_order_rank_{order_by_field}");
+        let q_order_field = qi(order_by_field);
+        let expr = format!(
+            "CASE WHEN NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint IS NULL THEN 1 ELSE 0 END, \
+             NULLIF(to_jsonb(n)->>'{order_rank_field}', '')::bigint, \
+             n.{q_order_field}"
+        );
+        (expr.clone(), expr)
+    };
 
     if child_results.is_empty() {
         // Leaf node: simple aggregation.
@@ -1756,7 +1791,7 @@ fn render_delta_with_nested(
     // Build the noop detection CASE.
     let mut noop_parts: Vec<String> = Vec::new();
     for fm in &parent.fields {
-        if fm.is_reverse() {
+        if fm.is_reverse() && fm.is_forward() {
             if let Some(src) = fm.source_name() {
                 if !pk_columns.contains(src) {
                     noop_parts.push(format!(

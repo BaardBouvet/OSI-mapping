@@ -147,5 +147,11 @@ integration problem.
 | [required-fields](../../examples/required-fields/README.md) | Minimum-required fields via reverse\_filter OR pattern |
 | [derive-tombstones](../../examples/derive-tombstones/README.md) | Element-level deletion-wins for nested arrays via written state |
 
+### End-to-end showcases
+
+| Example | Demonstrates |
+|---|---|
+| [sesam-annotated](../../examples/sesam-annotated/README.md) | Full DTL annotated example: enriched expressions, nested array sort, reverse\_filter, reverse\_expression, normalize, references, reverse\_only direction |
+
 Each example directory contains a `README.md` and a `mapping.yaml` with the
 full definition including test cases.

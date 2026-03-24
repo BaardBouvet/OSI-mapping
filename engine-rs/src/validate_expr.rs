@@ -20,6 +20,8 @@ pub enum ExprContext {
     TargetExpression,
     /// `last_modified.expression:` — timestamp derivation.
     LastModifiedExpression,
+    /// `expression:` on a target field referencing other targets' resolved views.
+    EnrichedExpression,
 }
 
 /// Validate that `expr` is a safe column-level SQL snippet.
@@ -32,14 +34,23 @@ pub fn validate_expression(expr: &str, context: ExprContext) -> Result<(), Strin
     }
 
     // 2. Reject prohibited keywords (after stripping string literals)
-    let exempt = match context {
-        ExprContext::TargetExpression => &["ORDER", "DISTINCT"][..],
-        _ => &[],
-    };
-    if let Some(kw) = contains_prohibited_keyword(expr, exempt) {
-        return Err(format!(
-            "contains prohibited keyword '{kw}' — expressions must be column-level SQL snippets"
-        ));
+    if context == ExprContext::EnrichedExpression {
+        // Enriched expressions allow query keywords but block DML/DDL
+        if let Some(kw) = contains_dangerous_keyword(expr) {
+            return Err(format!(
+                "contains prohibited keyword '{kw}' — enriched expressions must not contain DML/DDL"
+            ));
+        }
+    } else {
+        let exempt = match context {
+            ExprContext::TargetExpression => &["ORDER", "DISTINCT"][..],
+            _ => &[],
+        };
+        if let Some(kw) = contains_prohibited_keyword(expr, exempt) {
+            return Err(format!(
+                "contains prohibited keyword '{kw}' — expressions must be column-level SQL snippets"
+            ));
+        }
     }
 
     // 3. Reject internal view name patterns
@@ -87,6 +98,24 @@ fn contains_prohibited_keyword(expr: &str, exempt: &[&str]) -> Option<String> {
     None
 }
 
+/// Keywords blocked in enriched expressions (DML/DDL/transaction/privilege).
+/// Query keywords (SELECT, FROM, WHERE, etc.) are allowed.
+static DANGEROUS_KEYWORDS: &[&str] = &[
+    "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "BEGIN", "COMMIT",
+    "ROLLBACK", "GRANT", "REVOKE", "COPY", "EXECUTE",
+];
+
+fn contains_dangerous_keyword(expr: &str) -> Option<String> {
+    let stripped = strip_string_literals(expr);
+    for &kw in DANGEROUS_KEYWORDS {
+        let pattern = format!(r"(?i)\b{kw}\b");
+        if Regex::new(&pattern).unwrap().is_match(&stripped) {
+            return Some(kw.to_string());
+        }
+    }
+    None
+}
+
 // ── Internal view references ────────────────────────────────────────
 
 static INTERNAL_PREFIXES: &[&str] = &[
@@ -97,6 +126,7 @@ static INTERNAL_PREFIXES: &[&str] = &[
     "_rev_",
     "_delta_",
     "_grp_",
+    "_enriched_",
 ];
 
 fn contains_internal_view_ref(expr: &str) -> Option<String> {
@@ -394,6 +424,48 @@ pub fn extract_identifiers(expr: &str) -> Vec<String> {
         }
     }
 
+    result
+}
+
+// ── Enriched expression helpers ─────────────────────────────────────
+
+/// Regex matching target names after FROM or JOIN keywords.
+static FROM_JOIN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)").unwrap());
+
+/// Extract identifiers following FROM or JOIN keywords in an expression.
+pub fn extract_from_join_targets(expr: &str) -> Vec<String> {
+    let stripped = strip_string_literals(expr);
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+    for cap in FROM_JOIN_RE.captures_iter(&stripped) {
+        let name = cap[1].to_string();
+        if seen.insert(name.clone()) {
+            targets.push(name);
+        }
+    }
+    targets
+}
+
+/// Check if an expression references other targets (enriched).
+pub fn is_enriched_expression(expr: &str, target_names: &[&str]) -> bool {
+    let refs = extract_from_join_targets(expr);
+    refs.iter().any(|r| target_names.contains(&r.as_str()))
+}
+
+/// Rewrite bare target names in FROM/JOIN position to resolved view names.
+pub fn rewrite_target_refs(expr: &str, target_names: &[&str]) -> String {
+    let mut result = expr.to_string();
+    for &target in target_names {
+        let pattern = format!(r"(?i)\b(FROM|JOIN)\s+{}\b", regex::escape(target));
+        let re = Regex::new(&pattern).unwrap();
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let keyword = &caps[1];
+                format!("{keyword} \"_resolved_{target}\"")
+            })
+            .to_string();
+    }
     result
 }
 
@@ -719,5 +791,101 @@ mod tests {
     fn extract_deduplicates() {
         let ids = extract_identifiers("name = name");
         assert_eq!(ids, vec!["name"]);
+    }
+
+    // ── Enriched expression tests ────────────────────────────────────
+
+    #[test]
+    fn enriched_accepts_select_from() {
+        assert!(validate_expression(
+            "SELECT sum(s.qty) FROM shipment s WHERE s.line_item = line_item._entity_id",
+            ExprContext::EnrichedExpression,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn enriched_accepts_with_recursive() {
+        assert!(validate_expression(
+            "WITH RECURSIVE cte AS (SELECT 1) SELECT * FROM cte",
+            ExprContext::EnrichedExpression,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn enriched_rejects_insert() {
+        let err = validate_expression("INSERT INTO t VALUES (1)", ExprContext::EnrichedExpression)
+            .unwrap_err();
+        assert!(err.contains("INSERT"), "{err}");
+    }
+
+    #[test]
+    fn enriched_rejects_drop() {
+        let err =
+            validate_expression("DROP TABLE users", ExprContext::EnrichedExpression).unwrap_err();
+        assert!(err.contains("DROP"), "{err}");
+    }
+
+    #[test]
+    fn enriched_rejects_internal_prefix() {
+        let err = validate_expression(
+            "SELECT * FROM _resolved_shipment",
+            ExprContext::EnrichedExpression,
+        )
+        .unwrap_err();
+        assert!(err.contains("_resolved_"), "{err}");
+    }
+
+    #[test]
+    fn extract_from_join_targets_simple() {
+        let targets = extract_from_join_targets(
+            "SELECT sum(s.qty) FROM shipment s WHERE s.line_item = line_item._entity_id",
+        );
+        assert_eq!(targets, vec!["shipment"]);
+    }
+
+    #[test]
+    fn extract_from_join_targets_with_join() {
+        let targets = extract_from_join_targets(
+            "SELECT sum(s.qty) FROM shipment s JOIN line_item li ON li._entity_id = s.line_item",
+        );
+        assert!(targets.contains(&"shipment".to_string()));
+        assert!(targets.contains(&"line_item".to_string()));
+    }
+
+    #[test]
+    fn is_enriched_detects_target_ref() {
+        assert!(is_enriched_expression(
+            "SELECT sum(s.qty) FROM shipment s",
+            &["shipment", "line_item"],
+        ));
+    }
+
+    #[test]
+    fn is_enriched_ignores_non_targets() {
+        assert!(!is_enriched_expression(
+            "COALESCE(qty, 0)",
+            &["shipment", "line_item"],
+        ));
+    }
+
+    #[test]
+    fn rewrite_replaces_from_target() {
+        let result = rewrite_target_refs(
+            "SELECT sum(s.qty) FROM shipment s WHERE s.line_item = line_item._entity_id",
+            &["shipment", "line_item"],
+        );
+        assert!(result.contains("FROM \"_resolved_shipment\" s"));
+    }
+
+    #[test]
+    fn rewrite_replaces_join_target() {
+        let result = rewrite_target_refs(
+            "SELECT x FROM shipment s JOIN line_item li ON true",
+            &["shipment", "line_item"],
+        );
+        assert!(result.contains("FROM \"_resolved_shipment\" s"));
+        assert!(result.contains("JOIN \"_resolved_line_item\" li"));
     }
 }

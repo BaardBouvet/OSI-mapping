@@ -17,6 +17,8 @@ pub enum ViewNode {
     Ordered(String),
     /// Analytics view — clean golden record for BI consumers. Named `{target}`.
     Analytics(String),
+    /// Enriched view — resolved + computed fields from enriched expressions.
+    Enriched(String),
     /// Reverse mapping view. Named `_rev_{mapping}`. Opt-in via `sync: true`.
     Reverse(String),
     /// Delta/changeset view per source dataset. Named `_delta_{source}`.
@@ -33,6 +35,7 @@ impl ViewNode {
             ViewNode::Resolved(name) => format!("_resolved_{name}"),
             ViewNode::Ordered(name) => format!("_ordered_{name}"),
             ViewNode::Analytics(name) => name.clone(),
+            ViewNode::Enriched(name) => format!("_enriched_{name}"),
             ViewNode::Reverse(name) => format!("_rev_{name}"),
             ViewNode::Delta(name) => format!("_delta_{name}"),
         }
@@ -46,6 +49,7 @@ impl ViewNode {
             ViewNode::Resolved(name) => format!("RES: {name}"),
             ViewNode::Ordered(name) => format!("ORD: {name}"),
             ViewNode::Analytics(name) => format!("ANA: {name}"),
+            ViewNode::Enriched(name) => format!("ENR: {name}"),
             ViewNode::Reverse(name) => format!("REV: {name}"),
             ViewNode::Delta(name) => format!("DELTA: {name}"),
         }
@@ -205,6 +209,81 @@ pub fn build_dag(doc: &MappingDocument) -> ViewDag {
                     if !deps.contains(&ref_id) {
                         deps.push(ref_id);
                     }
+                }
+            }
+        }
+    }
+
+    // Add enriched view nodes for targets with enriched expression fields.
+    let all_target_names: Vec<&str> = doc.targets.keys().map(|s| s.as_str()).collect();
+    let mut enriched_targets: HashSet<String> = HashSet::new();
+    for (tname, target) in &doc.targets {
+        let has_enriched = target.fields.iter().any(|(_, fdef)| {
+            fdef.strategy() == crate::model::Strategy::Expression
+                && fdef.expression().is_some_and(|e| {
+                    crate::validate_expr::is_enriched_expression(e, &all_target_names)
+                })
+        });
+        if !has_enriched {
+            continue;
+        }
+        enriched_targets.insert(tname.clone());
+
+        let enriched = ViewNode::Enriched(tname.clone());
+        // Enriched depends on ordered (if mixed) or resolved.
+        let upstream = if mixed_targets.contains(tname.as_str()) {
+            ViewNode::Ordered(tname.clone())
+        } else {
+            ViewNode::Resolved(tname.clone())
+        };
+        edges.entry(enriched.clone()).or_default().push(upstream);
+
+        // Add dependencies on resolved views of referenced targets.
+        for (_, fdef) in &target.fields {
+            if fdef.strategy() != crate::model::Strategy::Expression {
+                continue;
+            }
+            if let Some(expr) = fdef.expression() {
+                for r in crate::validate_expr::extract_from_join_targets(expr) {
+                    if all_target_names.contains(&r.as_str()) && r != *tname {
+                        let ref_res = ViewNode::Resolved(r);
+                        if !edges[&enriched].contains(&ref_res) {
+                            edges.get_mut(&enriched).unwrap().push(ref_res);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Re-point analytics to depend on enriched instead of resolved/ordered.
+        let analytics = ViewNode::Analytics(tname.clone());
+        if let Some(deps) = edges.get_mut(&analytics) {
+            let old_dep = if mixed_targets.contains(tname.as_str()) {
+                ViewNode::Ordered(tname.clone())
+            } else {
+                ViewNode::Resolved(tname.clone())
+            };
+            deps.retain(|d| d != &old_dep);
+            if !deps.contains(&enriched) {
+                deps.push(enriched.clone());
+            }
+        }
+
+        // Re-point reverse views to depend on enriched.
+        for mapping in &doc.mappings {
+            if mapping.target.name() != tname || !mapping.needs_sync() {
+                continue;
+            }
+            let rev = ViewNode::Reverse(mapping.name.clone());
+            if let Some(deps) = edges.get_mut(&rev) {
+                let old_dep = if mixed_targets.contains(tname.as_str()) {
+                    ViewNode::Ordered(tname.clone())
+                } else {
+                    ViewNode::Resolved(tname.clone())
+                };
+                deps.retain(|d| d != &old_dep);
+                if !deps.contains(&enriched) {
+                    deps.push(enriched.clone());
                 }
             }
         }
