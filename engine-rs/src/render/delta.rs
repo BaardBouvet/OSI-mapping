@@ -1889,8 +1889,15 @@ fn render_delta_with_nested(
     }
 
     // Nested array columns (from root-level CTEs only)
+    // COALESCE to '[]' so parents with zero children get an empty array
+    // rather than null (which would imply "unknown" rather than "empty").
     for rr in &root_results {
-        select_cols.push(format!("{}.{}", rr.alias, qi(&rr.column)));
+        select_cols.push(format!(
+            "COALESCE({}.{}, '[]'::jsonb) AS {}",
+            rr.alias,
+            qi(&rr.column),
+            qi(&rr.column)
+        ));
     }
 
     select_cols.push("p.\"_base\"".to_string());
@@ -2551,6 +2558,124 @@ mappings:
         assert!(
             col_lines == 1,
             "deleted_at should appear exactly once as a projected column, found {col_lines}:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn sort_keys_in_order_by() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  parent: { fields: { pid: { strategy: identity } } }
+  child: { fields: { cid: { strategy: identity }, amount: { strategy: coalesce, type: numeric } } }
+mappings:
+  - name: s_parent
+    source: s
+    target: parent
+    fields: [{ source: id, target: pid }]
+  - name: s_child
+    parent: s_parent
+    array: items
+    target: child
+    sort:
+      - { field: amount, direction: desc }
+    fields:
+      - { source: cid, target: cid }
+      - { source: amount, target: amount }
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        assert!(
+            sql.contains("\"amount\" DESC NULLS LAST"),
+            "sort key should produce DESC NULLS LAST ORDER BY: {sql}"
+        );
+        // Identity field should appear as fallback.
+        assert!(
+            sql.contains("n.\"cid\""),
+            "identity fallback should appear in ORDER BY"
+        );
+    }
+
+    #[test]
+    fn empty_array_coalesce_for_nested() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  parent: { fields: { pid: { strategy: identity } } }
+  child: { fields: { cid: { strategy: identity } } }
+mappings:
+  - name: s_parent
+    source: s
+    target: parent
+    fields: [{ source: id, target: pid }]
+  - name: s_child
+    parent: s_parent
+    array: items
+    target: child
+    fields: [{ source: cid, target: cid }]
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // Outer SELECT should COALESCE nested column to '[]' for parents with no children.
+        assert!(
+            sql.contains("COALESCE(") && sql.contains("'[]'::jsonb) AS \"items\""),
+            "outer nested column should COALESCE to empty array: {sql}"
+        );
+    }
+
+    #[test]
+    fn reverse_only_excluded_from_noop() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: identity }
+      score: { strategy: coalesce, type: numeric }
+      computed:
+        strategy: expression
+        expression: "max(score)"
+        type: numeric
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields:
+      - { source: name, target: name }
+      - { source: score, target: score }
+      - { source: computed, target: computed, direction: reverse_only }
+"#,
+        );
+        let mappings: Vec<&_> = doc.mappings.iter().collect();
+        let source_meta = doc.sources.get("s");
+        let sql =
+            render_delta_view("s", &mappings, source_meta, &doc.targets, &doc.mappings).unwrap();
+        // reverse_only field should NOT appear in noop detection.
+        // The noop WHEN clause compares _base fields — reverse_only fields
+        // don't exist in _base so including them would always trigger updates.
+        assert!(
+            !sql.contains("_base->>'computed'"),
+            "reverse_only field should not be in noop comparison: {sql}"
+        );
+        // But bidirectional field should still appear.
+        assert!(
+            sql.contains("_base->>'score'"),
+            "bidirectional field should be in noop comparison"
         );
     }
 }

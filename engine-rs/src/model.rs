@@ -1071,3 +1071,38 @@ pub struct TestExpected {
     #[serde(default)]
     pub noops: Vec<serde_json::Value>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sort_key_deserializes_with_direction() {
+        let yaml = r#"{ field: amount, direction: desc }"#;
+        let sk: SortKey = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(sk.field, "amount");
+        assert_eq!(sk.direction, Some(SortDirection::Desc));
+    }
+
+    #[test]
+    fn sort_key_deserializes_without_direction() {
+        let yaml = r#"{ field: name }"#;
+        let sk: SortKey = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(sk.field, "name");
+        assert_eq!(sk.direction, None);
+    }
+
+    #[test]
+    fn sort_key_asc_direction() {
+        let yaml = r#"{ field: price, direction: asc }"#;
+        let sk: SortKey = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(sk.direction, Some(SortDirection::Asc));
+    }
+
+    #[test]
+    fn sort_key_rejects_unknown_fields() {
+        let yaml = r#"{ field: x, bogus: true }"#;
+        let result: Result<SortKey, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_err(), "unknown fields should be rejected");
+    }
+}

@@ -2090,4 +2090,143 @@ mappings:
             "soft_delete.target referencing non-existent field should error"
         );
     }
+
+    #[test]
+    fn sort_rejected_on_root_mapping() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      name: { strategy: identity }
+      amount: { strategy: coalesce, type: numeric }
+mappings:
+  - name: s
+    source: s
+    target: t
+    sort:
+      - { field: amount, direction: desc }
+    fields:
+      - { source: name, target: name }
+      - { source: amount, target: amount }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            result.errors().any(|d| d.message.contains("sort")),
+            "sort on root mapping should be rejected"
+        );
+    }
+
+    #[test]
+    fn sort_rejected_with_order_true() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  parent: { fields: { pid: identity } }
+  child:
+    fields:
+      cid: { strategy: identity }
+      amount: { strategy: coalesce, type: numeric }
+      pos: { strategy: coalesce }
+mappings:
+  - name: s_parent
+    source: s
+    target: parent
+    fields: [{ source: id, target: pid }]
+  - name: s_child
+    parent: s_parent
+    array: items
+    target: child
+    sort:
+      - { field: amount }
+    fields:
+      - { source: cid, target: cid }
+      - { source: amount, target: amount }
+      - { target: pos, order: true }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            result
+                .errors()
+                .any(|d| d.message.contains("sort") && d.message.contains("order")),
+            "sort + order: true should be rejected"
+        );
+    }
+
+    #[test]
+    fn sort_unknown_field_errors() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  parent: { fields: { pid: identity } }
+  child:
+    fields:
+      cid: { strategy: identity }
+      amount: { strategy: coalesce, type: numeric }
+mappings:
+  - name: s_parent
+    source: s
+    target: parent
+    fields: [{ source: id, target: pid }]
+  - name: s_child
+    parent: s_parent
+    array: items
+    target: child
+    sort:
+      - { field: nonexistent }
+    fields:
+      - { source: cid, target: cid }
+      - { source: amount, target: amount }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            result.errors().any(|d| d.message.contains("nonexistent")),
+            "sort referencing unknown field should error"
+        );
+    }
+
+    #[test]
+    fn sort_valid_on_child_mapping() {
+        let yaml = r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  parent: { fields: { pid: identity } }
+  child:
+    fields:
+      cid: { strategy: identity }
+      amount: { strategy: coalesce, type: numeric }
+mappings:
+  - name: s_parent
+    source: s
+    target: parent
+    fields: [{ source: id, target: pid }]
+  - name: s_child
+    parent: s_parent
+    array: items
+    target: child
+    sort:
+      - { field: amount, direction: desc }
+    fields:
+      - { source: cid, target: cid }
+      - { source: amount, target: amount }
+"#;
+        let doc = parser::parse_str(yaml).unwrap();
+        let result = validate(&doc);
+        assert!(
+            !result.has_errors(),
+            "valid sort on child mapping should pass: {:?}",
+            result.errors().collect::<Vec<_>>()
+        );
+    }
 }

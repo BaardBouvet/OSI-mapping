@@ -162,7 +162,7 @@ tests:
             name: "JANE DOE"
             age: 32
             order_count: 0
-            orders: null
+            orders: []
         updates:
           - _id: "1"
             type: "customer"

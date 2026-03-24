@@ -549,4 +549,87 @@ mod tests {
             "reverse view should depend on ordered layer for mixed targets"
         );
     }
+
+    #[test]
+    fn enriched_target_creates_enriched_node() {
+        let doc = parser::parse_str(
+            r#"
+    version: "1.0"
+    sources:
+      s: { primary_key: id }
+    targets:
+      person:
+        fields:
+          pid: { strategy: identity }
+          name: { strategy: coalesce }
+          order_count:
+            strategy: expression
+            expression: |
+              COALESCE((SELECT count(*) FROM item i WHERE i.pref = person.pid), 0)
+            type: numeric
+      item:
+        fields:
+          iid: { strategy: identity }
+          pref: { strategy: coalesce, references: person }
+    mappings:
+      - name: s_person
+        source: s
+        target: person
+        fields:
+          - { source: id, target: pid }
+          - { source: name, target: name }
+      - name: s_item
+        source: s
+        target: item
+        fields:
+          - { source: id, target: iid }
+          - { source: pid, target: pref, references: s_person }
+    "#,
+        )
+        .unwrap();
+        let dag = build_dag(&doc);
+
+        // Enriched node should exist for person (has enriched expression).
+        let enriched = ViewNode::Enriched("person".into());
+        assert!(
+            dag.edges.contains_key(&enriched),
+            "enriched node should be created for targets with enriched expressions"
+        );
+
+        // Enriched depends on resolved person.
+        assert!(
+            dag.edges[&enriched].contains(&ViewNode::Resolved("person".into())),
+            "enriched should depend on resolved"
+        );
+
+        // Enriched depends on resolved item (referenced in FROM).
+        assert!(
+            dag.edges[&enriched].contains(&ViewNode::Resolved("item".into())),
+            "enriched should depend on referenced target's resolved view"
+        );
+
+        // Analytics should depend on enriched, NOT resolved.
+        let analytics = ViewNode::Analytics("person".into());
+        assert!(
+            dag.edges[&analytics].contains(&enriched),
+            "analytics should depend on enriched"
+        );
+        assert!(
+            !dag.edges[&analytics].contains(&ViewNode::Resolved("person".into())),
+            "analytics should NOT depend on resolved when enriched exists"
+        );
+
+        // Reverse should depend on enriched.
+        let rev = ViewNode::Reverse("s_person".into());
+        assert!(
+            dag.edges[&rev].contains(&enriched),
+            "reverse should depend on enriched"
+        );
+
+        // Item target should NOT have enriched (no enriched expressions).
+        assert!(
+            !dag.edges.contains_key(&ViewNode::Enriched("item".into())),
+            "item should not have enriched node"
+        );
+    }
 }
