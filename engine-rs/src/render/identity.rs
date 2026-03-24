@@ -1,16 +1,51 @@
 use anyhow::Result;
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::model::{Mapping, Source, Strategy, Target};
 use crate::qi;
+
+/// Build the explicit column list for SELECT from forward views.
+///
+/// This avoids `SELECT *` which would pick up tool-added columns
+/// (e.g. `__pgt_row_id` from pg_trickle stream tables).
+fn forward_column_list(target: &Target, mappings: &[&Mapping]) -> String {
+    let mut cols = vec![
+        "_src_id".to_string(),
+        "_mapping".to_string(),
+        "_cluster_id".to_string(),
+        "_priority".to_string(),
+        "_last_modified".to_string(),
+    ];
+
+    // Determine which fields have normalize declared across any mapping.
+    let normalize_fields: HashSet<String> = mappings
+        .iter()
+        .flat_map(|m| m.fields.iter())
+        .filter(|fm| fm.normalize.is_some())
+        .filter_map(|fm| fm.target.clone())
+        .collect();
+
+    for (fname, _) in &target.fields {
+        cols.push(qi(fname));
+        cols.push(qi(&format!("_priority_{fname}")));
+        cols.push(qi(&format!("_ts_{fname}")));
+        if normalize_fields.contains(fname) {
+            cols.push(qi(&format!("_normalize_{fname}")));
+            cols.push(qi(&format!("_has_normalize_{fname}")));
+        }
+    }
+    cols.push("_base".to_string());
+    cols.join(", ")
+}
 
 /// Render an identity / transitive closure view for a target entity.
 ///
 /// Produces: `CREATE OR REPLACE VIEW _id_{target_name} AS ...`
 ///
 /// `forward_names` lists the mapping names that have forward views (`_fwd_{name}`).
-/// The identity view references these views via `SELECT * FROM _fwd_{name}`.
+/// The identity view references these views with explicit column lists to avoid
+/// picking up tool-added columns (e.g. `__pgt_row_id` from pg_trickle).
 ///
 /// The identity view:
 /// 1. UNIONs ALL forward views into `_id_base`.
@@ -65,9 +100,10 @@ pub fn render_identity_view(
         && !has_cluster_id
     {
         // No identity fields, no links, no cluster_id — pass-through with a row-level entity_id
+        let col_list = forward_column_list(target, mappings);
         let union_parts: Vec<String> = forward_names
             .iter()
-            .map(|name| format!("SELECT * FROM {}", qi(&format!("_fwd_{name}"))))
+            .map(|name| format!("SELECT {col_list} FROM {}", qi(&format!("_fwd_{name}"))))
             .collect();
         let base = union_parts.join("\n  UNION ALL\n  ");
         let eid = "md5(_mapping || ':' || _src_id)";
@@ -84,9 +120,12 @@ pub fn render_identity_view(
     let mut sql = format!("-- Identity: {target_name}\n");
 
     // Reference forward views and UNION ALL into _id_base.
+    // Use explicit column list to avoid picking up tool-added columns
+    // (e.g. __pgt_row_id from pg_trickle stream tables).
+    let col_list = forward_column_list(target, mappings);
     let union_parts: Vec<String> = forward_names
         .iter()
-        .map(|name| format!("SELECT * FROM {}", qi(&format!("_fwd_{name}"))))
+        .map(|name| format!("SELECT {col_list} FROM {}", qi(&format!("_fwd_{name}"))))
         .collect();
     let base_query = union_parts.join("\n  UNION ALL\n  ");
 

@@ -10,7 +10,7 @@ pub mod reverse;
 use anyhow::Result;
 
 use crate::dag::{ViewDag, ViewNode};
-use crate::model::MappingDocument;
+use crate::model::{MappingDocument, Strategy};
 
 /// Replace `CREATE OR REPLACE VIEW` with `CREATE MATERIALIZED VIEW IF NOT EXISTS`
 /// in the generated SQL for a single view.
@@ -165,7 +165,25 @@ pub fn render_sql(
                 if materialize {
                     view_sql = materialize_view_sql(&view_sql);
                     let vn = node.view_name();
-                    view_sql.push_str(&emit_unique_index(&vn, &["_src_id"], false));
+                    let is_array = mapping.array.is_some() || mapping.array_path.is_some();
+                    let identity_cols: Vec<String> = if is_array {
+                        target
+                            .map(|t| {
+                                t.fields
+                                    .iter()
+                                    .filter(|(_, fd)| fd.strategy() == Strategy::Identity)
+                                    .map(|(name, _)| name.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
+                    let mut idx_cols: Vec<&str> = vec!["_src_id"];
+                    for col in &identity_cols {
+                        idx_cols.push(col.as_str());
+                    }
+                    view_sql.push_str(&emit_unique_index(&vn, &idx_cols, false));
                     mat_view_names.push(vn);
                 }
                 sql.push_str(&view_sql);
@@ -545,7 +563,15 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
 // Annotation helpers — emit SQL comments showing user-defined configuration
 // ---------------------------------------------------------------------------
 
-use crate::model::{Mapping, Strategy, Target};
+use crate::model::{Mapping, Target};
+
+/// Prefix every line of `text` with `-- ` so multi-line values stay commented.
+fn comment_lines(text: &str) -> String {
+    text.lines()
+        .map(|l| format!("--   {l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 fn annotate_forward(m: &Mapping, _target: Option<&Target>) -> String {
     let mut lines = Vec::new();
@@ -562,13 +588,13 @@ fn annotate_forward(m: &Mapping, _target: Option<&Target>) -> String {
         let tgt = fm.target.as_deref().unwrap_or("?");
         let src = fm.source.as_deref().unwrap_or("-");
         if let Some(ref e) = fm.expression {
-            lines.push(format!("--   {src} -> {tgt} (expression: {e})"));
+            lines.push(comment_lines(&format!("{src} -> {tgt} (expression: {e})")));
         } else {
             lines.push(format!("--   {src} -> {tgt}"));
         }
     }
     if let Some(ref f) = m.filter {
-        lines.push(format!("--   filter: {f}"));
+        lines.push(comment_lines(&format!("filter: {f}")));
     }
     lines.push(String::new());
     lines.join("\n")
@@ -601,10 +627,10 @@ fn annotate_identity(mappings: &[&Mapping], target: Option<&Target>) -> String {
             if let Some(p) = fm.priority {
                 parts.push(format!("priority: {p}"));
             }
-            lines.push(format!("--   field: {}", parts.join(", ")));
+            lines.push(comment_lines(&format!("field: {}", parts.join(", "))));
         }
         if let Some(ref f) = m.filter {
-            lines.push(format!("--   filter ({}): {f}", m.name));
+            lines.push(comment_lines(&format!("filter ({}): {f}", m.name)));
         }
         if !m.links.is_empty() {
             for link in &m.links {
@@ -646,7 +672,7 @@ fn annotate_resolution(target: &Target) -> String {
         } else if let Some(d) = fdef.default_value() {
             parts.push(format!("default: {d:?}"));
         }
-        lines.push(format!("--   {}", parts.join(", ")));
+        lines.push(comment_lines(&parts.join(", ")));
     }
     lines.push(String::new());
     lines.join("\n")
@@ -666,11 +692,11 @@ fn annotate_reverse(m: &Mapping) -> String {
             if fm.reverse_required {
                 parts.push("reverse_required".to_string());
             }
-            lines.push(format!("--   field: {}", parts.join(", ")));
+            lines.push(comment_lines(&format!("field: {}", parts.join(", "))));
         }
     }
     if let Some(ref rf) = m.reverse_filter {
-        lines.push(format!("--   reverse_filter: {rf}"));
+        lines.push(comment_lines(&format!("reverse_filter: {rf}")));
     }
     lines.push(String::new());
     lines.join("\n")
@@ -796,6 +822,54 @@ mappings:
                 || sql.contains("-- Annotation"),
             "--annotate should emit comment blocks before views"
         );
+    }
+
+    #[test]
+    fn multiline_expression_fully_commented() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  s: { primary_key: id }
+targets:
+  t:
+    fields:
+      tid: { strategy: identity }
+      computed:
+        strategy: expression
+        expression: |
+          COALESCE((
+            SELECT count(*)
+            FROM other_table o
+            WHERE o.ref = t.tid
+          ), 0)
+        type: numeric
+mappings:
+  - name: s
+    source: s
+    target: t
+    fields:
+      - { source: id, target: tid }
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, true, false).unwrap();
+        // Every line in the resolution annotation block must be a SQL comment.
+        let annotation_block: Vec<&str> = sql
+            .lines()
+            .skip_while(|l| !l.contains("[annotate] resolution"))
+            .take_while(|l| l.starts_with("--"))
+            .collect();
+        assert!(
+            annotation_block.len() > 2,
+            "multi-line expression should produce multiple annotation lines"
+        );
+        for line in &annotation_block {
+            assert!(
+                line.starts_with("--"),
+                "annotation line not commented: {line}"
+            );
+        }
     }
 
     #[test]
@@ -954,6 +1028,118 @@ mappings:
         assert!(
             !sql.contains("REFRESH MATERIALIZED"),
             "non-materialize should not emit refresh"
+        );
+    }
+
+    #[test]
+    fn array_forward_index_includes_identity_fields() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  parent_src: { primary_key: id }
+targets:
+  parent_t:
+    fields:
+      pid: { strategy: identity }
+      name: { strategy: coalesce }
+  child_t:
+    fields:
+      cid: { strategy: identity, type: numeric }
+      amount: { strategy: last_modified, type: numeric }
+      parent_ref: { strategy: coalesce, references: parent_t }
+mappings:
+  - name: parent_map
+    source: parent_src
+    target: parent_t
+    last_modified: updated_at
+    fields:
+      - { source: id, target: pid }
+      - { source: name, target: name }
+  - name: child_map
+    parent: parent_map
+    array: items
+    target: child_t
+    last_modified: updated_at
+    parent_fields:
+      parent_id: id
+    fields:
+      - { source: cid, target: cid }
+      - { source: amount, target: amount }
+      - { source: parent_id, target: parent_ref }
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false, true).unwrap();
+        // The array-expanded forward view must include identity column(s) in
+        // the unique index — _src_id alone is not unique after array expansion.
+        let child_idx = sql
+            .lines()
+            .find(|l| l.contains("_fwd_child_map") && l.trim_start().starts_with("ON"))
+            .expect("missing ON clause for array forward view index");
+        assert!(
+            child_idx.contains("\"_src_id\"") && child_idx.contains("\"cid\""),
+            "array forward index should include identity field: {child_idx}"
+        );
+        // Non-array parent forward view should still be _src_id only.
+        let parent_idx = sql
+            .lines()
+            .find(|l| l.contains("_fwd_parent_map") && l.trim_start().starts_with("ON"))
+            .expect("missing ON clause for parent forward view index");
+        assert!(
+            parent_idx.contains("\"_src_id\"") && !parent_idx.contains("\"pid\""),
+            "non-array forward index should be _src_id only: {parent_idx}"
+        );
+    }
+
+    #[test]
+    fn array_forward_index_composite_identity() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  src: { primary_key: id }
+targets:
+  parent_t:
+    fields:
+      pid: { strategy: identity }
+  child_t:
+    fields:
+      order_ref:
+        strategy: identity
+        references: parent_t
+      line_number:
+        strategy: identity
+        type: numeric
+      amount: { strategy: last_modified, type: numeric }
+mappings:
+  - name: parent_fwd
+    source: src
+    target: parent_t
+    fields:
+      - { source: id, target: pid }
+  - name: child_fwd
+    parent: parent_fwd
+    array: lines
+    target: child_t
+    parent_fields:
+      parent_id: id
+    fields:
+      - { source: parent_id, target: order_ref }
+      - { source: line_no, target: line_number }
+      - { source: amount, target: amount }
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, false, false, true).unwrap();
+        // Composite identity: both identity fields must appear in the index.
+        let idx_line = sql
+            .lines()
+            .find(|l| l.contains("_fwd_child_fwd") && l.trim_start().starts_with("ON"))
+            .expect("missing ON clause for composite-identity array forward view index");
+        assert!(
+            idx_line.contains("\"order_ref\"") && idx_line.contains("\"line_number\""),
+            "composite identity fields should both be in array forward index: {idx_line}"
         );
     }
 }
