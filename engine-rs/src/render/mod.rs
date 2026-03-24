@@ -388,13 +388,83 @@ pub fn render_sql(
 
 /// Render a CREATE TABLE statement for an input table.
 ///
+/// Infer SQL column types from test input data for a given source dataset.
+///
+/// Scans all `tests[*].input.<dataset_key>` rows and returns a map from
+/// column name → SQL type string.  The inference rules mirror the test
+/// harness: String→TEXT, integer→BIGINT, float→DOUBLE PRECISION,
+/// bool→BOOLEAN, array/object→JSONB, mixed→TEXT, all-null→TEXT.
+fn infer_types_from_tests(
+    doc: &MappingDocument,
+    dataset_key: &str,
+) -> std::collections::HashMap<String, &'static str> {
+    let mut seen: std::collections::HashMap<String, Option<&'static str>> =
+        std::collections::HashMap::new();
+
+    // Helper: scan a slice of JSON rows, accumulating column→type info.
+    let mut scan_rows = |rows: &[serde_json::Value]| {
+        for row in rows {
+            if let Some(obj) = row.as_object() {
+                for (col, val) in obj {
+                    // Skip engine-internal columns that don't belong in the
+                    // physical input table.
+                    if col == "_cluster_id" {
+                        continue;
+                    }
+                    let kind = match val {
+                        serde_json::Value::Null => continue,
+                        serde_json::Value::String(_) => "TEXT",
+                        serde_json::Value::Number(n) => {
+                            if n.is_f64() && !n.is_i64() && !n.is_u64() {
+                                "DOUBLE PRECISION"
+                            } else {
+                                "BIGINT"
+                            }
+                        }
+                        serde_json::Value::Bool(_) => "BOOLEAN",
+                        serde_json::Value::Array(_) | serde_json::Value::Object(_) => "JSONB",
+                    };
+                    let entry = seen.entry(col.clone()).or_insert(None);
+                    match entry {
+                        None => *entry = Some(kind),
+                        Some(prev) if *prev == kind => {}
+                        Some(prev) => *prev = "TEXT", // mixed types
+                    }
+                }
+            }
+        }
+    };
+
+    for test in &doc.tests {
+        // Scan input rows.
+        if let Some(rows) = test.input.get(dataset_key) {
+            scan_rows(rows);
+        }
+        // Scan expected output rows (updates, inserts, deletes) — these may
+        // contain columns written back by reverse/delta views (e.g.
+        // reverse_only computed fields) that don't appear in input data.
+        if let Some(expected) = test.expected.get(dataset_key) {
+            scan_rows(&expected.updates);
+            scan_rows(&expected.inserts);
+            scan_rows(&expected.deletes);
+        }
+    }
+
+    seen.into_iter()
+        .map(|(col, kind)| (col, kind.unwrap_or("TEXT")))
+        .collect()
+}
+
 /// For source datasets: emits `_row_id SERIAL` + PK columns + all source
 /// columns referenced by field mappings + timestamp columns.
 ///
 /// For cluster_members tables: emits the cluster_id and source_key columns.
 ///
-/// All columns are typed TEXT (the actual types depend on the source system
-/// and are not declared in the mapping YAML).
+/// Column types are resolved with the following priority:
+/// 1. `source_path` columns → always JSONB
+/// 2. Explicit `sources.<ds>.fields.<col>.type` declarations
+/// 3. Inferred from test input data (JSON value types)
+/// 4. Fallback → TEXT
 fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
     use crate::qi;
     // Check if this is a cluster_members table
@@ -440,13 +510,19 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
     // Source dataset table — collect all referenced columns.
     let mut columns: Vec<String> = Vec::new();
 
-    // Resolve source metadata by key or by explicit table override.
-    let source_meta = doc.sources.get(table_name).or_else(|| {
-        doc.sources
-            .iter()
-            .find(|(key, src)| src.table_name(key) == table_name)
-            .map(|(_key, src)| src)
-    });
+    // Resolve source metadata and dataset key by key or by explicit table override.
+    let source_entry: Option<(&str, &crate::model::Source)> = doc
+        .sources
+        .get_key_value(table_name)
+        .map(|(k, v)| (k.as_str(), v))
+        .or_else(|| {
+            doc.sources
+                .iter()
+                .find(|(key, src)| src.table_name(key) == table_name)
+                .map(|(key, src)| (key.as_str(), src))
+        });
+    let source_meta = source_entry.map(|(_, src)| src);
+    let dataset_key = source_entry.map(|(key, _)| key);
 
     // Add PK columns first so they are always present in generated DDL.
     let pk_columns: Vec<String> = source_meta
@@ -465,68 +541,29 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         }
     }
 
-    // Scan all mappings that use this source dataset
-    let mut jsonb_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for mapping in &doc.mappings {
-        let src_table = doc
-            .sources
-            .get(&mapping.source.dataset)
-            .map(|s| s.table_name(&mapping.source.dataset).to_string())
-            .unwrap_or_else(|| mapping.source.dataset.clone());
-        if src_table != table_name {
-            continue;
-        }
+    // Infer columns and types from test input and expected data.
+    let inferred_types = dataset_key
+        .map(|key| infer_types_from_tests(doc, key))
+        .unwrap_or_default();
 
-        // Field source columns
-        for fm in &mapping.fields {
-            if let Some(ref _sp) = fm.source_path {
-                // source_path: physical column is first segment, typed JSONB.
-                if let Some(col) = fm.source_column() {
-                    if !columns.contains(&col.to_string()) {
-                        columns.push(col.to_string());
-                    }
-                    jsonb_cols.insert(col.to_string());
-                }
-            } else if let Some(ref src) = fm.source {
-                if !columns.contains(src) {
-                    columns.push(src.clone());
-                }
-            }
-            // Per-field last_modified column
-            if let Some(ref ts) = fm.last_modified {
-                if let Some(field) = ts.field_name() {
-                    let f = field.to_string();
-                    if !columns.contains(&f) {
-                        columns.push(f);
-                    }
-                }
-            }
-        }
-
-        // Mapping-level last_modified column
-        if let Some(ref ts) = mapping.last_modified {
-            if let Some(field) = ts.field_name() {
-                let f = field.to_string();
-                if !columns.contains(&f) {
-                    columns.push(f);
-                }
-            }
-        }
-
-        // cluster_field column
-        if let Some(ref cf) = mapping.cluster_field {
-            if !columns.contains(cf) {
-                columns.push(cf.clone());
-            }
-        }
-
-        // passthrough columns
-        for col in &mapping.passthrough {
-            if !columns.contains(col) {
-                columns.push(col.clone());
-            }
+    // Test data is the authoritative source for column names — it
+    // contains exactly the real top-level columns without synthetic
+    // aliases from child/parent mappings.
+    for col in inferred_types.keys() {
+        if !columns.contains(col) {
+            columns.push(col.clone());
         }
     }
+
+    // Collect explicit type declarations from sources.<ds>.fields.<col>.type.
+    let explicit_types: std::collections::HashMap<&str, &str> = source_meta
+        .map(|src| {
+            src.fields
+                .iter()
+                .filter_map(|(col, def)| def.field_type.as_deref().map(|t| (col.as_str(), t)))
+                .collect()
+        })
+        .unwrap_or_default();
 
     let mut col_defs: Vec<String> = Vec::new();
     if pk_columns.is_empty() {
@@ -534,11 +571,17 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         col_defs.push("_row_id SERIAL PRIMARY KEY".to_string());
     }
     col_defs.extend(columns.iter().map(|c| {
-        if jsonb_cols.contains(c) {
-            format!("{} JSONB", qi(c))
+        let sql_type = if let Some(t) = explicit_types.get(c.as_str()) {
+            // Priority 1: explicit type declaration from sources.fields.
+            t
+        } else if let Some(t) = inferred_types.get(c.as_str()) {
+            // Priority 2: inferred from test input data.
+            t
         } else {
-            format!("{} TEXT", qi(c))
-        }
+            // Priority 3: fallback.
+            "TEXT"
+        };
+        format!("{} {sql_type}", qi(c))
     }));
     if !pk_columns.is_empty() {
         col_defs.push(format!(
@@ -795,6 +838,99 @@ mappings:
         assert!(
             sql.contains("CREATE TABLE") && sql.contains("my_source"),
             "--create-tables should emit CREATE TABLE for source"
+        );
+    }
+
+    #[test]
+    fn create_tables_infers_types_from_tests() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  src:
+    primary_key: id
+    fields:
+      explicit_col: { type: numeric }
+targets:
+  t:
+    fields:
+      name: { strategy: coalesce }
+      age: { strategy: coalesce }
+      active: { strategy: coalesce }
+      score: { strategy: coalesce }
+      tags: { strategy: coalesce }
+      explicit_col: { strategy: coalesce }
+mappings:
+  - name: m
+    source: src
+    target: t
+    fields:
+      - { source: name, target: name }
+      - { source: age, target: age }
+      - { source: active, target: active }
+      - { source: score, target: score }
+      - { source: tags, target: tags }
+      - { source: explicit_col, target: explicit_col }
+tests:
+  - description: type inference
+    input:
+      src:
+        - { id: "1", name: "Alice", age: 30, active: true, score: 9.5, tags: ["a", "b"], explicit_col: "x" }
+        - { id: "2", name: "Bob", age: 25, active: false, score: 8.0, tags: ["c"], explicit_col: "y" }
+    expected: {}
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, true, false, false).unwrap();
+
+        // String columns → TEXT
+        assert!(sql.contains("\"name\" TEXT"), "string → TEXT:\n{sql}");
+        // Integer columns → BIGINT
+        assert!(sql.contains("\"age\" BIGINT"), "integer → BIGINT:\n{sql}");
+        // Boolean columns → BOOLEAN
+        assert!(sql.contains("\"active\" BOOLEAN"), "bool → BOOLEAN:\n{sql}");
+        // Float columns → DOUBLE PRECISION
+        assert!(
+            sql.contains("\"score\" DOUBLE PRECISION"),
+            "float → DOUBLE PRECISION:\n{sql}"
+        );
+        // Array columns → JSONB
+        assert!(sql.contains("\"tags\" JSONB"), "array → JSONB:\n{sql}");
+        // Explicit type beats inference
+        assert!(
+            sql.contains("\"explicit_col\" numeric"),
+            "explicit type declaration should override inference:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn create_tables_mixed_types_fall_back_to_text() {
+        let doc = parse(
+            r#"
+version: "1.0"
+sources:
+  src: { primary_key: id }
+targets:
+  t: { fields: { val: { strategy: coalesce } } }
+mappings:
+  - name: m
+    source: src
+    target: t
+    fields: [{ source: val, target: val }]
+tests:
+  - description: mixed types
+    input:
+      src:
+        - { id: "1", val: 42 }
+        - { id: "2", val: "text" }
+    expected: {}
+"#,
+        );
+        let dag = build_dag(&doc);
+        let sql = render_sql(&doc, &dag, true, false, false).unwrap();
+        assert!(
+            sql.contains("\"val\" TEXT"),
+            "mixed types should fall back to TEXT:\n{sql}"
         );
     }
 

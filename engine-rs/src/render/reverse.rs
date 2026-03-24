@@ -204,11 +204,6 @@ pub fn render_reverse_view(
                         .unwrap_or_default();
 
                     let qtgt = qi(tgt);
-                    let mut match_parts = vec![format!("ref_match._src_id = r.{qtgt}::text")];
-                    for f in &identity_fields {
-                        match_parts.push(format!("ref_match.{}::text = r.{qtgt}::text", qi(f)));
-                    }
-                    let match_clause = match_parts.join(" OR ");
 
                     // For parent_fields references in nested sources the
                     // return value must match what the delta CTE joins on:
@@ -275,19 +270,40 @@ pub fn render_reverse_view(
                     // Prefer the local ref that matches the original
                     // forward-view value so that merged entities don't
                     // cause spurious reference changes (reference-preservation).
-                    let order_clause = format!(
-                        " ORDER BY ({return_expr}::text = id._base->>'{source_name}')::int DESC",
-                    );
-                    let ref_subquery = format!(
+                    //
+                    // Uses COALESCE of two LIMIT 1 subqueries (no ORDER BY)
+                    // for IVM compatibility:
+                    //   path 1: _src_id match + preservation condition
+                    //   path 2: full match (all conditions, no preservation)
+                    let preservation_cond =
+                        format!("{return_expr}::text = id._base->>'{source_name}'");
+                    let preferred_subquery = format!(
                         "(SELECT {return_expr} \
                          FROM {id_ref} ref_match \
                          JOIN {id_ref} ref_local \
                            ON ref_local._entity_id_resolved = ref_match._entity_id_resolved \
-                         WHERE ({match_clause}) \
-                         AND ref_local._mapping = '{ref_mapping_name}'\
-                         {order_clause} \
+                         WHERE ref_match._src_id = r.{qtgt}::text \
+                         AND ref_local._mapping = '{ref_mapping_name}' \
+                         AND {preservation_cond} \
                          LIMIT 1)",
                     );
+                    // Fallback: match by _src_id OR identity fields, no preservation.
+                    let mut fallback_parts = vec![format!("ref_match._src_id = r.{qtgt}::text")];
+                    for f in &identity_fields {
+                        fallback_parts.push(format!("ref_match.{}::text = r.{qtgt}::text", qi(f)));
+                    }
+                    let fallback_clause = fallback_parts.join(" OR ");
+                    let fallback_subquery = format!(
+                        "(SELECT {return_expr} \
+                         FROM {id_ref} ref_match \
+                         JOIN {id_ref} ref_local \
+                           ON ref_local._entity_id_resolved = ref_match._entity_id_resolved \
+                         WHERE ({fallback_clause}) \
+                         AND ref_local._mapping = '{ref_mapping_name}' \
+                         LIMIT 1)",
+                    );
+                    let ref_subquery =
+                        format!("COALESCE({preferred_subquery}, {fallback_subquery})",);
 
                     // For parent_fields references, the subquery returns NULL
                     // when the referenced mapping has no identity entry (insert

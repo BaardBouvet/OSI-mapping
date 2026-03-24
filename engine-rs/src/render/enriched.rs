@@ -44,8 +44,25 @@ pub fn render_enriched_view(
         return Ok(String::new());
     }
 
-    // Build SELECT columns: upstream.* + lateral results.
-    let mut select_parts = vec![format!("{target_name}.*")];
+    // Build SELECT columns: explicit upstream columns + lateral results.
+    // Use an explicit column list instead of `target_name.*` to avoid
+    // picking up tool-added columns (e.g. __pgt_row_id from pg_trickle).
+    let mut upstream_cols = vec!["_entity_id".to_string()];
+    for (fname, fdef) in &target.fields {
+        // Skip enriched fields — they're provided by the lateral joins.
+        if fdef.strategy() == Strategy::Expression {
+            if let Some(expr) = fdef.expression() {
+                if is_enriched_expression(expr, all_target_names) {
+                    continue;
+                }
+            }
+        }
+        upstream_cols.push(qi(fname));
+    }
+    let mut select_parts: Vec<String> = upstream_cols
+        .iter()
+        .map(|c| format!("{target_name}.{c}"))
+        .collect();
     let mut lateral_joins = Vec::new();
 
     for (fname, expr) in &enriched_fields {

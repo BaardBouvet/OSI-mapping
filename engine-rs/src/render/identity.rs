@@ -10,6 +10,11 @@ use crate::qi;
 /// This avoids `SELECT *` which would pick up tool-added columns
 /// (e.g. `__pgt_row_id` from pg_trickle stream tables).
 fn forward_column_list(target: &Target, mappings: &[&Mapping]) -> String {
+    forward_columns(target, mappings).join(", ")
+}
+
+/// Return the individual column expressions for forward views.
+fn forward_columns(target: &Target, mappings: &[&Mapping]) -> Vec<String> {
     let mut cols = vec![
         "_src_id".to_string(),
         "_mapping".to_string(),
@@ -36,7 +41,7 @@ fn forward_column_list(target: &Target, mappings: &[&Mapping]) -> String {
         }
     }
     cols.push("_base".to_string());
-    cols.join(", ")
+    cols
 }
 
 /// Render an identity / transitive closure view for a target entity.
@@ -351,11 +356,16 @@ pub fn render_identity_view(
     );
 
     // Join back to get all forward columns with resolved entity IDs
-    sql.push_str(
-        "SELECT n.*, f._entity_id_resolved\n\
+    let n_cols: Vec<String> = forward_columns(target, mappings)
+        .iter()
+        .map(|c| format!("n.{c}"))
+        .collect();
+    let n_col_list = n_cols.join(", ");
+    sql.push_str(&format!(
+        "SELECT {n_col_list}, n._entity_id, f._entity_id_resolved\n\
          FROM _id_numbered n\n\
          JOIN _id_final f ON n._entity_id = f._entity_id;\n",
-    );
+    ));
 
     Ok(sql)
 }
