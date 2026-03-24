@@ -79,3 +79,4 @@ Design plans and architectural decision records for the OSI mapping engine.
 | [DELETION-AS-FIELD-PLAN.md](DELETION-AS-FIELD-PLAN.md) | Done | `soft_delete.target` routes detection into a resolved field; `derive_tombstones` synthesizes `TRUE` for absent entities via `cluster_members`. |
 | [EXAMPLE-COVERAGE-PLAN.md](EXAMPLE-COVERAGE-PLAN.md) | Done | Six new examples covering remaining uncovered schema properties: `array_path`, `links`/`link_key`, `elements: last_modified`, `scalar`, `soft_delete` on child, `order_prev`/`order_next`. |
 | [EXAMPLE-REDUCTION-PLAN.md](EXAMPLE-REDUCTION-PLAN.md) | Planned (Phases 1–2 done) | Reduce examples from 52 to ~28–34 by removing expression-heavy demos and consolidating overlapping groups. |
+| [SQL-SAFETY-VALIDATION-PLAN.md](SQL-SAFETY-VALIDATION-PLAN.md) | Proposed | Validate mapping names against SQL namespace collisions — source/target/view name conflicts, reserved prefixes, identifier length. |
