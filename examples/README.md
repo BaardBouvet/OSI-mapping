@@ -58,6 +58,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | [`route`](route/README.md) | Discriminator-based routing via `filter:` |
 | [`route-combined`](route-combined/README.md) | Routing + dedicated sources merging |
 | [`scalar-array`](scalar-array/README.md) | Bare scalar array element extraction via `scalar: true` |
+| [`sesam-annotated`](sesam-annotated/README.md) | Sesam DTL annotated example — nested arrays, `reverse_expression`, `normalize`, `expression` constant, FK references |
 | [`soft-delete`](soft-delete/README.md) | Soft-delete detection via `soft_delete:` |
 | [`soft-delete-child`](soft-delete-child/README.md) | Element-level soft-delete on nested array child mappings |
 | [`soft-delete-resurrect`](soft-delete-resurrect/README.md) | Soft-delete resurrection via `soft_delete.target` + `BOOL_AND` consensus |

@@ -15,3 +15,11 @@ When working on files in `engine-rs/src`, the agent must always run the followin
 - cargo test
 
 This ensures all code is formatted, lint-free, and passes unit tests before handoff.
+
+To re-run only specific examples instead of the full integration suite, use:
+
+```
+OSI_EXAMPLES=hello-world,route cargo test execute_all_examples
+```
+
+Comma-separated substrings are matched against example directory names.

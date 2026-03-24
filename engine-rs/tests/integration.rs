@@ -822,7 +822,7 @@ async fn verify_test_expected(
         }
         let dataset = &source_mappings[0].source.dataset;
 
-        let delta_view = format!("_delta_{dataset}");
+        let delta_view = osi_engine::qi(&format!("_delta_{dataset}"));
 
         // Build reverse field mapping (needed for noop verification)
         let mut reverse_fields: Vec<(String, String)> = Vec::new();
@@ -1100,7 +1100,7 @@ async fn verify_test_expected(
                 if cols.len() == 1 {
                     let val = noop_obj
                         .get(cols[0])
-                        .and_then(&json_to_string)
+                        .and_then(json_to_string)
                         .ok_or_else(|| {
                             format!("{dataset}: noop row missing PK column {}", cols[0])
                         })?;
@@ -1109,13 +1109,9 @@ async fn verify_test_expected(
                     let mut vals = Vec::new();
                     let mut clauses = Vec::new();
                     for (i, col) in cols.iter().enumerate() {
-                        let val =
-                            noop_obj
-                                .get(*col)
-                                .and_then(&json_to_string)
-                                .ok_or_else(|| {
-                                    format!("{dataset}: noop row missing PK column {col}")
-                                })?;
+                        let val = noop_obj.get(*col).and_then(json_to_string).ok_or_else(|| {
+                            format!("{dataset}: noop row missing PK column {col}")
+                        })?;
                         vals.push(val);
                         clauses.push(format!("{col}::text = ${}", i + 1));
                     }
@@ -1124,7 +1120,7 @@ async fn verify_test_expected(
             } else {
                 let val = noop_obj
                     .get("_row_id")
-                    .and_then(&json_to_string)
+                    .and_then(json_to_string)
                     .ok_or_else(|| format!("{dataset}: noop row missing _row_id"))?;
                 (vec![val], "_row_id::text = $1".to_string())
             };
@@ -1135,7 +1131,10 @@ async fn verify_test_expected(
                 .collect();
             let source_rows = client
                 .query(
-                    &format!("SELECT * FROM {dataset} WHERE {pk_where_str}"),
+                    &format!(
+                        "SELECT * FROM {} WHERE {pk_where_str}",
+                        osi_engine::qi(dataset)
+                    ),
                     &params,
                 )
                 .await
@@ -1152,7 +1151,7 @@ async fn verify_test_expected(
                     continue;
                 }
                 let noop_val: Option<String> =
-                    noop_obj.get(src_field.as_str()).and_then(&json_to_string);
+                    noop_obj.get(src_field.as_str()).and_then(json_to_string);
                 let source_val: Option<String> = get_text(source_row, src_field.as_str());
                 if noop_val.is_none() && source_val.is_some() {
                     continue;
@@ -1181,7 +1180,7 @@ async fn verify_test_expected(
         if listed.contains(ds.as_str()) || !checked_datasets.insert(ds.clone()) {
             continue;
         }
-        let delta_view = format!("_delta_{ds}");
+        let delta_view = osi_engine::qi(&format!("_delta_{ds}"));
         let action_rows = client
             .query(
                 &format!(
@@ -1631,6 +1630,12 @@ async fn load_test_data(
             }))
             .collect();
         // DROP CASCADE to remove dependent views, then re-create.
+        // Drop any stale view first — a previous example may have created a
+        // VIEW with the same name (e.g. target identity view "person"), and
+        // DROP TABLE IF EXISTS fails when the name is a view, not a table.
+        let _ = client
+            .execute(&format!("DROP VIEW IF EXISTS {} CASCADE", qi(dataset)), &[])
+            .await;
         client
             .execute(
                 &format!("DROP TABLE IF EXISTS {} CASCADE", qi(dataset)),

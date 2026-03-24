@@ -1,0 +1,284 @@
+version: "1.0"
+description: >
+  The Sesam DTL annotated example as an OSI mapping.  A `person` dataset
+  and an `orders` dataset are the normalized inputs.  A third dataset,
+  `person_with_orders`, stores the denormalized join result: persons
+  with their orders embedded in a nested array — exactly what the
+  Sesam DTL pipe produces as output.  Names are uppercased on the way
+  out to `person_with_orders` via `reverse_expression`, with `normalize`
+  preventing false updates back from the uppercase side.
+
+sources:
+  person:
+    primary_key: _id
+  orders:
+    primary_key: _id
+    fields:
+      _id:
+        type: numeric
+  person_with_orders:
+    primary_key: _id
+
+targets:
+  global_person:
+    fields:
+      person_id:
+        strategy: identity
+      type:
+        strategy: coalesce
+      name:
+        strategy: last_modified
+      age:
+        strategy: last_modified
+        type: numeric
+
+  global_order:
+    fields:
+      order_id:
+        strategy: identity
+        type: numeric
+      amount:
+        strategy: last_modified
+        type: numeric
+      person_ref:
+        strategy: coalesce
+        references: global_person
+
+mappings:
+  # --- Normalized sources (DTL inputs) ---
+
+  # person dataset → global_person target
+  # DTL "default" rule: ["copy", "_id"], ["add", "name", ["upper", ...]], etc.
+  - name: person
+    source: person
+    target: global_person
+    last_modified: updated_at
+    fields:
+      - source: _id
+        target: person_id
+      - source: name
+        target: name
+      - source: age
+        target: age
+
+  # orders dataset → global_order target
+  # DTL apply-hops: ["eq", "_S._id", "o.cust_id"]
+  - name: orders
+    source: orders
+    target: global_order
+    fields:
+      - source: _id
+        target: order_id
+      - source: amount
+        target: amount
+        last_modified: updated_at
+      - source: cust_id
+        target: person_ref
+        references: person
+
+  # --- Denormalized source (DTL output) ---
+
+  # person_with_orders → global_person target
+  # The pipe's sink dataset: person-with-orders.
+  - name: person_with_orders_person
+    source: person_with_orders
+    target: global_person
+    last_modified: updated_at
+    fields:
+      - source: _id
+        target: person_id
+      - source: name
+        target: name
+        reverse_expression: "upper(name)"  # ["upper", "_S.name"] — destructive, applied on the way out only
+        normalize: "upper(%s)"             # prevents false updates from the uppercase side
+      - source: type
+        target: type
+        reverse_expression: "'customer'"  # ["add", "type", "customer"] — hardcoded on the way back out
+      - source: age
+        target: age
+
+  # person_with_orders.orders[] → global_order target
+  # Nested array — the embedded orders in the join result.
+  - name: person_with_orders_orders
+    parent: person_with_orders_person
+    array: orders
+    last_modified: parent_updated_at
+    parent_fields:
+      parent_id: _id
+      parent_updated_at: updated_at
+    target: global_order
+    fields:
+      - source: order_id
+        target: order_id
+      - source: amount
+        target: amount
+      - source: parent_id
+        target: person_ref
+        references: person_with_orders_person
+
+tests:
+  # Forward: person + orders exist, person-with-orders only has one person
+  # → second person gets inserted as the DTL pipe output
+  - description: "New person + orders produce person-with-orders insert (the DTL pipe output)"
+    input:
+      person:
+        - { _id: "1", name: "John Smith", age: 25, updated_at: "2024-06-01T10:00:00Z" }
+        - { _id: "2", name: "Jane Doe", age: 32, updated_at: "2024-06-01T10:00:00Z" }
+      orders:
+        - { _id: 100, amount: 320, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+        - { _id: 200, amount: 500, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+      person_with_orders:
+        - _id: "1"
+          type: "customer"
+          name: "JOHN SMITH"
+          age: 25
+          updated_at: "2024-06-01T10:00:00Z"
+          orders:
+            - { order_id: 100, amount: 320 }
+            - { order_id: 200, amount: 500 }
+    expected:
+      person_with_orders:
+        inserts:
+          - _cluster_id: "person:2"
+            _id: "2"
+            type: "customer"
+            name: "JANE DOE"
+            age: 32
+            orders: null
+
+  # Forward: person corrected + new order → flows to denormalized output
+  - description: "Person name corrected + new order — person-with-orders updated"
+    input:
+      person:
+        - { _id: "1", name: "John D. Smith", age: 25, updated_at: "2024-06-15T12:00:00Z" }
+      orders:
+        - { _id: 100, amount: 320, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+        - { _id: 200, amount: 500, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+      person_with_orders:
+        - _id: "1"
+          type: "customer"
+          name: "JOHN SMITH"
+          age: 25
+          updated_at: "2024-06-01T10:00:00Z"
+          orders:
+            - { order_id: 100, amount: 320 }
+    expected:
+      person_with_orders:
+        updates:
+          - _id: "1"
+            type: "customer"
+            name: "JOHN D. SMITH"
+            age: 25
+            orders:
+              - { order_id: 100, amount: 320 }
+              - { order_id: 200, amount: 500 }
+
+  # Backward: new person-with-orders entry inserts into person + orders
+  - description: "New entry in person-with-orders inserts into person and orders"
+    input:
+      person:
+        - { _id: "1", name: "John Smith", age: 25, updated_at: "2024-06-01T10:00:00Z" }
+      orders:
+        - { _id: 100, amount: 320, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+      person_with_orders:
+        - _id: "1"
+          type: "customer"
+          name: "JOHN SMITH"
+          age: 25
+          updated_at: "2024-06-01T10:00:00Z"
+          orders:
+            - { order_id: 100, amount: 320 }
+        - _id: "2"
+          type: "customer"
+          name: "JANE DOE"
+          age: 32
+          updated_at: "2024-06-15T12:00:00Z"
+          orders:
+            - { order_id: 300, amount: 750 }
+    expected:
+      person:
+        inserts:
+          - { _cluster_id: "person_with_orders_person:2", _id: "2", name: "JANE DOE", age: 32 }
+      orders:
+        inserts:
+          - { _cluster_id: "person_with_orders_orders:2?order_id=300", _id: 300, amount: 750, cust_id: null }
+
+  # Backward: person already exists + new person-with-orders entry → orders insert resolves cust_id
+  - description: "Person exists before person-with-orders — orders insert resolves cust_id"
+    input:
+      person:
+        - { _id: "1", name: "John Smith", age: 25, updated_at: "2024-06-01T10:00:00Z" }
+        - { _id: "2", name: "Jane Doe", age: 32, updated_at: "2024-06-01T10:00:00Z" }
+      orders:
+        - { _id: 100, amount: 320, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+      person_with_orders:
+        - _id: "1"
+          type: "customer"
+          name: "JOHN SMITH"
+          age: 25
+          updated_at: "2024-06-01T10:00:00Z"
+          orders:
+            - { order_id: 100, amount: 320 }
+        - _id: "2"
+          type: "customer"
+          name: "JANE DOE"
+          age: 32
+          updated_at: "2024-06-15T12:00:00Z"
+          orders:
+            - { order_id: 300, amount: 750 }
+    expected:
+      orders:
+        inserts:
+          - { _cluster_id: "person_with_orders_orders:2?order_id=300", _id: 300, amount: 750, cust_id: "2" }
+
+  # Backward: edits in person-with-orders → flow back to normalized sources
+  - description: "Name and order amount edited in person-with-orders — flows back to person and orders"
+    input:
+      person:
+        - { _id: "1", name: "John Smith", age: 25, updated_at: "2024-06-01T10:00:00Z" }
+      orders:
+        - { _id: 100, amount: 320, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+        - { _id: 200, amount: 500, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+      person_with_orders:
+        - _id: "1"
+          type: "customer"
+          name: "JOHN D. SMITH"
+          age: 30
+          updated_at: "2024-06-15T12:00:00Z"
+          orders:
+            - { order_id: 100, amount: 999 }
+            - { order_id: 200, amount: 500 }
+    expected:
+      person:
+        updates:
+          - { _id: "1", name: "JOHN D. SMITH", age: 30 }
+      orders:
+        updates:
+          - { _id: 100, amount: 999, cust_id: "1" }
+
+  # Normalize: person-with-orders has a NEWER timestamp with "JOHN SMITH",
+  # while person has the original "John Smith".  Without normalize, the
+  # uppercase echo would win last_modified and overwrite global_person's
+  # name, which then propagates back to person as a false update.
+  # With normalize: upper("JOHN SMITH") = upper("John Smith") → echo
+  # suppressed → global_person keeps "John Smith" → person name is unchanged.
+  # Meanwhile age IS different (25 → 30) so that update still propagates,
+  # proving normalize is surgical — it only suppresses the echoed field.
+  - description: "Normalize suppresses uppercase echo — name unchanged but age updates"
+    input:
+      person:
+        - { _id: "1", name: "John Smith", age: 25, updated_at: "2024-06-01T10:00:00Z" }
+      orders:
+        - { _id: 100, amount: 320, cust_id: "1", updated_at: "2024-06-01T10:00:00Z" }
+      person_with_orders:
+        - _id: "1"
+          type: "customer"
+          name: "JOHN SMITH"
+          age: 30
+          updated_at: "2024-06-15T12:00:00Z"
+          orders:
+            - { order_id: 100, amount: 320 }
+    expected:
+      person:
+        updates:
+          - { _id: "1", name: "John Smith", age: 30 }
