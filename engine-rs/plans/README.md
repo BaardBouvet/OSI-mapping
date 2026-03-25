@@ -5,6 +5,7 @@ Design plans and architectural decision records for the OSI mapping engine.
 | Plan | Status | Summary |
 |------|--------|---------|
 | [ASYMMETRY-ANALYSIS.md](ASYMMETRY-ANALYSIS.md) | Design | Read/write asymmetry: mapping concern vs ETL concern — analysis of where shape differences belong. |
+| [BENCHMARK-EXAMPLE-PLAN.md](BENCHMARK-EXAMPLE-PLAN.md) | Planned | Large-scale benchmark example — 30 systems × 10 targets = 300 mappings, ~930 views. |
 | [CLI-TEST-COMMAND-PLAN.md](CLI-TEST-COMMAND-PLAN.md) | Proposed | CLI `test` subcommand — execute embedded test cases against PostgreSQL. |
 | [CLUSTER-SEED-FORMAT-PLAN.md](CLUSTER-SEED-FORMAT-PLAN.md) | Design | `_cluster_id` seed format for nested-array disambiguation: query params vs path expressions. |
 | [PLAN.md](PLAN.md) | Done | Original implementation plan — Rust engine compiling YAML to a DAG of PostgreSQL views. |

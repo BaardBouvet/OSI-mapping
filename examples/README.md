@@ -23,6 +23,7 @@ Use these examples together with `../docs/reference/annotated-example.md` and `.
 | Example | Demonstrates |
 |---|---|
 | [`asymmetric-io`](asymmetric-io/README.md) | Asymmetric field direction — `forward_only`, `reverse_only`, and `bidirectional` in one mapping |
+| [`benchmark-large`](benchmark-large/README.md) | Stress-test — 30 systems × 10 targets = 300 mappings, ~930 views, all building blocks |
 | [`composite-keys`](composite-keys/README.md) | Multi-field identity via `link_group` (compound match key) |
 | [`concurrent-detection`](concurrent-detection/README.md) | Detecting concurrent edits via `include_base` |
 | [`crdt-ordering`](crdt-ordering/README.md) | Deterministic array element ordering via `order: true` |
