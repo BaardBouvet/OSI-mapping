@@ -412,7 +412,12 @@ fn infer_types_from_tests(
                         continue;
                     }
                     let kind = match val {
-                        serde_json::Value::Null => continue,
+                        serde_json::Value::Null => {
+                            // Register column even when null so it
+                            // appears in the column list.
+                            seen.entry(col.clone()).or_insert(None);
+                            continue;
+                        }
                         serde_json::Value::String(_) => "TEXT",
                         serde_json::Value::Number(n) => {
                             if n.is_f64() && !n.is_i64() && !n.is_u64() {
@@ -456,10 +461,12 @@ fn infer_types_from_tests(
 }
 
 /// For source datasets: emits `_row_id SERIAL` + PK columns + all source
-/// columns referenced by field mappings + timestamp columns.
+/// columns referenced by field mappings, last_modified, passthrough,
+/// cluster_field, and nested array columns.
 ///
 /// For cluster_members tables: emits the cluster_id and source_key columns.
 ///
+/// Column names come from the mapping definitions (authoritative).
 /// Column types are resolved with the following priority:
 /// 1. `source_path` columns → always JSONB
 /// 2. Explicit `sources.<ds>.fields.<col>.type` declarations
@@ -541,14 +548,81 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         }
     }
 
-    // Infer columns and types from test input and expected data.
+    // Collect source columns referenced by field mappings that use
+    // this dataset.  This is the authoritative source for column
+    // names — it covers all columns regardless of whether test data
+    // exists or contains only NULLs.
+    //
+    // Also track which columns originate from source_path so we can
+    // force their type to JSONB.
+    let mut source_path_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(ds_key) = dataset_key {
+        for mapping in &doc.mappings {
+            // Only consider non-child mappings whose dataset matches.
+            if mapping.is_child() || mapping.source.dataset != ds_key {
+                continue;
+            }
+
+            // Field-level source columns.
+            for fm in &mapping.fields {
+                if let Some(col) = fm.source_column() {
+                    if !columns.contains(&col.to_string()) {
+                        columns.push(col.to_string());
+                    }
+                    // source_path columns reference a JSONB column.
+                    if fm.source_path.is_some() {
+                        source_path_cols.insert(col.to_string());
+                    }
+                }
+            }
+
+            // Mapping-level last_modified column.
+            if let Some(ref ts) = mapping.last_modified {
+                if let Some(col) = ts.field_name() {
+                    if !columns.contains(&col.to_string()) {
+                        columns.push(col.to_string());
+                    }
+                }
+            }
+
+            // Passthrough columns (includes soft-delete columns).
+            for col in mapping.effective_passthrough() {
+                if !columns.contains(&col.to_string()) {
+                    columns.push(col.to_string());
+                }
+            }
+
+            // Cluster field column.
+            if let Some(ref col) = mapping.cluster_field {
+                if !columns.contains(col) {
+                    columns.push(col.clone());
+                }
+            }
+
+            // Nested array columns used by child mappings.
+            for child in &doc.mappings {
+                if child.parent.as_deref() == Some(&mapping.name) {
+                    if let Some(arr) = child.effective_array() {
+                        // The array column is the first dotted segment,
+                        // stripping any bracket suffix.
+                        let col = arr.split('.').next().unwrap_or(arr);
+                        let col = col.split('[').next().unwrap_or(col);
+                        if !columns.contains(&col.to_string()) {
+                            columns.push(col.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Infer column types from test input and expected data.
     let inferred_types = dataset_key
         .map(|key| infer_types_from_tests(doc, key))
         .unwrap_or_default();
 
-    // Test data is the authoritative source for column names — it
-    // contains exactly the real top-level columns without synthetic
-    // aliases from child/parent mappings.
+    // Add any remaining columns that appear in tests but weren't in
+    // the mapping definitions (e.g. extra columns in expected output).
     for col in inferred_types.keys() {
         if !columns.contains(col) {
             columns.push(col.clone());
@@ -571,7 +645,10 @@ fn render_input_table(doc: &MappingDocument, table_name: &str) -> String {
         col_defs.push("_row_id SERIAL PRIMARY KEY".to_string());
     }
     col_defs.extend(columns.iter().map(|c| {
-        let sql_type = if let Some(t) = explicit_types.get(c.as_str()) {
+        let sql_type = if source_path_cols.contains(c.as_str()) {
+            // source_path columns are always JSONB.
+            "JSONB"
+        } else if let Some(t) = explicit_types.get(c.as_str()) {
             // Priority 1: explicit type declaration from sources.fields.
             t
         } else if let Some(t) = inferred_types.get(c.as_str()) {

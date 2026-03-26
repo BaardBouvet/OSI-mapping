@@ -255,20 +255,25 @@ pub fn render_resolution_view(
             Strategy::Collect => {
                 format!("array_agg(DISTINCT {qfname}) FILTER (WHERE {qfname} IS NOT NULL)")
             }
-            Strategy::Coalesce => format!(
-                "(array_agg({qfname} ORDER BY {order_rank}, COALESCE({}, _priority, 999) ASC NULLS LAST) \
-                 FILTER (WHERE {qfname} IS NOT NULL))[1]",
-                qi(&format!("_priority_{fname}")),
-                order_rank = if mixed_order_fields.contains(fname.as_str()) {
+            Strategy::Coalesce => {
+                let priority_expr = format!(
+                    "COALESCE({}, _priority, 999) ASC NULLS LAST",
+                    qi(&format!("_priority_{fname}"))
+                );
+                let order_clause = if mixed_order_fields.contains(fname.as_str()) {
                     // Generated ordinality keys are exactly 10 digits.
                     // Prefer non-generated (external/native) keys in mixed mode.
                     format!(
-                        "CASE WHEN ({qfname})::text ~ '^[0-9]{{10}}$' THEN 1 ELSE 0 END ASC"
+                        "CASE WHEN ({qfname})::text ~ '^[0-9]{{10}}$' THEN 1 ELSE 0 END ASC, {priority_expr}"
                     )
                 } else {
-                    "0 ASC".to_string()
-                }
-            ),
+                    priority_expr
+                };
+                format!(
+                    "(array_agg({qfname} ORDER BY {order_clause}) \
+                     FILTER (WHERE {qfname} IS NOT NULL))[1]"
+                )
+            }
             Strategy::LastModified => {
                 if echo_fields.contains(fname) {
                     format!(
@@ -512,6 +517,11 @@ mappings:
         assert!(
             sql.contains("_priority"),
             "coalesce should order by priority"
+        );
+        // PostgreSQL forbids positional integer literals in aggregate ORDER BY.
+        assert!(
+            !sql.contains("ORDER BY 0"),
+            "coalesce must not emit ORDER BY 0 inside aggregate: {sql}"
         );
     }
 
