@@ -1,0 +1,16 @@
+[package]
+name = "sparql-spike"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "Throwaway spike: validates the v2 SPARQL renderer contract against hello-world."
+
+[dependencies]
+oxigraph = { version = "0.4", default-features = false }
+anyhow = "1"
+serde_json = "1"
+sha2 = "0.10"
+indexmap = "2"
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
