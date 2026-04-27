@@ -1,6 +1,25 @@
 # JSON Schema Validation (Pass 0)
 
-**Status:** Done
+**Status:** Done (v2 implementation; 0.2 release)
+
+## v2 implementation notes
+
+The plan below was originally written against the v1 engine. The v2
+engine implementation differs in two ways:
+
+1. **`spec/mapping-schema.json` was completely rewritten** for the v2
+   schema (single `version: "2.0"`, `identity` as OR-list of single
+   fields or AND-tuples, `coalesce` / `last_modified` strategies only,
+   `parent` / `array` / `parent_fields` for nested mappings, `tests`
+   block with `input` / `expected.{updates,inserts,deletes}`). The v1
+   schema is gone.
+2. **`jsonschema` crate v0.46** — uses `validator_for(...)` and
+   `iter_errors(...)`; `instance_path()` is a method, not a field.
+3. **Module is `validate.rs`** (no parent module yet — semantic passes
+    1–11 will land alongside as features are added).
+
+The CLI integrates Pass 0 into a new `validate` subcommand. Both passes
+(schema + serde) always run so users see complete diagnostics.
 
 ## Problem
 

@@ -29,6 +29,15 @@ enum Command {
         /// Path to mapping.yaml (v2 schema).
         mapping: PathBuf,
     },
+    /// Validate a v2 mapping file: JSON Schema (Pass 0) + serde parse.
+    ///
+    /// Reports all structural errors at once instead of failing on the
+    /// first one. Exits 0 if the file passes both passes; non-zero
+    /// otherwise.
+    Validate {
+        /// Path to mapping.yaml (v2 schema).
+        mapping: PathBuf,
+    },
     /// Render a v2 mapping for the chosen backend.
     ///
     /// Without --out-dir: prints a human-readable pipeline summary to stdout
@@ -66,6 +75,46 @@ fn main() -> Result<()> {
         Command::Parse { mapping } => {
             let doc = osi_engine::parser::parse_file(&mapping)?;
             println!("{doc:#?}");
+        }
+        Command::Validate { mapping } => {
+            let yaml = std::fs::read_to_string(&mapping)
+                .map_err(|e| anyhow::anyhow!("reading {}: {e}", mapping.display()))?;
+
+            // Pass 0: JSON Schema. Collect all structural errors and print
+            // them; do NOT short-circuit on serde even if schema fails —
+            // showing both helps users.
+            let mut had_errors = false;
+            let value: serde_json::Value = match serde_yaml::from_str(&yaml) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("{}: YAML parse failed: {e}", mapping.display());
+                    std::process::exit(1);
+                }
+            };
+            if let Err(errs) = osi_engine::validate::validate_schema(&value) {
+                had_errors = true;
+                eprintln!(
+                    "{}: schema validation failed ({} error{}):",
+                    mapping.display(),
+                    errs.len(),
+                    if errs.len() == 1 { "" } else { "s" }
+                );
+                for e in &errs {
+                    eprintln!("  - {e}");
+                }
+            }
+
+            // Pass 1: typed deserialization (serde) — catches things the
+            // schema doesn't (custom version check, etc.).
+            if let Err(e) = osi_engine::parser::parse_str(&yaml) {
+                had_errors = true;
+                eprintln!("{}: parse failed: {e:#}", mapping.display());
+            }
+
+            if had_errors {
+                std::process::exit(1);
+            }
+            println!("{}: ok", mapping.display());
         }
         Command::Render {
             mapping,

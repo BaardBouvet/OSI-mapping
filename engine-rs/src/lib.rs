@@ -7,6 +7,7 @@
 pub mod model;
 pub mod parser;
 pub mod render;
+pub mod validate;
 
 /// Quote a SQL identifier with double quotes (PostgreSQL standard).
 pub fn qi(name: &str) -> String {

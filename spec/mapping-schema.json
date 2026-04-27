@@ -1,540 +1,207 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/BaardBouvet/OSI-mapping/specs/mapping-schema.json",
-  "title": "Integration Mapping Schema",
-  "description": "Unified schema for source-to-target field mapping and conflict resolution. Combines mapping definitions (how source fields map to target fields) with resolution rules (how conflicts between multiple sources are resolved) into a single cohesive document.",
+  "$id": "https://github.com/BaardBouvet/OSI-mapping/spec/mapping-schema.json",
+  "title": "Integration Mapping Schema v2",
+  "description": "Source-to-target field mapping with conflict resolution. v2 schema — see docs/reference/schema-reference.md.",
   "type": "object",
-  "required": ["version"],
+  "required": ["version", "sources", "targets", "mappings"],
   "additionalProperties": false,
   "properties": {
     "version": {
       "type": "string",
-      "const": "1.0",
-      "description": "Schema version"
+      "const": "2.0",
+      "description": "Schema version. Must be the string \"2.0\"."
     },
     "description": {
       "type": "string",
-      "description": "Human-readable description of what this mapping file does."
+      "description": "Human-readable summary of what this mapping file does."
     },
     "sources": {
       "type": "object",
-      "description": "Optional source metadata keyed by dataset name. Used to declare physical table names and primary keys.",
-      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
-      "additionalProperties": { "$ref": "#/$defs/SourceMeta" }
+      "description": "Source dataset metadata, keyed by source name.",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/Identifier" },
+      "additionalProperties": { "$ref": "#/$defs/Source" }
     },
     "targets": {
       "type": "object",
-      "description": "Target entity definitions with resolution rules. Keys are entity names used as references in mappings[].target.",
+      "description": "Target entity definitions, keyed by target name.",
       "minProperties": 1,
-      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "propertyNames": { "$ref": "#/$defs/Identifier" },
       "additionalProperties": { "$ref": "#/$defs/Target" }
     },
     "mappings": {
       "type": "array",
-      "description": "Source-to-target field mappings. Each entry maps fields from one source dataset to one target entity.",
+      "description": "Source-to-target field mappings.",
       "minItems": 1,
       "items": { "$ref": "#/$defs/Mapping" }
     },
     "tests": {
       "type": "array",
-      "description": "Embedded test cases for validation. Each test defines input data per source and expected output after forward+resolution+reverse.",
-      "items": { "$ref": "#/$defs/TestCase" }
+      "description": "Inline test cases.",
+      "items": { "$ref": "#/$defs/Test" }
     }
   },
-  "anyOf": [
-    { "required": ["targets"] },
-    { "required": ["mappings"] }
-  ],
 
   "$defs": {
 
-    "SourceMeta": {
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Lowercase identifier: starts with a letter, followed by letters, digits, or underscores."
+    },
+
+    "Source": {
       "type": "object",
-      "description": "Metadata for a source dataset.",
+      "description": "Source dataset metadata.",
       "required": ["primary_key"],
       "additionalProperties": false,
       "properties": {
-        "table": {
-          "type": "string",
-          "description": "Physical table/view name. Defaults to the source key when omitted."
-        },
         "primary_key": {
-          "description": "Column(s) that uniquely identify a source row.",
-          "oneOf": [
-            { "type": "string" },
-            { "type": "array", "items": { "type": "string" }, "minItems": 1 }
-          ]
-        },
-        "fields": {
-          "type": "object",
-          "description": "Optional per-column metadata for source columns.",
-          "additionalProperties": { "$ref": "#/$defs/SourceField" }
-        }
-      }
-    },
-
-    "SourceField": {
-      "type": "object",
-      "description": "Per-column metadata for a source field.",
-      "additionalProperties": false,
-      "properties": {
-        "type": {
           "type": "string",
-          "description": "SQL type for this column (e.g., 'integer', 'numeric'). Used for typed PK reconstruction in the output."
+          "description": "Primary-key column name."
         }
       }
     },
 
     "Target": {
       "type": "object",
-      "description": "A target entity definition: what the unified/golden record looks like and how multi-source conflicts are resolved.",
-      "required": ["fields"],
+      "description": "Target entity definition.",
+      "required": ["identity", "fields"],
       "additionalProperties": false,
       "properties": {
-        "description": { "type": "string" },
-        "elements": {
-          "type": "string",
-          "enum": ["collect", "coalesce", "last_modified"],
-          "description": "Element-set resolution strategy for child targets.  collect (default): union of all sources' elements.  coalesce: the highest-priority source's entire element set wins per parent.  last_modified: the most recently modified source's entire element set wins per parent."
+        "identity": {
+          "type": "array",
+          "description": "OR-list of identity groups. Each group is either a single field name (string) or an AND-tuple (list of field names).",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/IdentityGroup" }
         },
         "fields": {
           "type": "object",
-          "description": "Target field definitions with resolution strategies. Keys are field names.",
+          "description": "Target field definitions, keyed by field name.",
           "minProperties": 1,
-          "additionalProperties": { "$ref": "#/$defs/TargetField" }
+          "propertyNames": { "$ref": "#/$defs/Identifier" },
+          "additionalProperties": { "$ref": "#/$defs/Field" }
         }
       }
     },
 
-    "TargetField": {
-      "description": "Resolution rule for a target field. Either a strategy string shorthand or a full object with strategy and optional configuration.",
+    "IdentityGroup": {
       "oneOf": [
         {
           "type": "string",
-          "enum": ["identity", "collect", "coalesce", "last_modified", "expression", "bool_or"],
-          "description": "Strategy string shorthand. Equivalent to { strategy: <value> }."
+          "description": "Single-field identity group.",
+          "pattern": "^[a-z][a-z0-9_]*$"
         },
         {
-          "type": "object",
-          "required": ["strategy"],
-          "additionalProperties": false,
-          "properties": {
-            "strategy": {
-              "type": "string",
-              "enum": ["identity", "collect", "coalesce", "last_modified", "expression", "bool_or"],
-              "description": "Resolution strategy. 'identity' = collect values + entity linking (transitive closure). 'collect' = aggregate all values. 'coalesce' = priority-based pick. 'last_modified' = recency-based pick. 'expression' = custom SQL aggregation. 'bool_or' = true if any source is true."
-            },
-            "expression": {
-              "$ref": "#/$defs/Expression",
-              "description": "SQL aggregation expression. Required when strategy is 'expression'. References the target field name as the column (e.g. \"max(price)\" for a field named 'price')."
-            },
-            "references": {
-              "type": "string",
-              "description": "Foreign key: name of another target entity this field references. Enables FK resolution during entity linking."
-            },
-            "default": {
-              "description": "Static fallback value when no source provides data for this field.",
-              "oneOf": [
-                { "type": "string" },
-                { "type": "number" },
-                { "type": "boolean" }
-              ]
-            },
-            "default_expression": {
-              "$ref": "#/$defs/Expression",
-              "description": "Computed fallback when no source provides data. SQL expression that can reference other target fields."
-            },
-            "group": {
-              "type": "string",
-              "description": "Atomic resolution group name. All fields sharing the same group resolve from the same winning source (the source with the most recent timestamp across any field in the group). Typically paired with 'last_modified' strategy."
-            },
-            "link_group": {
-              "type": "string",
-              "description": "Composite identity group name. Records from different sources are linked only when ALL fields sharing the same link_group match as a tuple. Paired with 'identity' strategy."
-            },
-            "type": {
-              "type": "string",
-              "description": "SQL type for this field (e.g. 'numeric', 'boolean', 'date', 'integer'). When set, values are cast to this type instead of text, enabling correct aggregation and type-safe expressions. Defaults to 'text' when omitted."
-            },
-            "description": { "type": "string" }
+          "type": "array",
+          "description": "AND-tuple identity group: rows match only when all fields agree.",
+          "minItems": 2,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
           }
         }
       ]
     },
 
+    "Field": {
+      "type": "object",
+      "description": "Target field definition.",
+      "required": ["strategy"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["coalesce", "last_modified"],
+          "description": "Resolution strategy for this field."
+        }
+      }
+    },
 
     "Mapping": {
       "type": "object",
-      "description": "Maps fields from one source dataset to one target entity.",
-      "required": ["name", "target"],
+      "description": "One source-to-target mapping.",
+      "required": ["name", "source", "target", "fields"],
       "additionalProperties": false,
       "properties": {
         "name": {
-          "type": "string",
-          "description": "Unique identifier for this mapping.",
-          "pattern": "^[a-z][a-z0-9_]*$"
+          "$ref": "#/$defs/Identifier",
+          "description": "Unique mapping name."
         },
-        "description": { "type": "string" },
         "source": {
-          "type": "string",
-          "description": "Source name — must match a key in the top-level sources section. Required for root mappings; omit when parent is set."
+          "$ref": "#/$defs/Identifier",
+          "description": "Source dataset name (must match a key in sources)."
         },
         "target": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Target entity name (must match a key in targets)."
+        },
+        "last_modified": {
           "type": "string",
-          "description": "Target entity — must match a key in the top-level targets section."
+          "description": "Source column carrying the row's last-modified timestamp. Required for mappings contributing to last_modified-strategy fields."
         },
         "parent": {
-          "type": "string",
-          "description": "Name of the parent mapping. Inherits source from parent. Mutually exclusive with source."
+          "$ref": "#/$defs/Identifier",
+          "description": "Name of a parent mapping — makes this a child mapping that expands an array column from the parent source."
         },
         "array": {
           "type": "string",
-          "description": "JSONB array column to expand into rows. Single segment name. Requires parent."
-        },
-        "array_path": {
-          "type": "string",
-          "pattern": "^[^.]+\\..+$",
-          "description": "Dotted path to a JSONB array to expand. Requires parent. Use for paths into nested JSON structure."
+          "description": "Source column (or dotted path) holding the array to expand. Required when parent: is set."
         },
         "parent_fields": {
           "type": "object",
-          "description": "Map of local field aliases to parent column names. Used with array/array_path to import ancestor-level fields.",
-          "additionalProperties": { "$ref": "#/$defs/ParentFieldRef" }
-        },
-        "priority": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Source priority for COALESCE resolution — lower number wins. When two sources provide the same field, the source with the lower priority number takes precedence."
-        },
-        "last_modified": {
-          "$ref": "#/$defs/TimestampRef",
-          "description": "Mapping-level last-modified timestamp for LAST_MODIFIED resolution. Applies to all fields unless overridden by a per-field last_modified."
-        },
-        "filter": {
-          "$ref": "#/$defs/Expression",
-          "description": "Forward filter: SQL WHERE condition. Only source rows matching this are mapped to the target. Used for routing one source to multiple targets."
-        },
-        "reverse_filter": {
-          "$ref": "#/$defs/Expression",
-          "description": "Reverse filter: SQL WHERE condition. Only target rows matching this are mapped back to this source."
+          "description": "Aliases that lift parent-row columns into the child's scope. Keys are alias names; values are parent source columns.",
+          "propertyNames": { "$ref": "#/$defs/Identifier" },
+          "additionalProperties": { "type": "string" }
         },
         "fields": {
           "type": "array",
-          "description": "Field-level mappings from source to target. Can be empty for linkage-only mappings.",
-          "items": { "$ref": "#/$defs/FieldMapping" }
-        },
-        "link_key": {
-          "type": "string",
-          "description": "Column in the linking table providing pre-computed cluster identity. Enables IVM-safe path."
-        },
-        "links": {
-          "type": "array",
-          "description": "External identity edges — references from a linking table to source mappings.",
-          "items": { "$ref": "#/$defs/LinkRef" }
-        },
-        "cluster_members": {
-          "description": "ETL feedback via per-mapping table. `true` uses defaults; object overrides table/column names.",
-          "oneOf": [
-            { "type": "boolean" },
-            { "$ref": "#/$defs/ClusterMembersConfig" }
-          ]
-        },
-        "cluster_field": {
-          "type": "string",
-          "description": "Column in the source table holding a pre-populated cluster ID from ETL feedback."
-        },
-        "written_state": {
-          "description": "ETL-maintained table tracking what was last written to the target. Enables target-centric noop detection and hard-delete detection. `true` uses defaults; object overrides table/column names.",
-          "oneOf": [
-            { "type": "boolean" },
-            { "$ref": "#/$defs/WrittenStateConfig" }
-          ]
-        },
-        "derive_noop": {
-          "type": "boolean",
-          "description": "When true (requires written_state), enables target-centric noop detection: compares resolved values against what was last written to the target instead of only against the source snapshot. Appropriate when the ETL is the sole writer to the target."
-        },
-        "derive_timestamps": {
-          "type": "boolean",
-          "description": "When true (requires written_state), derives per-field timestamps by comparing current source values against previously written values. Changed fields get the latest write timestamp; unchanged fields carry forward their existing per-field timestamp."
-        },
-        "passthrough": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Source columns to carry through to the output without mapping to a target field. Excluded from noop detection and resolution."
-        },
-        "soft_delete": {
-          "$ref": "#/$defs/SoftDelete"
-        },
-        "derive_tombstones": {
-          "type": "string",
-          "description": "Target field to synthesize for absent entities or elements. On root mappings (requires cluster_members): detects entity absence. On child mappings (requires parent with written_state): detects element absence. Absent items contribute TRUE to the named field, letting resolution propagate the deletion."
-        },
-        "sort": {
-          "type": "array",
-          "description": "Sort keys for nested array reconstruction ORDER BY. Only valid on child mappings. Mutually exclusive with order: true on fields.",
-          "items": { "$ref": "#/$defs/SortKey" }
-        }
-      },
-      "anyOf": [
-        { "required": ["fields"] },
-        { "required": ["links"] }
-      ]
-    },
-
-    "SortKey": {
-      "type": "object",
-      "description": "A sort key for nested array reconstruction ORDER BY.",
-      "required": ["field"],
-      "additionalProperties": false,
-      "properties": {
-        "field": {
-          "type": "string",
-          "description": "Target field name to sort by."
-        },
-        "direction": {
-          "type": "string",
-          "enum": ["asc", "desc"],
-          "description": "Sort direction. Defaults to asc."
+          "description": "Field mappings: source column → target field.",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/FieldMap" }
         }
       }
     },
 
-    "LinkRef": {
+    "FieldMap": {
       "type": "object",
-      "description": "A link from a linking table field to a source mapping.",
-      "required": ["field", "references"],
+      "description": "One source column to one target field.",
+      "required": ["source", "target"],
       "additionalProperties": false,
-      "properties": {
-        "field": {
-          "description": "Column(s) in the linking table referencing the target source's PK.",
-          "oneOf": [
-            { "type": "string" },
-            { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-            { "type": "object", "additionalProperties": { "type": "string" } }
-          ]
-        },
-        "references": {
-          "type": "string",
-          "description": "Name of the source mapping being referenced."
-        }
-      }
-    },
-
-    "ClusterMembersConfig": {
-      "type": "object",
-      "description": "Custom configuration for ETL feedback table.",
-      "additionalProperties": false,
-      "properties": {
-        "table": {
-          "type": "string",
-          "description": "Table name. Default: _cluster_members_{mapping_name}."
-        },
-        "cluster_id": {
-          "type": "string",
-          "default": "_cluster_id",
-          "description": "Cluster ID column name."
-        },
-        "source_key": {
-          "type": "string",
-          "default": "_src_id",
-          "description": "Source PK column name."
-        }
-      }
-    },
-
-    "WrittenStateConfig": {
-      "type": "object",
-      "description": "Custom configuration for the ETL-maintained written-state table.",
-      "additionalProperties": false,
-      "properties": {
-        "table": {
-          "type": "string",
-          "description": "Table name. Default: _written_{mapping_name}."
-        },
-        "cluster_id": {
-          "type": "string",
-          "default": "_cluster_id",
-          "description": "Cluster ID column name."
-        },
-        "written": {
-          "type": "string",
-          "default": "_written",
-          "description": "JSONB column holding the last-written field values."
-        },
-        "written_at": {
-          "type": "string",
-          "default": "_written_at",
-          "description": "Row-level write timestamp column."
-        },
-        "written_ts": {
-          "type": "string",
-          "default": "_written_ts",
-          "description": "JSONB column holding per-field timestamps."
-        }
-      }
-    },
-
-    "FieldMapping": {
-      "type": "object",
-      "description": "Maps a single source field to a single target field. Must have at least one of source or target. Omit source for forward-only computed fields. Omit target for reverse-only source reconstruction.",
-      "additionalProperties": false,
-      "anyOf": [
-        { "required": ["source"] },
-        { "required": ["source_path"] },
-        { "required": ["target"] }
-      ],
       "properties": {
         "source": {
           "type": "string",
-          "description": "Source field name. Omit for forward-only computed/constant fields."
-        },
-        "source_path": {
-          "type": "string",
-          "pattern": "^[^.\\[]+([.\\[].*)+$",
-          "description": "Path into a JSONB source column (e.g. 'metadata.tier', 'config.['api.key']', 'contacts[0].email'). First bare segment is the column name, remaining segments navigate JSON keys or array indices. Mutually exclusive with 'source'."
+          "description": "Source column name."
         },
         "target": {
-          "type": "string",
-          "description": "Target field name. Omit for reverse-only source field reconstruction."
-        },
-        "direction": {
-          "type": "string",
-          "enum": ["bidirectional", "forward_only", "reverse_only"],
-          "description": "Mapping direction. Default: 'bidirectional' when source is present, 'forward_only' when source is omitted."
-        },
-        "expression": {
-          "$ref": "#/$defs/Expression",
-          "description": "Forward transform: SQL expression mapping source to target. When omitted, the source field value is copied directly."
-        },
-        "reverse_expression": {
-          "$ref": "#/$defs/Expression",
-          "description": "Reverse transform: SQL expression mapping target back to source."
-        },
-        "reverse_required": {
-          "type": "boolean",
-          "description": "When true, the entire row is excluded from reverse output if this field's resolved value is null. Enables insert/delete propagation."
-        },
-        "last_modified": {
-          "$ref": "#/$defs/TimestampRef",
-          "description": "Per-field last-modified timestamp. Overrides the mapping-level last_modified."
+          "$ref": "#/$defs/Identifier",
+          "description": "Target field name."
         },
         "priority": {
           "type": "integer",
-          "minimum": 0,
-          "description": "Per-field COALESCE priority. Overrides the mapping-level priority."
+          "description": "Priority for coalesce resolution. Lower wins. Omit to use declaration order."
         },
         "references": {
-          "type": "string",
-          "description": "Name of the mapping whose source identities should be used when translating an entity reference back to a source FK value."
-        },
-        "references_field": {
-          "type": "string",
-          "description": "The target field whose value to return when translating this reference back to source namespace. When omitted, the engine returns the referenced source's primary key value — which is the correct default for standard foreign keys. Set this when the source stores a different representation of the reference (e.g. an ISO code rather than the entity's primary key)."
-        },
-        "description": { "type": "string" },
-        "order": {
-          "type": "boolean",
-          "description": "When true on an array mapping field, generates a deterministic sortable position key from the source array index. Used for ordinal ordering of nested array elements."
-        },
-        "order_prev": {
-          "type": "boolean",
-          "description": "When true, auto-populates with the identity of the previous sibling element. Used for linked-list CRDT ordering."
-        },
-        "order_next": {
-          "type": "boolean",
-          "description": "When true, auto-populates with the identity of the next sibling element. Used for linked-list CRDT ordering."
-        },
-        "scalar": {
-          "type": "boolean",
-          "description": "When true on a child array mapping field, the value is extracted directly from the bare JSONB array element instead of a named key. Enables mapping scalar arrays like [\"vip\", \"churned\"] to a target field."
-        },
-        "normalize": {
-          "type": "string",
-          "description": "SQL expression with a %s placeholder, applied to both sides of the delta noop comparison. Handles precision loss (numeric rounding, string truncation, case folding)."
+          "$ref": "#/$defs/Identifier",
+          "description": "(Slice 4) Name of another target whose canonical IRI resolves this field on reverse — declares a foreign-key relationship."
         }
       }
     },
 
-
-
-
-
-    "SoftDelete": {
-      "description": "Soft-delete detection configuration. Declares a source column that signals deletion. Strategy determines detection and undelete semantics.",
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Shorthand: field name. Strategy defaults to timestamp."
-        },
-        {
-          "type": "object",
-          "required": ["field"],
-          "additionalProperties": false,
-          "properties": {
-            "field": {
-              "type": "string",
-              "description": "Source column carrying the deletion signal. Auto-included as passthrough."
-            },
-            "strategy": {
-              "type": "string",
-              "enum": ["timestamp", "deleted_flag", "active_flag"],
-              "default": "timestamp",
-              "description": "Detection strategy: timestamp (IS NOT NULL, undelete NULL), deleted_flag (IS NOT FALSE, undelete FALSE), active_flag (IS NOT TRUE, undelete TRUE)."
-            },
-            "target": {
-              "type": "string",
-              "description": "Target field name. When set, the detection result is routed into this resolved field instead of suppressing the row from the delta. Auto-nullifies non-identity fields so the source yields the floor in resolution."
-            }
-          }
-        }
-      ]
-    },
-
-    "Expression": {
-      "type": "string",
-      "description": "SQL expression (ANSI SQL)."
-    },
-
-    "ParentFieldRef": {
-      "description": "Reference to an ancestor-level field. String shorthand for root-level fields; object for intermediate ancestors.",
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Field name from the root source object (parent of the nested path)."
-        },
-        {
-          "type": "object",
-          "description": "Qualified ancestor field reference for deep nesting.",
-          "required": ["field"],
-          "additionalProperties": false,
-          "properties": {
-            "path": {
-              "type": "string",
-              "description": "Dot-delimited path to the ancestor scope (e.g. 'lines' when source path is 'lines.sub_items')."
-            },
-            "field": {
-              "type": "string",
-              "description": "Field name within the ancestor scope."
-            }
-          }
-        }
-      ]
-    },
-
-    "TestCase": {
+    "Test": {
       "type": "object",
-      "description": "A test case with input data and expected output after processing (forward transform → resolution → reverse transform).",
-      "required": ["input", "expected"],
+      "description": "Inline test case.",
+      "required": ["description", "input", "expected"],
       "additionalProperties": false,
       "properties": {
         "description": {
           "type": "string",
-          "description": "What this test case verifies."
+          "description": "Human-readable description of what this test asserts."
         },
         "input": {
           "type": "object",
-          "description": "Input data keyed by source name (matching the mapping's source field). Each value is an array of row objects.",
+          "description": "Current state of each source. Keys are source names; values are arrays of rows.",
           "additionalProperties": {
             "type": "array",
             "items": { "type": "object" }
@@ -542,57 +209,30 @@
         },
         "expected": {
           "type": "object",
-          "description": "Expected output keyed by source dataset name. Each value is an object with updates/inserts/deletes arrays. Omit a key or the entire dataset if that category is empty. Rows not listed are implicitly noops.",
-          "additionalProperties": {
-            "type": "object",
-            "description": "Expected result for one source dataset. Only list rows that change — unlisted rows are implicitly noops.",
-            "additionalProperties": false,
-            "properties": {
-              "updates": { "type": "array", "items": { "type": "object" }, "description": "Rows whose resolved values differ from input — the source must be updated." },
-              "inserts": { "type": "array", "items": { "type": "object" }, "description": "New rows to create in this source (originated from other sources)." },
-              "deletes": { "type": "array", "items": { "type": "object" }, "description": "Rows to remove from this source (failed reverse_required or filter)." },
-              "noops": { "type": "array", "items": { "type": "object" }, "description": "Rows expected to be noops — listed for documentation/assertion." }
-            }
-          }
-        },
-        "analytics": {
-          "type": "object",
-          "description": "Expected analytics (target) view contents, keyed by target name. Each value is an array of expected row objects.",
-          "additionalProperties": {
-            "type": "array",
-            "items": { "type": "object" }
-          }
+          "description": "Expected delta output. Keys are mapping names (or source names for single-mapping files).",
+          "additionalProperties": { "$ref": "#/$defs/Expected" }
         }
       }
     },
 
-    "TimestampRef": {
-      "description": "Timestamp source for LAST_MODIFIED resolution. String shorthand for a field name; object for expression-based timestamps.",
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Source field name containing the timestamp."
+    "Expected": {
+      "type": "object",
+      "description": "Expected deltas for one mapping. Empty object asserts no deltas.",
+      "additionalProperties": false,
+      "properties": {
+        "updates": {
+          "type": "array",
+          "items": { "type": "object" }
         },
-        {
-          "type": "object",
-          "description": "Timestamp from a field, an expression, or both.",
-          "additionalProperties": false,
-          "properties": {
-            "field": {
-              "type": "string",
-              "description": "Source field containing the timestamp."
-            },
-            "expression": {
-              "$ref": "#/$defs/Expression",
-              "description": "Expression producing a timestamp value."
-            }
-          },
-          "anyOf": [
-            { "required": ["field"] },
-            { "required": ["expression"] }
-          ]
+        "inserts": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "deletes": {
+          "type": "array",
+          "items": { "type": "object" }
         }
-      ]
+      }
     }
   }
 }
