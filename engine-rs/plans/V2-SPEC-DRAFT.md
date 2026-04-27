@@ -8,8 +8,8 @@ supporting an RDF/SPARQL renderer alongside the existing PostgreSQL view
 renderer.
 
 This is a forward-looking proposal. Nothing here is implemented yet. See
-[v2-migration-rfc.md](v2-migration-rfc.md) for a clause-by-clause migration
-mapping and [v2-prototype-examples.md](v2-prototype-examples.md) for full
+[v2-migration-rfc.md](V2-MIGRATION-RFC.md) for a clause-by-clause migration
+mapping and [v2-prototype-examples.md](V2-PROTOTYPE-EXAMPLES.md) for full
 example translations.
 
 ## Design principles
@@ -879,7 +879,7 @@ field mapping.
 | `join` / `split` | `join: { sep: " " }` paired with `split: { sep: " ", limit: N }` | Concatenate `sources:` with `sep` | Split target value on `sep` (at most `limit-1` times; the last bucket gets the tail) and assign back to `sources:` |
 | `value_map` | `value_map: { Y: true, N: false }` (forward dict; reverse auto-derived when bijective) | Look up source value in the dict; emit canonical value | Reverse-look-up canonical value; emit source value |
 
-`value_map:` is specified in full in [value-map-rfc.md](value-map-rfc.md) —
+`value_map:` is specified in full in [value-map-rfc.md](VALUE-MAP-RFC.md) —
 field-level only, mutually exclusive with `transform:`, fallback policy via
 `value_map_fallback: passthrough | null`, null bypasses the map. Boolean
 translation (`Y`/`N` → `true`/`false`) and code-list translation are its
@@ -1182,7 +1182,7 @@ tests:
 Every renderer must produce identical `updates`/`inserts`/`deletes` from the
 same input. This is the conformance contract. The triplestore renderer
 projects its named graphs back to source-PK-shaped records to satisfy it; see
-[triplestore-backend.md](triplestore-backend.md).
+[triplestore-backend.md](TRIPLESTORE-BACKEND-DESIGN.md).
 
 ## Removed from v1
 
@@ -1269,6 +1269,6 @@ mapping exists for cases where write-back is not possible.
 
 ## See also
 
-- [v2-migration-rfc.md](v2-migration-rfc.md) — clause-by-clause migration
-- [v2-prototype-examples.md](v2-prototype-examples.md) — full example translations
-- [triplestore-backend.md](triplestore-backend.md) — RDF/SPARQL renderer design
+- [v2-migration-rfc.md](V2-MIGRATION-RFC.md) — clause-by-clause migration
+- [v2-prototype-examples.md](V2-PROTOTYPE-EXAMPLES.md) — full example translations
+- [triplestore-backend.md](TRIPLESTORE-BACKEND-DESIGN.md) — RDF/SPARQL renderer design

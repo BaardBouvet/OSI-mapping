@@ -2,7 +2,7 @@
 
 **Status:** Draft
 
-Renderer design for compiling [v2 mappings](v2-spec-draft.md) to an
+Renderer design for compiling [v2 mappings](V2-SPEC-DRAFT.md) to an
 RDF triplestore that supports SPARQL Update, named graphs, and RDF-star.
 Companion to the existing PostgreSQL view renderer; both compile from the
 same backend-neutral schema and must satisfy the same test conformance

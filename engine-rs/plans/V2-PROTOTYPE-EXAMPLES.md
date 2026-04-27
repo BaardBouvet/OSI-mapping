@@ -3,7 +3,7 @@
 **Status:** Draft
 
 Three existing examples translated to the proposed v2 schema, to validate
-that the simplifications proposed in [v2-spec-draft.md](v2-spec-draft.md)
+that the simplifications proposed in [v2-spec-draft.md](V2-SPEC-DRAFT.md)
 actually feel better in practice. If they don't, the spec needs revision.
 
 The originals are linked for side-by-side reading. Tests blocks are abbreviated

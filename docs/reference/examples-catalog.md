@@ -1,157 +1,121 @@
 # Examples catalog
 
-Runnable mapping examples, each in its own directory under `examples/`.
-
-## Suggested starting points
-
-- [**hello-world**](../../examples/hello-world/README.md) — simplest end-to-end example
-- [**merge-threeway**](../../examples/merge-threeway/README.md) — merge behavior across multiple systems
-- [**reference-preservation**](../../examples/reference-preservation/README.md) — foreign-key handling across merged entities
+Runnable mapping examples, each in its own directory under [`examples/`](../../examples/).
 
 Use these examples together with the [Annotated example](annotated-example.md)
 and [Schema reference](schema-reference.md).
 
-Examples are split into **primitives** (single schema feature) and
-**patterns** (multiple features combined to solve a real-world problem).
+## v2 examples (current engine)
 
-## Primitives
+The v2 examples use `version: "2.0"` and are tested end-to-end against both the
+PostgreSQL and SPARQL backends on every CI run.
 
-Each primitive example demonstrates one schema feature in isolation.
+| Example | What it demonstrates |
+|---|---|
+| [hello-world](../../examples/hello-world/README.md) | Two sources, one target, single-field identity, `coalesce` resolution, priority-based field winners. The starting point. |
+| [composite-identity](../../examples/composite-identity/README.md) | AND-tuple identity: two rows match when *both* `first_name` and `last_name` agree. |
+| [last-modified](../../examples/last-modified/README.md) | `last_modified` resolution: most recently changed value wins, determined by a source timestamp column. |
+| [nested-arrays-shallow](../../examples/nested-arrays-shallow/README.md) | Child mapping with `parent:` / `array:` / `parent_fields:` — expands a JSON array column into individual target rows. Composite identity on the child. |
 
-### Identity & merge keys
+### In progress
+
+| Example | Status |
+|---|---|
+| [nested-arrays-v2](../../examples/nested-arrays-v2/README.md) | Parses cleanly but awaits `references:` (slice 4) implementation before it can be executed. |
+
+## v1 examples (legacy)
+
+42 examples use `version: "1.0"`. They document the full feature set developed
+in the v1 engine but are not yet migrated to v2 schema. The v2 engine does not
+parse v1 mappings.
+
+These examples remain the reference for understanding features planned for v2
+migration. They are organised below by schema feature.
+
+### Identity & merge
 
 | Example | Demonstrates |
 |---|---|
-| [hello-world](../../examples/hello-world/README.md) | Simplest mapping — two sources, one target, identity + coalesce |
 | [composite-keys](../../examples/composite-keys/README.md) | Multi-field identity (compound match key) |
-| [merge-groups](../../examples/merge-groups/README.md) | Group-based atomic resolution |
+| [merge-threeway](../../examples/merge-threeway/README.md) | Three-way merge across CRM, ERP, and phone directory |
+| [merge-curated](../../examples/merge-curated/README.md) | Manually curated golden record overrides |
+| [merge-internal](../../examples/merge-internal/README.md) | Internal merge from a single source with multiple match paths |
+| [concurrent-detection](../../examples/concurrent-detection/README.md) | Concurrent-update detection and noop suppression |
 
-### Resolution strategies
-
-| Example | Demonstrates |
-|---|---|
-| [custom-resolution](../../examples/custom-resolution/README.md) | Custom resolution strategy via expression |
-| [value-groups](../../examples/value-groups/README.md) | Field group resolution |
-| [types](../../examples/types/README.md) | Type tracking via composite expression strategy |
-
-### Value transforms
+### Resolution
 
 | Example | Demonstrates |
 |---|---|
-| [value-conversions](../../examples/value-conversions/README.md) | Bidirectional value transformations via expression / reverse\_expression |
+| [element-last-modified](../../examples/element-last-modified/README.md) | `last_modified` on nested array elements |
+| [element-priority](../../examples/element-priority/README.md) | Priority-based resolution on nested array elements |
+| [precision-loss](../../examples/precision-loss/README.md) | `normalize:` for lossy noop comparison |
 | [value-defaults](../../examples/value-defaults/README.md) | Default values and default expressions |
-| [value-derived](../../examples/value-derived/README.md) | Derived / computed fields |
-| [json-fields](../../examples/json-fields/README.md) | Extracting sub-fields from JSONB source columns via `source_path` |
-| [precision-loss](../../examples/precision-loss/README.md) | Handling precision loss with `normalize` on field mappings |
-
-### Vocabulary
-
-| Example | Demonstrates |
-|---|---|
-| [vocabulary-custom](../../examples/vocabulary-custom/README.md) | Custom vocabulary definitions |
-| [vocabulary-standard](../../examples/vocabulary-standard/README.md) | Standard vocabulary usage |
-
-### Embedded entities
-
-| Example | Demonstrates |
-|---|---|
-| [embedded-simple](../../examples/embedded-simple/README.md) | Single embedded sub-entity |
-| [embedded-objects](../../examples/embedded-objects/README.md) | Nested embedded objects |
-| [embedded-multiple](../../examples/embedded-multiple/README.md) | Multiple embedded entities |
+| [value-groups](../../examples/value-groups/README.md) | Atomic field group resolution |
+| [derive-timestamps](../../examples/derive-timestamps/README.md) | Derived per-field `_ts_*` timestamps |
+| [derive-noop](../../examples/derive-noop/README.md) | Written-state noop suppression |
 
 ### Nested arrays
 
 | Example | Demonstrates |
 |---|---|
-| [nested-arrays](../../examples/nested-arrays/README.md) | Array-of-objects field mapping |
-| [nested-arrays-deep](../../examples/nested-arrays-deep/README.md) | Deeply nested array structures |
-| [nested-arrays-multiple](../../examples/nested-arrays-multiple/README.md) | Multiple nested arrays |
+| [nested-arrays](../../examples/nested-arrays/README.md) | Nested array from a separate source table |
+| [nested-arrays-deep](../../examples/nested-arrays-deep/README.md) | Deeply nested (3-level) arrays via recursive CTEs |
+| [nested-array-path](../../examples/nested-array-path/README.md) | Dotted `array_path` for nested JSON extraction |
+| [scalar-array](../../examples/scalar-array/README.md) | Scalar (string[]) array fields |
+| [crdt-ordering](../../examples/crdt-ordering/README.md) | CRDT-style ordering with `order: true` and prev/next links |
+| [crdt-ordering-linked](../../examples/crdt-ordering-linked/README.md) | CRDT ordering across linked entities |
+| [embedded-objects](../../examples/embedded-objects/README.md) | Embedded sub-entities as JSONB objects |
+| [embedded-vs-many-to-many](../../examples/embedded-vs-many-to-many/README.md) | Choosing between embedded and many-to-many models |
 
-### References
-
-| Example | Demonstrates |
-|---|---|
-| [references](../../examples/references/README.md) | Foreign-key references between targets |
-
-### Routing & filtering
-
-| Example | Demonstrates |
-|---|---|
-| [route](../../examples/route/README.md) | Routing records by field values |
-| [route-embedded](../../examples/route-embedded/README.md) | Routing within embedded objects |
-| [inserts-and-deletes](../../examples/inserts-and-deletes/README.md) | Conditional row inclusion via `reverse_required` |
-
-### Ordering
+### References & foreign keys
 
 | Example | Demonstrates |
 |---|---|
-| [crdt-ordering](../../examples/crdt-ordering/README.md) | Deterministic array element ordering via `order: true` |
-| [crdt-ordering-native](../../examples/crdt-ordering-native/README.md) | Mixed ordering: native `sort_key` + generated ordering |
+| [references](../../examples/references/README.md) | Cross-entity FK references with explicit `references:` |
+| [external-links](../../examples/external-links/README.md) | `links:` and `link_key:` for ETL insert deduplication |
+| [relationship-mapping](../../examples/relationship-mapping/README.md) | Multi-entity mapping with bi-directional references |
+| [reference-preservation](../../examples/reference-preservation/README.md) | FK preservation across merged entities |
 
-### State & noop detection
-
-| Example | Demonstrates |
-|---|---|
-| [concurrent-detection](../../examples/concurrent-detection/README.md) | Detecting and handling concurrent edits via `include_base` |
-| [derive-noop](../../examples/derive-noop/README.md) | Target-centric noop detection via ETL written state |
-| [derive-timestamps](../../examples/derive-timestamps/README.md) | Per-field timestamp inference from written state |
-| [passthrough](../../examples/passthrough/README.md) | Carrying unmapped source columns through to delta output |
-
-## Patterns
-
-Each pattern example combines multiple features to solve a real-world
-integration problem.
-
-### Merge strategies
+### Soft delete & tombstones
 
 | Example | Demonstrates |
 |---|---|
-| [merge-internal](../../examples/merge-internal/README.md) | Internal merge within a single source |
-| [merge-threeway](../../examples/merge-threeway/README.md) | Three-way merge between sources |
-| [merge-curated](../../examples/merge-curated/README.md) | Curated merge with manual overrides via linking table |
-| [merge-generated-ids](../../examples/merge-generated-ids/README.md) | Cross-system linkage via ETL-maintained tables with generated IDs |
-| [merge-partials](../../examples/merge-partials/README.md) | Partial record merge with forward\_only mappings |
+| [soft-delete](../../examples/soft-delete/README.md) | `soft_delete:` with `deleted_flag` strategy |
+| [soft-delete-child](../../examples/soft-delete-child/README.md) | Element-level soft delete on nested arrays |
+| [soft-delete-resurrect](../../examples/soft-delete-resurrect/README.md) | Resurrect behavior — undelete when tombstone removed |
+| [hard-delete](../../examples/hard-delete/README.md) | Hard delete (row removal) vs soft delete |
 
-### Structural bridging
-
-| Example | Demonstrates |
-|---|---|
-| [depth-mismatch](../../examples/depth-mismatch/README.md) | Asymmetric nesting depth — 2-level vs 3-level with intermediate grouping |
-| [hierarchy-merge](../../examples/hierarchy-merge/README.md) | Merging hierarchies of different depths via cross-depth identity |
-| [flattened](../../examples/flattened/README.md) | Denormalizing multiple sources into a single flattened target |
-| [multi-value](../../examples/multi-value/README.md) | Scalar-vs-list cardinality mismatch |
-| [embedded-vs-many-to-many](../../examples/embedded-vs-many-to-many/README.md) | Bridging embedded relationships with normalized junction tables |
-
-### Relationships
+### Advanced field mapping
 
 | Example | Demonstrates |
 |---|---|
-| [relationship-mapping](../../examples/relationship-mapping/README.md) | Many-to-many relationships via junction table target |
-| [relationship-embedded](../../examples/relationship-embedded/README.md) | Converting embedded relationships to many-to-many |
-| [reference-preservation](../../examples/reference-preservation/README.md) | Preserving original reference IDs when records merge |
-| [multiple-target-mappings](../../examples/multiple-target-mappings/README.md) | Single source mapping to multiple embedded targets |
+| [json-fields](../../examples/json-fields/README.md) | `source_path` for JSONB sub-field extraction |
+| [json-opaque](../../examples/json-opaque/README.md) | JSONB fields treated as opaque values |
+| [passthrough](../../examples/passthrough/README.md) | `passthrough:` columns carried to delta output unchanged |
+| [flattened](../../examples/flattened/README.md) | Flattened source rows expanded to multiple target fields |
+| [required-fields](../../examples/required-fields/README.md) | Validation that required fields are non-null |
+| [asymmetric-io](../../examples/asymmetric-io/README.md) | Asymmetric read/write shapes between sources |
+| [multiple-target-mappings](../../examples/multiple-target-mappings/README.md) | Multiple mappings targeting the same entity |
 
-### Combined routing
-
-| Example | Demonstrates |
-|---|---|
-| [route-combined](../../examples/route-combined/README.md) | Merging routing source with dedicated sources |
-| [route-multiple](../../examples/route-multiple/README.md) | Multiple routing rules from single source to same target |
-
-### Data quality & deletes
+### Routing & transforms
 
 | Example | Demonstrates |
 |---|---|
-| [null-propagation](../../examples/null-propagation/README.md) | Propagating intentional NULLs via sentinel pattern |
-| [propagated-delete](../../examples/propagated-delete/README.md) | GDPR-style deletion propagation via bool\_or + reverse\_filter |
-| [required-fields](../../examples/required-fields/README.md) | Minimum-required fields via reverse\_filter OR pattern |
-| [derive-tombstones](../../examples/derive-tombstones/README.md) | Element-level deletion-wins for nested arrays via written state |
+| [route](../../examples/route/README.md) | Conditional routing of source rows to different targets |
+| [route-combined](../../examples/route-combined/README.md) | Combined routing and merging |
+| [depth-mismatch](../../examples/depth-mismatch/README.md) | Asymmetric nesting depth across sources |
+| [inserts-and-deletes](../../examples/inserts-and-deletes/README.md) | Basic insert and delete delta generation |
 
-### End-to-end showcases
+### Vocabulary & annotations
 
 | Example | Demonstrates |
 |---|---|
-| [sesam-annotated](../../examples/sesam-annotated/README.md) | Full DTL annotated example: enriched expressions, nested array sort, reverse\_filter, reverse\_expression, normalize, references, reverse\_only direction |
+| [vocabulary-standard](../../examples/vocabulary-standard/README.md) | Standard vocabulary usage |
+| [sesam-annotated](../../examples/sesam-annotated/README.md) | Sesam DTL-annotated mapping with enriched expressions |
+| [multi-value](../../examples/multi-value/README.md) | Multi-value cardinality via `collect` strategy |
 
-Each example directory contains a `README.md` and a `mapping.yaml` with the
-full definition including test cases.
+### Large scale
+
+| Example | Demonstrates |
+|---|---|
+| [benchmark-large](../../examples/benchmark-large/README.md) | Performance benchmark: many sources, many targets |

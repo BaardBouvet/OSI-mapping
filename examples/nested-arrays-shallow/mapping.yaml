@@ -1,0 +1,77 @@
+version: "2.0"
+description: >
+  Slice 3a: nested-array expansion. A single source `shop` carries one
+  row per order with a `lines` JSONB array. One parent mapping
+  `shop_orders` writes `purchase_order`. One child mapping `shop_lines`
+  expands `lines` into `order_line` rows, lifting the parent's
+  `order_id` into each child as `order_ref` via `parent_fields`.
+
+  Composite identity on `order_line` is `(order_ref, line_number)` —
+  the child's canonical IRI is derived purely from the lifted child
+  row, so no cross-mapping `references:` (slice 4) is needed.
+
+  Slice 3a contract: round-trip on the only source for each canonical
+  produces empty `updates` / `inserts` / `deletes` for both the parent
+  mapping and the child mapping. That's a strong consistency check —
+  it requires that the array-expansion lift, the canonical-identity
+  closure, and the reverse projection all agree on the same row count
+  and the same per-row values.
+
+sources:
+  shop:
+    primary_key: order_id
+
+targets:
+  purchase_order:
+    identity:
+      - order_id
+    fields:
+      order_id:    { strategy: coalesce }
+      buyer:       { strategy: coalesce }
+
+  order_line:
+    identity:
+      - [order_ref, line_number]
+    fields:
+      order_ref:    { strategy: coalesce }
+      line_number:  { strategy: coalesce }
+      sku:          { strategy: coalesce }
+      quantity:     { strategy: coalesce }
+
+mappings:
+  - name: shop_orders
+    source: shop
+    target: purchase_order
+    fields:
+      - { source: order_id, target: order_id }
+      - { source: buyer,    target: buyer }
+
+  - name: shop_lines
+    source: shop
+    target: order_line
+    parent: shop_orders
+    array: lines
+    parent_fields:
+      order_ref: order_id
+    fields:
+      - { source: order_ref,   target: order_ref }
+      - { source: line_number, target: line_number }
+      - { source: sku,         target: sku }
+      - { source: quantity,    target: quantity }
+
+tests:
+  - description: "Two orders, three lines total — round-trip is empty for both mappings; parent's lines column round-trips through the child agg"
+    input:
+      shop:
+        - order_id: "O1"
+          buyer: "Alice"
+          lines:
+            - { line_number: "1", sku: "SKU-A", quantity: "2" }
+            - { line_number: "2", sku: "SKU-B", quantity: "1" }
+        - order_id: "O2"
+          buyer: "Bob"
+          lines:
+            - { line_number: "1", sku: "SKU-C", quantity: "3" }
+    expected:
+      shop_orders: {}
+      shop_lines: {}

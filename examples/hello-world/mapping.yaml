@@ -1,8 +1,8 @@
-version: "1.0"
+version: "2.0"
 description: >
   Two systems, one shared contact, synced by email.
-  The simplest possible mapping showing identity matching,
-  conflict resolution, and bidirectional sync.
+  Simplest possible v2 mapping: identity at target level, single-field
+  identity, coalesce resolution, priority-based field winners.
 
 sources:
   crm:
@@ -12,32 +12,26 @@ sources:
 
 targets:
   contact:
+    identity:
+      - email
     fields:
-      email:
-        strategy: identity
-      name:
-        strategy: coalesce
+      email: { strategy: coalesce }
+      name:  { strategy: coalesce }
 
 mappings:
   - name: crm
     source: crm
     target: contact
     fields:
-      - source: email
-        target: email
-      - source: name
-        target: name
-        priority: 1
+      - { source: email, target: email }
+      - { source: name,  target: name, priority: 1 }
 
   - name: erp
     source: erp
     target: contact
     fields:
-      - source: contact_email
-        target: email
-      - source: contact_name
-        target: name
-        priority: 2
+      - { source: contact_email, target: email }
+      - { source: contact_name,  target: name, priority: 2 }
 
 tests:
   - description: "Shared contact — CRM name wins (priority 1), ERP gets updated"
@@ -63,7 +57,7 @@ tests:
         updates:
           - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }
         inserts:
-          - { _cluster_id: "crm:2", id: null, contact_email: "bob@example.com", contact_name: "Bob" }
+          - { _canonical_id: "crm:2", id: null, contact_email: "bob@example.com", contact_name: "Bob" }
 
   - description: "ERP-only contact triggers insert into CRM"
     input:
@@ -75,7 +69,7 @@ tests:
     expected:
       crm:
         inserts:
-          - { _cluster_id: "erp:200", id: null, email: "carol@example.com", name: "Carol", _base: null }
+          - { _canonical_id: "erp:200", id: null, email: "carol@example.com", name: "Carol" }
       erp:
         updates:
           - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }

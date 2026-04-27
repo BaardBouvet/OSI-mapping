@@ -2,11 +2,11 @@
 
 **Status:** Draft
 
-Companion to [v2-spec-draft.md](v2-spec-draft.md). Itemizes every v1 schema
+Companion to [v2-spec-draft.md](V2-SPEC-DRAFT.md). Itemizes every v1 schema
 construct, what happens to it in v2, and what existing examples need to
 change. Pre-1.0: no compatibility layer. v1 files do not load on v2.
 
-For full worked examples see [v2-prototype-examples.md](v2-prototype-examples.md).
+For full worked examples see [v2-prototype-examples.md](V2-PROTOTYPE-EXAMPLES.md).
 
 ## Migration principle
 
@@ -294,11 +294,11 @@ loudly.
 - **An exhaustive curated value-transform vocabulary.** v2 ships a small
   curated `transform:` set (`cast`, `join` / `split`) plus a field-level
   `value_map:` for enum/code translation (specified in
-  [value-map-rfc.md](value-map-rfc.md)). Everything else uses the
+  [value-map-rfc.md](VALUE-MAP-RFC.md)). Everything else uses the
   backend-keyed escape hatch. `aggregate:` remains escape-hatch-only.
 - **The specific RDF vocabularies used by the triplestore renderer.** That is
   a renderer choice, not a spec decision. See
-  [triplestore-backend.md](triplestore-backend.md).
+  [triplestore-backend.md](TRIPLESTORE-BACKEND-DESIGN.md).
 
 ## Migration checklist for an existing example
 
@@ -323,7 +323,7 @@ loudly.
    `unicode_nfc`) or `normalize: { sql, sparql }` if no enum value fits.
    `normalize:` stays a comparison adapter; do not move it into
    `transform:`. Keep any v1 `value_map:` declarations — v2 retains
-   `value_map:` (see [value-map-rfc.md](value-map-rfc.md)) with
+   `value_map:` (see [value-map-rfc.md](VALUE-MAP-RFC.md)) with
    bijective auto-inversion and an explicit `value_map_fallback:` policy.
 9. Convert filter/reverse_filter strings to either curated predicates
    or `{ sql: "..." }` (or the equivalent backend key) when no curated
@@ -356,4 +356,4 @@ loudly.
 16. Re-run tests against the new renderer. PG-renderer tests should pass
     unchanged once the syntax is migrated.
 
-Worked examples in [v2-prototype-examples.md](v2-prototype-examples.md).
+Worked examples in [v2-prototype-examples.md](V2-PROTOTYPE-EXAMPLES.md).

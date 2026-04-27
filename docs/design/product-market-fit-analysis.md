@@ -1,5 +1,7 @@
 # Product-Market Fit Analysis: OSI Mapping
 
+**Status:** Analysis
+
 ## Executive Summary
 
 OSI Mapping occupies an unusual and specific niche: **declarative, schema-driven, bidirectional multi-source data integration with per-field conflict resolution, entity linking via transitive closure, and automatic cross-system FK translation** — all compiled to pure PostgreSQL views.

@@ -1,0 +1,63 @@
+version: "2.0"
+description: >
+  Composite (AND-tuple) identity. Two sources merge contacts identified
+  by (first_name, last_name) instead of a single field.
+
+sources:
+  crm:
+    primary_key: id
+  erp:
+    primary_key: id
+
+targets:
+  contact:
+    identity:
+      - [first_name, last_name]
+    fields:
+      first_name: { strategy: coalesce }
+      last_name:  { strategy: coalesce }
+      phone:      { strategy: coalesce }
+
+mappings:
+  - name: crm
+    source: crm
+    target: contact
+    fields:
+      - { source: first_name, target: first_name }
+      - { source: last_name,  target: last_name }
+      - { source: phone,      target: phone, priority: 1 }
+
+  - name: erp
+    source: erp
+    target: contact
+    fields:
+      - { source: given_name,  target: first_name }
+      - { source: family_name, target: last_name }
+      - { source: phone,       target: phone, priority: 2 }
+
+tests:
+  - description: "Shared (first_name, last_name) tuple — CRM phone wins (priority 1)"
+    input:
+      crm:
+        - { id: "1", first_name: "Alice", last_name: "Smith", phone: "555-0001" }
+      erp:
+        - { id: "100", given_name: "Alice", family_name: "Smith", phone: "555-9999" }
+    expected:
+      erp:
+        updates:
+          - { id: "100", given_name: "Alice", family_name: "Smith", phone: "555-0001" }
+
+  - description: "Different last_name: no merge, ERP-only contact triggers CRM insert"
+    input:
+      crm:
+        - { id: "1", first_name: "Alice", last_name: "Smith", phone: "555-0001" }
+      erp:
+        - { id: "100", given_name: "Alice", family_name: "Smith", phone: "555-9999" }
+        - { id: "200", given_name: "Alice", family_name: "Jones", phone: "555-0200" }
+    expected:
+      crm:
+        inserts:
+          - { _canonical_id: "erp:200", id: null, first_name: "Alice", last_name: "Jones", phone: "555-0200" }
+      erp:
+        updates:
+          - { id: "100", given_name: "Alice", family_name: "Smith", phone: "555-0001" }

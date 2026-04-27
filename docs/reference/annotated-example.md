@@ -1,239 +1,175 @@
 # Annotated Example
 
-A complete mapping file with comments explaining every part. This example syncs contacts between a CRM, an ERP, and a shared phone directory — covering identity matching, multiple resolution strategies, expressions, and tests.
+A complete v2 mapping file with inline comments explaining every part.
+This is the `hello-world` example: two systems sharing a contact, synced by email.
 
-> **Note:** This walkthrough uses a single target entity for simplicity. Real-world mappings typically define multiple related entities (company, contact, address, etc.) in the same file. See [`examples/references/`](../examples/references/) and [`examples/relationship-mapping/`](../examples/relationship-mapping/) for multi-entity examples. Never split entities into separate files — cross-entity references and FK resolution require all entities in one file.
+→ Runnable version: [`examples/hello-world/mapping.yaml`](../../examples/hello-world/mapping.yaml)
+
+---
 
 ```yaml
-# ─── Schema version (required, always "1.0") ───────────────────────
-version: "1.0"
+# ─── Schema version ────────────────────────────────────────────────
+# Required. Always the string "2.0".
+version: "2.0"
 
-# ─── Human-readable summary (optional) ─────────────────────────────
+# ─── Human-readable summary ────────────────────────────────────────
+# Optional. Describes what this mapping file does.
 description: >
-  Three systems share a unified contact record.
-  CRM is the authority on names. ERP is the authority on job titles.
-  Phone directory provides formatted phone numbers.
+  Two systems, one shared contact, synced by email.
+  CRM is the authority on names (priority 1).
 
-# ─── Source metadata ───────────────────────────────────────────────
-# Declares physical table names and primary keys.
-# Primary keys are used throughout the pipeline for row identification.
+# ─── Source datasets ───────────────────────────────────────────────
+# One entry per physical source. The key is the source name;
+# it must match the table or dataset name in your system.
+# primary_key is the column the engine uses to identify rows.
 sources:
   crm:
     primary_key: id
   erp:
     primary_key: id
-  phonebook:
-    primary_key: id
 
 # ─── Target entities ───────────────────────────────────────────────
-# Defines WHAT the unified record looks like and HOW conflicts resolve.
-# Keys are entity names referenced by mappings below.
+# Defines what the unified model looks like.
+# Keys are entity names. Each entity declares:
+#   identity: which field(s) to use as the merge key
+#   fields:   what properties the entity has and how conflicts resolve
 targets:
   contact:
+
+    # IDENTITY: the merge key. Two rows from different sources with
+    # the same email value will be merged into one canonical contact.
+    identity:
+      - email
+
+    # FIELDS: the canonical properties of this entity.
+    # Each field declares a resolution strategy.
     fields:
-      # IDENTITY — match key. Records from different sources with
-      # the same email are merged into one unified contact.
-      # Every target needs at least one identity field.
-      email: identity
-
-      # COALESCE — pick the best non-null value by priority.
-      # Priority is set on individual field mappings (lower wins).
-      name: coalesce
-
-      # LAST_MODIFIED — most recently changed value wins.
-      # Requires a timestamp on the mapping or field mapping.
-      title: last_modified
-
-      # EXPRESSION — custom SQL aggregation over all contributed values.
-      # Must use the object form to provide the SQL expression.
-      phone:
-        strategy: expression
-        expression: "max(phone)"    # picks lexicographically highest
+      # COALESCE: picks the highest-priority non-null value.
+      # Priority is set on the field mapping below (lower wins).
+      email: { strategy: coalesce }
+      name:  { strategy: coalesce }
 
 # ─── Mappings ──────────────────────────────────────────────────────
-# Each mapping connects ONE source dataset to ONE target entity.
+# Each mapping connects one source to one target.
+# Fields are listed as source column → target field pairs.
 mappings:
 
   # ── CRM mapping ──────────────────────────────────────────────────
-  - name: crm                       # unique identifier (lowercase, underscores)
-    source: crm                     # source name (matches key in sources section)
-    target: contact                  # references the target defined above
-
-    # Mapping-level timestamp — applies to all fields using last_modified
-    # strategy unless a field specifies its own.
-    last_modified: updated_at
-
+  - name: crm               # unique mapping name — lowercase, underscores
+    source: crm             # must match a key in sources:
+    target: contact         # must match a key in targets:
     fields:
-      # Simple field copy: source field → target field.
-      # No transform, no extra config.
-      - source: email
-        target: email
+      # source: the column name in the CRM source table
+      # target: the field name in the contact target entity
+      - { source: email, target: email }
 
-      # Coalesce field with priority 1 (highest — lower number wins).
-      # When CRM and ERP both have a name, CRM's value is chosen.
-      - source: full_name
-        target: name
-        priority: 1
-
-      # Last_modified field — uses the mapping-level timestamp (updated_at).
-      - source: job_title
-        target: title
-
-      # Expression with forward transform.
-      # Normalizes phone format before contributing to the target.
-      - source: phone
-        target: phone
-        expression: "regexp_replace(phone, '[^0-9+]', '')"
+      # priority: 1 means "CRM wins" when both sources have a name
+      # (lower priority number wins in coalesce)
+      - { source: name, target: name, priority: 1 }
 
   # ── ERP mapping ──────────────────────────────────────────────────
   - name: erp
     source: erp
     target: contact
-    last_modified: modified_date
-
     fields:
-      - source: contact_email
-        target: email
+      # ERP uses different column names for the same logical fields
+      - { source: contact_email, target: email }
 
-      # Lower priority (2) — only used when CRM doesn't have a name.
-      - source: contact_name
-        target: name
-        priority: 2
-
-      - source: position
-        target: title
-
-      - source: work_phone
-        target: phone
-        expression: "regexp_replace(work_phone, '[^0-9+]', '')"
-
-  # ── Phone directory mapping ──────────────────────────────────────
-  - name: phonebook
-    source: phonebook
-    target: contact
-
-    fields:
-      - source: email
-        target: email
-
-      # Forward-only computed field — no source field, just a constant.
-      # Omitting source makes direction default to forward_only.
-      # This contributes to "name" resolution but only as a last resort.
-      - target: name
-        expression: "'(from phonebook)'"
-        priority: 99
-
-      - source: formatted_phone
-        target: phone
+      # priority: 2 means ERP's name is used only when CRM has no name
+      - { source: contact_name, target: name, priority: 2 }
 
 # ─── Tests ─────────────────────────────────────────────────────────
-# Each test defines input data and expected output AFTER the full
-# pipeline: forward transform → resolution → reverse transform.
+# Inline test cases. Each test specifies input rows and the expected
+# delta output. The engine verifies both PG and SPARQL backends
+# produce exactly these deltas.
 tests:
+  # ── Test 1: shared contact, CRM name wins ────────────────────────
+  - description: "Shared contact — CRM name wins (priority 1), ERP gets updated"
+    input:
+      # Current state of the CRM source
+      crm:
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+      # Current state of the ERP source
+      erp:
+        - { id: "100", contact_email: "alice@example.com", contact_name: "A. Smith" }
+    expected:
+      # The engine computes: canonical name is "Alice" (CRM, priority 1).
+      # ERP's current value is "A. Smith" — it should be updated.
+      erp:
+        updates:
+          # The update row matches the source's primary key (id) and
+          # shows all mapped fields at their resolved canonical values.
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }
+      # CRM has no expected deltas (its values already match canonical).
+      # Omitting a source from expected: is equivalent to asserting {}.
 
-  # Test 1: conflict resolution across all sources
-  - description: "Alice exists in all three systems. CRM name wins (priority 1). ERP title wins (more recent). Phone resolved by max()."
-
-    # Input: one array of rows per source dataset.
-    # Keys must match mapping source names.
+  # ── Test 2: CRM-only contact → insert into ERP ───────────────────
+  - description: "CRM-only contact triggers insert into ERP"
     input:
       crm:
-        - id: "C1"
-          email: "alice@example.com"
-          full_name: "Alice Anderson"
-          job_title: "Engineer"
-          phone: "(555) 100-1000"
-          updated_at: "2025-01-01T00:00:00Z"
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+        - { id: "2", email: "bob@example.com",   name: "Bob" }
       erp:
-        - id: "E1"
-          contact_email: "alice@example.com"
-          contact_name: "A. Anderson"
-          position: "Senior Engineer"
-          work_phone: "555.200.2000"
-          modified_date: "2025-06-15T00:00:00Z"
-      phonebook:
-        - id: "P1"
-          email: "alice@example.com"
-          formatted_phone: "+15553003000"
-
-    # Expected: output per source dataset AFTER resolution.
-    # Always an object with updates/inserts/deletes — never a bare array.
+        - { id: "100", contact_email: "alice@example.com", contact_name: "A. Smith" }
     expected:
-      crm:
-        updates:
-          # CRM gets back its own row, but with the resolved title
-          # from ERP (more recent) and resolved phone (max).
-          - id: "C1"
-            email: "alice@example.com"
-            full_name: "Alice Anderson"     # kept (priority 1 winner)
-            job_title: "Senior Engineer"    # updated from ERP
-            phone: "+15553003000"           # max() across all sources
-            updated_at: "2025-01-01T00:00:00Z"
       erp:
         updates:
-          # ERP gets resolved name from CRM and resolved phone.
-          - id: "E1"
-            contact_email: "alice@example.com"
-            contact_name: "Alice Anderson"  # updated from CRM
-            position: "Senior Engineer"     # kept (most recent)
-            work_phone: "+15553003000"      # resolved phone
-            modified_date: "2025-06-15T00:00:00Z"
-      phonebook:
-        updates:
-          - id: "P1"
-            email: "alice@example.com"
-            formatted_phone: "+15553003000" # resolved phone
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }
+        inserts:
+          # Bob exists in CRM but not in ERP — ERP needs an insert.
+          # id is null because no ERP row exists yet.
+          # _canonical_id identifies the source entity that owns the canonical:
+          # "crm:2" = source "crm", pk value "2".
+          - { _canonical_id: "crm:2", id: null, contact_email: "bob@example.com", contact_name: "Bob" }
 
-  # Test 2: single-source pass-through + inserts to other systems
-  - description: "Bob exists only in CRM, so values pass through unchanged except for phone normalization."
+  # ── Test 3: ERP-only contact → insert into CRM ───────────────────
+  - description: "ERP-only contact triggers insert into CRM"
     input:
       crm:
-        - id: "C2"
-          email: "bob@example.com"
-          full_name: "Bob Brown"
-          job_title: "Manager"
-          phone: "555-4000"
-          updated_at: "2025-03-01T00:00:00Z"
-      erp: []
-      phonebook: []
+        - { id: "1", email: "alice@example.com", name: "Alice" }
+      erp:
+        - { id: "100", contact_email: "alice@example.com", contact_name: "A. Smith" }
+        - { id: "200", contact_email: "carol@example.com", contact_name: "Carol" }
     expected:
       crm:
-        updates:
-          - id: "C2"
-            email: "bob@example.com"
-            full_name: "Bob Brown"
-            job_title: "Manager"
-            phone: "5554000"
-            updated_at: "2025-03-01T00:00:00Z"
-      # ERP and phonebook get inserts — Bob is new to them.
-      # Inserts carry _cluster_id (a seed like "mapping:src_id"),
-      # plus the resolved business field values.
+        inserts:
+          # Carol is ERP-only — CRM needs an insert.
+          - { _canonical_id: "erp:200", id: null, email: "carol@example.com", name: "Carol" }
       erp:
-        inserts:
-          - _cluster_id: "crm:C2"
-            contact_email: "bob@example.com"
-            contact_name: "Bob Brown"
-            position: "Manager"
-            work_phone: "5554000"
-      phonebook:
-        inserts:
-          - _cluster_id: "crm:C2"
-            email: "bob@example.com"
-            formatted_phone: "5554000"
+        updates:
+          - { id: "100", contact_email: "alice@example.com", contact_name: "Alice" }
 ```
 
-## What to notice
+---
 
-1. **Sources declare primary keys.** The `sources:` section declares each dataset's PK once. This PK is used for `_src_id` in the forward view, delta join, and reverse-mapped output.
+## How it works
 
-2. **Targets define the shape, mappings fill it in.** The `contact` target declares four fields with four different strategies. Each mapping contributes values to those fields independently.
+**Lift.** Each source row is expanded into the RDF/relational model using
+the mapping's field list. ERP's `contact_email` becomes the canonical
+`email` field; `contact_name` becomes `name`.
 
-3. **Priority is per-field, not per-source.** CRM has `priority: 1` on `name` but no priority on `phone`. Priority only matters for `coalesce` fields.
+**Identity closure.** Rows from CRM and ERP with the same `email` value
+are assigned the same canonical IRI (`contact/<sha256(email)>`). This
+is the merge step — no pre-shared IDs required.
 
-4. **Timestamp cascades.** `last_modified: updated_at` on the CRM mapping applies to all fields using the `last_modified` strategy. Per-field `last_modified` would override it if needed.
+**Forward resolution.** For each canonical entity, the `name` field is
+resolved using `coalesce`: the highest-priority non-null value wins.
+CRM has `priority: 1` so "Alice" beats "A. Smith".
 
-5. **Expressions are SQL.** The `regexp_replace` on phone fields is a forward transform. The `max(phone)` on the target is an aggregation across all contributed values.
+**Reverse projection.** Each source gets a reverse view of the canonical
+state in its own shape. ERP's reverse row looks like an ERP row, but
+with `contact_name` filled from the canonical `name`.
 
-6. **Tests are explicit.** Expected output is an object containing one or more of `updates`, `inserts`, and `deletes` (never a bare array). Omit keys when empty. Insert rows carry `_cluster_id` — a seed like `"mapping:src_id"` that the test harness resolves to the computed entity ID.
+**Delta computation.** The reverse view is compared against the source's
+current rows. Differences become `updates`, missing entities become
+`inserts`, and source rows with no matching canonical entity become
+`deletes`.
 
-7. **Forward-only fields.** The phonebook's `name` mapping has no `source` — it's a constant contributed only during forward processing.
+---
+
+## See also
+
+- [Schema reference](schema-reference.md) — complete property reference
+- [`examples/composite-identity/`](../../examples/composite-identity/) — AND-tuple identity
+- [`examples/last-modified/`](../../examples/last-modified/) — timestamp-based resolution
+- [`examples/nested-arrays-shallow/`](../../examples/nested-arrays-shallow/) — one-to-many nested arrays

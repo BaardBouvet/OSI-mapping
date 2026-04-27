@@ -1,19 +1,19 @@
-pub mod dag;
-pub mod error;
+//! OSI mapping reference engine — v2 rewrite.
+//!
+//! Renders v2 mappings to a DAG of PostgreSQL views. The SPARQL backend
+//! is validated separately (see `sparql-spike/`) and will follow once the
+//! SQL renderer is at conformance parity.
+
 pub mod model;
 pub mod parser;
 pub mod render;
-pub mod validate;
-pub mod validate_expr;
 
 /// Quote a SQL identifier with double quotes (PostgreSQL standard).
-/// Escapes embedded double-quotes by doubling them.
 pub fn qi(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-/// Escape a string for use inside a SQL single-quoted literal.
-/// Doubles any embedded single quotes: `it's` → `it''s`.
+/// Escape a string for inclusion in a SQL single-quoted literal.
 pub fn sql_escape(s: &str) -> String {
     s.replace('\'', "''")
 }

@@ -1,0 +1,65 @@
+version: "2.0"
+description: >
+  Pending slice-3 example. Parent order with nested JSON line-items
+  array, plus a normalized warehouse view of the same orders. Parses
+  cleanly under v2 today but neither backend renders it yet — the
+  renderers bail with a clear "slice 3a not yet implemented" error.
+
+  When slice 3a lands, this example exercises:
+    - `parent:` + `array:` element expansion
+    - `parent_fields:` carrying ancestor scope
+    - composite identity on the child target
+    - cross-entity `references:` (slice 4)
+
+sources:
+  shop:
+    primary_key: order_id
+  warehouse_lines:
+    primary_key: line_id
+
+targets:
+  purchase_order:
+    identity:
+      - order_ref
+    fields:
+      order_ref: { strategy: coalesce }
+      total:     { strategy: coalesce }
+
+  order_line:
+    identity:
+      - [order_ref, line_number]
+    fields:
+      order_ref:   { strategy: coalesce }
+      line_number: { strategy: coalesce }
+      product:     { strategy: coalesce }
+      quantity:    { strategy: coalesce }
+
+mappings:
+  - name: shop_orders
+    source: shop
+    target: purchase_order
+    fields:
+      - { source: order_id, target: order_ref }
+      - { source: total,    target: total }
+
+  - name: shop_lines
+    source: shop
+    parent: shop_orders
+    array: lines
+    parent_fields:
+      parent_order_id: order_id
+    target: order_line
+    fields:
+      - { source: parent_order_id, target: order_ref, references: purchase_order }
+      - { source: line_num,        target: line_number }
+      - { source: item,            target: product }
+      - { source: qty,             target: quantity }
+
+  - name: warehouse_lines
+    source: warehouse_lines
+    target: order_line
+    fields:
+      - { source: order_number, target: order_ref, references: purchase_order }
+      - { source: line_no,      target: line_number }
+      - { source: sku,          target: product }
+      - { source: qty,          target: quantity }
