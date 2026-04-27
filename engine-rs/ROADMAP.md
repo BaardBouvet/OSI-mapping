@@ -6,34 +6,43 @@ or planned for each release.
 
 ## 0.1 — Current
 
-Mapping → PostgreSQL views (stable), plus a first-cut SPARQL CONSTRUCT
-artifact pipeline for triplestore deployment (preview).
+Mapping → PostgreSQL views (stable) and SPARQL CONSTRUCT artifacts
+(preview). One v2 schema, two backends, identical conformance results
+on the supported subset.
+
+**v2 schema (locked for 0.1.x):**
+- `sources` with `primary_key`, `targets` with `identity` (single field
+  or AND-tuple) and `fields` (`coalesce` / `last_modified` strategies),
+  `mappings` with optional `parent` / `array` / `parent_fields` for
+  shallow nested arrays, inline `tests`.
+- See [docs/reference/schema-reference.md](../docs/reference/schema-reference.md).
 
 **PostgreSQL backend (stable):**
-- Forward / identity / resolution / analytics / reverse / delta views.
+- Forward / identified / resolved / reverse / delta views per mapping.
 - 4 v2 examples passing E2E in the conformance suite (hello-world,
-  composite-identity, last-modified, nested-arrays-shallow). A 5th
-  (`nested-arrays-v2`) parses but awaits slice-4 `references:`.
-- 42 v1 examples exist in the repository; they use the old schema and
-  are not tested by the v2 engine. Migration to v2 is a planned ongoing
-  effort.
-- Schema, expression safety, and primary-key model all locked.
-- Soft-delete (`timestamp` / `deleted_flag` / `active_flag`),
-  element-level tombstones, derived per-field timestamps, deep nesting,
-  atomic groups, references, JSON sub-fields.
-- Full plan history under `Done` in [plans/README.md](plans/README.md).
+  composite-identity, last-modified, nested-arrays-shallow).
 
 **SPARQL backend (preview):**
 - CONSTRUCT-only artifact pipeline — see
   [SPARQL-CONSTRUCT-ARTIFACTS-PLAN.md](plans/SPARQL-CONSTRUCT-ARTIFACTS-PLAN.md).
 - Same artifacts run in-process (Oxigraph, for tests) and on a deployed
   incrementally maintained triplestore.
-- 4 conformance scenarios green: `hello_world`, `composite_identity`,
-  `last_modified`, `nested_arrays_shallow`.
-- Configurable base IRI via `--base-iri` / `render_sparql_with_base`.
+- Same 4 conformance scenarios green: `hello_world`,
+  `composite_identity`, `last_modified`, `nested_arrays_shallow`.
+- Configurable base IRI via `--base-iri` / `render_sparql_with_base`
+  (validated; must be an absolute IRI ending in `/`).
+
+**42 v1 examples** exist in the repository under [`examples/`](../examples/);
+they predate v2 and are not exercised by the v2 engine. Migration is
+scheduled across 0.4 and 0.5.
 
 **CLI:** `parse`, `validate`, `dot`, `render` (with `-b pg|sparql`,
 `--out-dir`, `--base-iri`).
+
+**Architecture history.** Per-feature design rationale and the v1
+implementation history is preserved in [plans/](plans/); see the
+**Lessons from v1** section below for the invariants the v2 engine
+must continue to honour.
 
 ## 0.2 — Planned
 
@@ -63,8 +72,9 @@ Theme: **release engineering, safety hardening, and SPARQL polish.**
   against panics on malformed input.
 - SPARQL hardening (from
   [SPARQL-CONSTRUCT-ARTIFACTS-PLAN.md](plans/SPARQL-CONSTRUCT-ARTIFACTS-PLAN.md)
-  shortcomings review): validate `--base-iri`, RFC-3986 PK encoding,
-  `PREFIX` block in artifacts, cross-base round-trip test.
+  shortcomings review): `BASE` block in artifacts (replace verbose
+  absolute IRIs with relative IRIs resolved against the renderer's
+  base), dedupe `Display`/`write_artifacts` routing logic.
 
 ## 0.3 — Considered
 
@@ -97,42 +107,51 @@ Theme: **architecture polish and operational concerns.**
   (which stateful features may eventually move out of the engine into
   a combined ETL runtime).
 
-## 0.4 — Considered: feature parity (all examples passing)
+## 0.4 — Considered: high-value example migration (~30 examples)
 
-Theme: **migrate the 42 v1 examples to v2 and make them all pass.**
+Theme: **land the well-scoped features that unlock the most examples.**
 
-The table below maps each blocking feature to the examples it unlocks.
-Rows are ordered by example yield — highest-value features first. Each
-feature requires: (a) schema update if the property name changed, (b)
-engine implementation on both PG and SPARQL backends, (c) example YAML
-migrated to v2 syntax, (d) conformance test added.
+Each feature requires: (a) schema update if the property name changed,
+(b) engine implementation on both PG and SPARQL backends, (c) example
+YAML migrated to v2 syntax, (d) conformance test added.
 
 | Feature | Examples unlocked | Notes |
 |---|---|---|
 | `references:` — cross-mapping FK reverse resolution | nested-arrays-v2, nested-arrays, nested-arrays-deep, nested-array-path, crdt-ordering, crdt-ordering-linked, element-last-modified, element-priority, embedded-objects, embedded-vs-many-to-many, multi-value, reference-preservation, references, relationship-mapping, sesam-annotated, depth-mismatch, composite-keys, external-links, soft-delete-child, vocabulary-standard | **20 examples.** Biggest single unlock; already specced as slice 4 in [SPARQL-IMPLEMENTATION-PLAN.md](plans/SPARQL-IMPLEMENTATION-PLAN.md). |
-| OR-identity — multiple single-field identity groups | merge-threeway, merge-internal, merge-curated | Both backends currently bail if `identity:` has more than one group. Requires SHA256 over a UNION of closures (SPARQL) or UNION ALL in the identified view (SQL). |
-| Noop / written-state — `_written` table and noop suppression | derive-noop, concurrent-detection | PG: already existed in v1 engine; needs v2 schema wiring. SPARQL: slice 6. |
-| `soft_delete:` — `deleted_flag` / `active_flag` / `timestamp` strategies | soft-delete, soft-delete-resurrect, hard-delete | soft-delete-child is also gated on `references:`. |
-| `expression` strategy | value-defaults, sesam-annotated (already in references above), + expression uses in asymmetric-io | Expression language needs to be spec'd for v2 before implementation. Security review required (user-authored SQL/SPARQL fragments). |
-| `normalize:` — lossy noop comparison | precision-loss | Wraps a field value in a normalisation function before equality check; prevents spurious updates on type-cast differences. |
-| `source_path` — JSONB sub-field extraction | json-fields | Dotted/bracketed path into a JSONB source column. |
-| `passthrough:` — carry-through columns | passthrough, asymmetric-io | Source columns present in delta output but not in canonical model. |
-| `route:` — conditional row routing | route, route-combined | Per-row predicate that decides which target mapping receives the row. |
-| `scalar: true` array expansion | scalar-array | Array column holds bare scalars (e.g. `["vip","newsletter"]`) rather than objects; expands to one row per value without named keys. |
-| `derive_timestamps:` — per-field timestamp derivation | derive-timestamps | Compares current field values against `_written` JSONB; stamps changed fields with `_written_at`. |
-| Misc (≤ 1 example each) | required-fields (`required:`), inserts-and-deletes (`reverse_required:`), json-opaque (opaque JSONB passthrough), flattened, value-groups, multiple-target-mappings | These may share implementation with nearby features or need only small additions. |
+| OR-identity — multiple single-field identity groups | merge-threeway, merge-internal, merge-curated | Both backends currently bail if `identity:` has more than one group. UNION of closures (SPARQL) / UNION ALL in identified view (SQL). |
+| Noop / written-state — `_written` table and noop suppression | derive-noop, concurrent-detection | PG: existed in v1, needs v2 schema wiring. SPARQL: slice 6. |
+| `normalize:` — lossy noop comparison | precision-loss | Normalisation function on both sides of delta comparison; prevents phantom updates on type-cast differences. |
+| `source_path` — JSONB sub-field extraction | json-fields | Dotted / bracketed path into a JSONB source column. |
+| `passthrough:` — carry-through columns | passthrough, asymmetric-io | Source columns in delta output not present in the canonical model. |
+| `scalar: true` array expansion | scalar-array | Array column holds bare scalars; expands without named keys. |
+| Misc (≤ 1 example each) | required-fields (`required:`), inserts-and-deletes (`reverse_required:`), json-opaque, flattened, value-groups, multiple-target-mappings | Small additions; likely share implementation with adjacent features. |
 
-**Parallel work — example migration.** Every example above also needs its
-`mapping.yaml` rewritten from v1 syntax to v2. The main mechanical changes
-are: move `strategy: identity` fields to `targets.<T>.identity:`, rename
-`_cluster_id` to `_canonical_id`, and lift `last_modified` column name from
-per-field to per-mapping. This can proceed incrementally as each feature
-lands.
+**Parallel work — example migration.** Every example YAML also needs
+migrating from v1 syntax: move `strategy: identity` fields to
+`targets.<T>.identity:`, rename `_cluster_id` → `_canonical_id`, lift
+`last_modified` column name from per-field to per-mapping. Proceeds
+incrementally as features land.
+
+## 0.5 — Considered: complex features (full example parity)
+
+Theme: **stateful, security-gated, and conditional features** — the
+ones that need spec work or security review before implementation, and
+several of which depend on `references:` from 0.4.
+
+| Feature | Examples unlocked | Notes |
+|---|---|---|
+| `soft_delete:` — `deleted_flag` / `active_flag` / `timestamp` strategies | soft-delete, soft-delete-resurrect, hard-delete | soft-delete-child additionally gated on `references:` (0.4). Stateful; interacts with `_written` and tombstone logic. |
+| `expression` strategy | value-defaults, asymmetric-io (+ sesam-annotated already in 0.4) | Needs a v2 expression spec before implementation. Security review required — user-authored SQL/SPARQL fragments. [EXPRESSION-SAFETY-PLAN.md](plans/EXPRESSION-SAFETY-PLAN.md) (0.2) is a prerequisite. |
+| `route:` — conditional row routing | route, route-combined | Per-row predicate routing source rows to different target mappings. |
+| `derive_timestamps:` — per-field timestamp derivation | derive-timestamps | Derives `_ts_{field}` from `_written` JSONB comparison. Depends on written-state (0.4). |
+
+At the end of 0.5 all 47 examples (5 current + 42 v1 migrated) should
+pass on both backends.
 
 ## Post-1.0 / unscheduled
 
 Tracked in [plans/README.md](plans/README.md) under `Planned`, `Design`,
-`Proposed`, `Maybe`. Releases 0.5+ pull from this pool when themes
+`Proposed`, `Maybe`. Releases 0.6+ pull from this pool when themes
 solidify.
 
 Notable items deliberately deferred:

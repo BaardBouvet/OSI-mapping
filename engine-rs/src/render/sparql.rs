@@ -108,12 +108,43 @@ fn osi_canonical() -> String {
 // IRI helpers
 // ---------------------------------------------------------------------------
 
+/// Percent-encodes `s` so that it is safe inside an IRI path segment per
+/// RFC 3986 §2.3 — keeps unreserved (`ALPHA / DIGIT / "-" / "." / "_" / "~"`)
+/// untouched, percent-encodes everything else byte-by-byte (UTF-8).
 fn encode_pk(s: &str) -> String {
-    s.replace('%', "%25").replace('/', "%2F")
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        let c = byte as char;
+        if c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~') {
+            out.push(c);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
+/// Inverse of `encode_pk`. Decodes percent-escapes back into the original
+/// UTF-8 string. Unrecognised escapes are passed through unchanged so a
+/// malformed IRI doesn't trigger a panic at decode time.
 fn decode_pk(s: &str) -> String {
-    s.replace("%2F", "/").replace("%25", "%")
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push(((hi << 4) | lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
 }
 
 fn source_iri(mapping: &str, pk: &str) -> String {
@@ -231,8 +262,47 @@ pub fn render_sparql(doc: &Doc) -> Result<SparqlPlan> {
 /// `<base>identity/<T>`, `<base>canonical/<T>`, etc., and all property
 /// IRIs become `<base>prop/<f>` and `<base>sourceprop/<M>/<f>`.
 pub fn render_sparql_with_base(doc: &Doc, base: &str) -> Result<SparqlPlan> {
+    validate_base_iri(base)?;
     let _guard = BaseGuard::new(base);
     render_sparql_inner(doc)
+}
+
+/// Validates that `base` is well-formed enough to be used verbatim as
+/// the prefix for every IRI the SPARQL renderer emits:
+///
+/// * non-empty,
+/// * absolute (has a scheme — `<scheme>:` per RFC 3986 §3.1),
+/// * ends with `/` so concatenations like `format!("{}identity/{}", base, t)`
+///   produce a valid path.
+fn validate_base_iri(base: &str) -> Result<()> {
+    if base.is_empty() {
+        anyhow::bail!("base IRI must not be empty");
+    }
+    if !base.ends_with('/') {
+        anyhow::bail!(
+            "base IRI must end with a trailing `/` so derived IRIs concatenate cleanly: {base:?}"
+        );
+    }
+    // Minimal absolute-IRI check: a scheme is `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`
+    // followed by `:`. We only care that one is present — full RFC 3986 parsing
+    // is left to the triplestore.
+    let scheme_end = base
+        .find(':')
+        .ok_or_else(|| anyhow::anyhow!("base IRI must be absolute (scheme:) — got {base:?}"))?;
+    if scheme_end == 0 {
+        anyhow::bail!("base IRI scheme must not be empty: {base:?}");
+    }
+    let mut chars = base[..scheme_end].chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphabetic() {
+        anyhow::bail!("base IRI scheme must start with an ASCII letter: {base:?}");
+    }
+    for c in chars {
+        if !(c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) {
+            anyhow::bail!("base IRI scheme contains invalid character {c:?}: {base:?}");
+        }
+    }
+    Ok(())
 }
 
 fn render_sparql_inner(doc: &Doc) -> Result<SparqlPlan> {
@@ -2090,5 +2160,93 @@ mod tests {
             fwd.contains("VALUES"),
             "compile-time priorities live in VALUES"
         );
+    }
+
+    #[test]
+    fn rejects_base_iri_without_trailing_slash() {
+        let doc = hello_world_doc();
+        let err = render_sparql_with_base(&doc, "https://example.org/osi")
+            .expect_err("missing trailing slash should be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("trailing"),
+            "error should mention trailing slash, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_base_iri_without_scheme() {
+        let doc = hello_world_doc();
+        let err = render_sparql_with_base(&doc, "example.org/")
+            .expect_err("relative IRI should be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("absolute") || msg.contains("scheme"),
+            "error should mention absolute/scheme, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_base_iri() {
+        let doc = hello_world_doc();
+        render_sparql_with_base(&doc, "").expect_err("empty base should be rejected");
+    }
+
+    #[test]
+    fn encode_pk_is_rfc3986_path_segment_safe() {
+        // RFC 3986 §2.3 unreserved set: ALPHA / DIGIT / "-" / "." / "_" / "~".
+        // Everything else inside a path segment must be percent-encoded.
+        // Round-trip must be exact.
+        for input in [
+            "abc-123",       // unreserved only — must pass through
+            "ab/cd",         // reserved `/` — must encode
+            "100%",          // `%` — must encode (and not be ambiguous)
+            "with space",    // space
+            "with#hash",     // `#`
+            "with?question", // `?`
+            "café",          // non-ASCII (UTF-8 bytes %C3%A9)
+            "back\\slash",   // backslash
+            "tab\there",     // control char
+        ] {
+            let encoded = encode_pk(input);
+            // Encoded form must contain only RFC 3986 pchar = unreserved /
+            // pct-encoded / sub-delims / ":" / "@".  We require the strict
+            // subset: unreserved + "%".
+            for c in encoded.chars() {
+                assert!(
+                    c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | '%'),
+                    "encode_pk({input:?}) = {encoded:?} contains unsafe char {c:?}"
+                );
+            }
+            assert_eq!(
+                decode_pk(&encoded),
+                input,
+                "round-trip failed for {input:?} → {encoded:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn custom_base_iri_round_trip() {
+        // Same Doc, different bases → every IRI is rooted at the chosen base.
+        let doc = hello_world_doc();
+
+        let plan_default = render_sparql(&doc).unwrap();
+        let plan_custom = render_sparql_with_base(&doc, "https://example.org/osi/").unwrap();
+
+        assert_eq!(plan_default.base_iri, "https://osi.test/");
+        assert_eq!(plan_custom.base_iri, "https://example.org/osi/");
+
+        let id_default = &plan_default.identity_constructs["contact"];
+        let id_custom = &plan_custom.identity_constructs["contact"];
+
+        assert!(id_default.contains("https://osi.test/identity/contact"));
+        assert!(id_custom.contains("https://example.org/osi/identity/contact"));
+        assert!(!id_custom.contains("https://osi.test/"));
+
+        // After the custom render returns, the default base is restored
+        // (BaseGuard drop semantics).
+        let plan_after = render_sparql(&doc).unwrap();
+        assert_eq!(plan_after.base_iri, "https://osi.test/");
     }
 }

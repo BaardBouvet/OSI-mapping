@@ -2,7 +2,7 @@
 name = "osi-engine"
 version = "0.1.0"
 edition = "2021"
-description = "Reference engine for OSI mapping spec — renders mappings to a DAG of PostgreSQL views"
+description = "Reference engine for OSI mapping spec — renders v2 mappings to PostgreSQL views or SPARQL CONSTRUCT artifacts"
 license = "MIT"
 
 [features]
